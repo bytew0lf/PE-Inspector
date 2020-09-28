@@ -1,5 +1,6 @@
 # Non-relevant File-Extensions
 
+*.csv
 *.txt
 *.bak
 *.dat
