@@ -1,0 +1,8 @@
+https://github.com/microsoft/automatic-graph-layout
+https://www.codeproject.com/Articles/109558/Creating-VISIO-Organigrams-using-C
+https://www.nuget.org/packages/Excubo.Blazor.Diagrams
+
+https://www.nuget.org/packages/BPMN.Sharp/
+https://js.cytoscape.org/#demos
+https://fperucic.github.io/treant-js/
+https://observablehq.com/@d3/gallery

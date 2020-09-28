@@ -1,0 +1,26 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 2012
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PE-Inspector", "PE-Inspector\PE-Inspector.csproj", "{F914B7E8-B68B-445A-8D59-17D1F7CFB478}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PECOFF", "PECOFF\PECOFF.csproj", "{040D5059-D276-4FFB-B3C9-25EDB9627E71}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F914B7E8-B68B-445A-8D59-17D1F7CFB478}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F914B7E8-B68B-445A-8D59-17D1F7CFB478}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F914B7E8-B68B-445A-8D59-17D1F7CFB478}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F914B7E8-B68B-445A-8D59-17D1F7CFB478}.Release|Any CPU.Build.0 = Release|Any CPU
+		{040D5059-D276-4FFB-B3C9-25EDB9627E71}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{040D5059-D276-4FFB-B3C9-25EDB9627E71}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{040D5059-D276-4FFB-B3C9-25EDB9627E71}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{040D5059-D276-4FFB-B3C9-25EDB9627E71}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal
