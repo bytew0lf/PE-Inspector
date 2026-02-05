@@ -51,6 +51,32 @@ Optional parameters:
 
     dotnet run --project tools/SnapshotGenerator/SnapshotGenerator.csproj -- --input <testfiles-dir> --output <snapshot-path>
 
+### Build scripts
+Self-contained single-file builds are available via the scripts in `scripts/`.
+
+PE-FileInspector:
+
+    # Windows (PowerShell)
+    ./scripts/build-pe-fileinspector-windows.ps1
+
+    # Linux/macOS
+    ./scripts/build-pe-fileinspector-linux.sh
+    ./scripts/build-pe-fileinspector-macos.sh
+
+PE-Inspector:
+
+    # Windows (PowerShell)
+    ./scripts/build-pe-inspector-windows.ps1
+
+    # Linux/macOS
+    ./scripts/build-pe-inspector-linux.sh
+    ./scripts/build-pe-inspector-macos.sh
+
+Defaults:
+
+- Output goes to `artifacts/<app-name>/<rid>/`.
+- Override `RID` and `CONFIGURATION` if needed (e.g. `RID=osx-arm64`).
+
 ## Contents of the output file
 The CSV-Output currently contains the following values for each analyzed file.
  - Filename
