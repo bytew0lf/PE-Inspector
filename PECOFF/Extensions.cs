@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -558,6 +559,40 @@ namespace PECoff
         public string PrivateBuild => GetStringValue("PrivateBuild");
         public string SpecialBuild => GetStringValue("SpecialBuild");
         public string Language => GetLanguage();
+        public uint? Translation => _translation;
+        public IReadOnlyDictionary<string, string> StringValues => new ReadOnlyDictionary<string, string>(_stringValues);
+
+        public VersionFixedFileInfo FixedFileInfo
+        {
+            get
+            {
+                if (vi.Value.dwSignature != 0xFEEF04BD)
+                {
+                    return null;
+                }
+
+                return new VersionFixedFileInfo(
+                    FileVersion,
+                    ProductVersion,
+                    vi.Value.dwFileFlagsMask,
+                    (uint)vi.Value.dwFileFlags,
+                    (uint)vi.Value.dwFileOS,
+                    (uint)vi.Value.dwFileType,
+                    (uint)vi.Value.VXDFileSubtype,
+                    vi.Value.dwFileDateMS,
+                    vi.Value.dwFileDateLS);
+            }
+        }
+
+        public VersionInfoDetails ToVersionInfoDetails()
+        {
+            VersionFixedFileInfo fixedInfo = FixedFileInfo;
+            return new VersionInfoDetails(
+                fixedInfo,
+                new ReadOnlyDictionary<string, string>(_stringValues),
+                _translation,
+                GetLanguage());
+        }
         #endregion
 
         private string GetStringValue(string key)

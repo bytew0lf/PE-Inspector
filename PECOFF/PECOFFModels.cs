@@ -25,7 +25,12 @@ namespace PECoff
         CLR = 9,
         Metadata = 10,
         Checksum = 11,
-        AssemblyAnalysis = 12
+        AssemblyAnalysis = 12,
+        Debug = 13,
+        Relocations = 14,
+        Tls = 15,
+        LoadConfig = 16,
+        Authenticode = 17
     }
 
     public sealed class ParseIssue
@@ -49,6 +54,8 @@ namespace PECoff
         public bool ComputeHash { get; init; } = true;
         public bool ComputeChecksum { get; init; } = true;
         public bool ParseCertificateSigners { get; init; } = true;
+        public bool ComputeAuthenticode { get; init; } = true;
+        public bool UseMemoryMappedFile { get; init; }
         public Dictionary<ParseIssueCategory, ParseIssueSeverity> IssuePolicy { get; init; } = new Dictionary<ParseIssueCategory, ParseIssueSeverity>();
     }
 
@@ -75,6 +82,319 @@ namespace PECoff
         }
     }
 
+    public enum DebugDirectoryType : uint
+    {
+        Unknown = 0,
+        Coff = 1,
+        CodeView = 2,
+        Fpo = 3,
+        Misc = 4,
+        Exception = 5,
+        Fixup = 6,
+        OmapToSrc = 7,
+        OmapFromSrc = 8,
+        Borland = 9,
+        Reserved10 = 10,
+        Clsid = 11,
+        Repro = 16
+    }
+
+    public sealed class DebugCodeViewInfo
+    {
+        public string Signature { get; }
+        public Guid Guid { get; }
+        public uint Age { get; }
+        public string PdbPath { get; }
+        public uint PdbSignature { get; }
+        public uint PdbTimeDateStamp { get; }
+
+        public DebugCodeViewInfo(string signature, Guid guid, uint age, string pdbPath, uint pdbSignature, uint pdbTimeDateStamp)
+        {
+            Signature = signature ?? string.Empty;
+            Guid = guid;
+            Age = age;
+            PdbPath = pdbPath ?? string.Empty;
+            PdbSignature = pdbSignature;
+            PdbTimeDateStamp = pdbTimeDateStamp;
+        }
+    }
+
+    public sealed class DebugDirectoryEntry
+    {
+        public uint Characteristics { get; }
+        public uint TimeDateStamp { get; }
+        public ushort MajorVersion { get; }
+        public ushort MinorVersion { get; }
+        public DebugDirectoryType Type { get; }
+        public uint SizeOfData { get; }
+        public uint AddressOfRawData { get; }
+        public uint PointerToRawData { get; }
+        public DebugCodeViewInfo CodeView { get; }
+
+        public DebugDirectoryEntry(
+            uint characteristics,
+            uint timeDateStamp,
+            ushort majorVersion,
+            ushort minorVersion,
+            DebugDirectoryType type,
+            uint sizeOfData,
+            uint addressOfRawData,
+            uint pointerToRawData,
+            DebugCodeViewInfo codeView)
+        {
+            Characteristics = characteristics;
+            TimeDateStamp = timeDateStamp;
+            MajorVersion = majorVersion;
+            MinorVersion = minorVersion;
+            Type = type;
+            SizeOfData = sizeOfData;
+            AddressOfRawData = addressOfRawData;
+            PointerToRawData = pointerToRawData;
+            CodeView = codeView;
+        }
+    }
+
+    public sealed class BaseRelocationBlockInfo
+    {
+        public uint PageRva { get; }
+        public uint BlockSize { get; }
+        public int EntryCount { get; }
+        public IReadOnlyList<int> TypeCounts { get; }
+
+        public BaseRelocationBlockInfo(uint pageRva, uint blockSize, int entryCount, int[] typeCounts)
+        {
+            PageRva = pageRva;
+            BlockSize = blockSize;
+            EntryCount = entryCount;
+            TypeCounts = typeCounts ?? Array.Empty<int>();
+        }
+    }
+
+    public sealed class TlsInfo
+    {
+        public ulong StartAddressOfRawData { get; }
+        public ulong EndAddressOfRawData { get; }
+        public ulong AddressOfIndex { get; }
+        public ulong AddressOfCallbacks { get; }
+        public uint SizeOfZeroFill { get; }
+        public uint Characteristics { get; }
+        public IReadOnlyList<ulong> CallbackAddresses { get; }
+
+        public TlsInfo(
+            ulong startAddressOfRawData,
+            ulong endAddressOfRawData,
+            ulong addressOfIndex,
+            ulong addressOfCallbacks,
+            uint sizeOfZeroFill,
+            uint characteristics,
+            ulong[] callbackAddresses)
+        {
+            StartAddressOfRawData = startAddressOfRawData;
+            EndAddressOfRawData = endAddressOfRawData;
+            AddressOfIndex = addressOfIndex;
+            AddressOfCallbacks = addressOfCallbacks;
+            SizeOfZeroFill = sizeOfZeroFill;
+            Characteristics = characteristics;
+            CallbackAddresses = Array.AsReadOnly(callbackAddresses ?? Array.Empty<ulong>());
+        }
+    }
+
+    public sealed class LoadConfigInfo
+    {
+        public uint Size { get; }
+        public uint TimeDateStamp { get; }
+        public ushort MajorVersion { get; }
+        public ushort MinorVersion { get; }
+        public uint GlobalFlagsClear { get; }
+        public uint GlobalFlagsSet { get; }
+        public uint ProcessHeapFlags { get; }
+        public uint CsdVersion { get; }
+        public uint DependentLoadFlags { get; }
+        public ulong SecurityCookie { get; }
+        public ulong SeHandlerTable { get; }
+        public uint SeHandlerCount { get; }
+        public ulong GuardCfCheckFunctionPointer { get; }
+        public ulong GuardCfDispatchFunctionPointer { get; }
+        public ulong GuardCfFunctionTable { get; }
+        public uint GuardCfFunctionCount { get; }
+        public uint GuardFlags { get; }
+
+        public LoadConfigInfo(
+            uint size,
+            uint timeDateStamp,
+            ushort majorVersion,
+            ushort minorVersion,
+            uint globalFlagsClear,
+            uint globalFlagsSet,
+            uint processHeapFlags,
+            uint csdVersion,
+            uint dependentLoadFlags,
+            ulong securityCookie,
+            ulong seHandlerTable,
+            uint seHandlerCount,
+            ulong guardCfCheckFunctionPointer,
+            ulong guardCfDispatchFunctionPointer,
+            ulong guardCfFunctionTable,
+            uint guardCfFunctionCount,
+            uint guardFlags)
+        {
+            Size = size;
+            TimeDateStamp = timeDateStamp;
+            MajorVersion = majorVersion;
+            MinorVersion = minorVersion;
+            GlobalFlagsClear = globalFlagsClear;
+            GlobalFlagsSet = globalFlagsSet;
+            ProcessHeapFlags = processHeapFlags;
+            CsdVersion = csdVersion;
+            DependentLoadFlags = dependentLoadFlags;
+            SecurityCookie = securityCookie;
+            SeHandlerTable = seHandlerTable;
+            SeHandlerCount = seHandlerCount;
+            GuardCfCheckFunctionPointer = guardCfCheckFunctionPointer;
+            GuardCfDispatchFunctionPointer = guardCfDispatchFunctionPointer;
+            GuardCfFunctionTable = guardCfFunctionTable;
+            GuardCfFunctionCount = guardCfFunctionCount;
+            GuardFlags = guardFlags;
+        }
+    }
+
+    public sealed class VersionFixedFileInfo
+    {
+        public string FileVersion { get; }
+        public string ProductVersion { get; }
+        public uint FileFlagsMask { get; }
+        public uint FileFlags { get; }
+        public uint FileOs { get; }
+        public uint FileType { get; }
+        public uint FileSubtype { get; }
+        public uint FileDateMs { get; }
+        public uint FileDateLs { get; }
+
+        public VersionFixedFileInfo(
+            string fileVersion,
+            string productVersion,
+            uint fileFlagsMask,
+            uint fileFlags,
+            uint fileOs,
+            uint fileType,
+            uint fileSubtype,
+            uint fileDateMs,
+            uint fileDateLs)
+        {
+            FileVersion = fileVersion ?? string.Empty;
+            ProductVersion = productVersion ?? string.Empty;
+            FileFlagsMask = fileFlagsMask;
+            FileFlags = fileFlags;
+            FileOs = fileOs;
+            FileType = fileType;
+            FileSubtype = fileSubtype;
+            FileDateMs = fileDateMs;
+            FileDateLs = fileDateLs;
+        }
+    }
+
+    public sealed class VersionInfoDetails
+    {
+        public VersionFixedFileInfo FixedFileInfo { get; }
+        public IReadOnlyDictionary<string, string> StringValues { get; }
+        public uint? Translation { get; }
+        public string TranslationText { get; }
+
+        public VersionInfoDetails(
+            VersionFixedFileInfo fixedFileInfo,
+            IReadOnlyDictionary<string, string> stringValues,
+            uint? translation,
+            string translationText)
+        {
+            FixedFileInfo = fixedFileInfo;
+            StringValues = stringValues ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            Translation = translation;
+            TranslationText = translationText ?? string.Empty;
+        }
+    }
+
+    public sealed class IconEntryInfo
+    {
+        public byte Width { get; }
+        public byte Height { get; }
+        public byte ColorCount { get; }
+        public byte Reserved { get; }
+        public ushort Planes { get; }
+        public ushort BitCount { get; }
+        public uint BytesInRes { get; }
+        public ushort ResourceId { get; }
+
+        public IconEntryInfo(byte width, byte height, byte colorCount, byte reserved, ushort planes, ushort bitCount, uint bytesInRes, ushort resourceId)
+        {
+            Width = width;
+            Height = height;
+            ColorCount = colorCount;
+            Reserved = reserved;
+            Planes = planes;
+            BitCount = bitCount;
+            BytesInRes = bytesInRes;
+            ResourceId = resourceId;
+        }
+    }
+
+    public sealed class IconGroupInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public IReadOnlyList<IconEntryInfo> Entries { get; }
+        public byte[] IcoData { get; }
+
+        public IconGroupInfo(uint nameId, ushort languageId, IconEntryInfo[] entries, byte[] icoData)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<IconEntryInfo>());
+            IcoData = icoData ?? Array.Empty<byte>();
+        }
+    }
+
+    public sealed class StrongNameSignatureInfo
+    {
+        public uint Rva { get; }
+        public uint Size { get; }
+        public byte[] Data { get; }
+
+        public StrongNameSignatureInfo(uint rva, uint size, byte[] data)
+        {
+            Rva = rva;
+            Size = size;
+            Data = data ?? Array.Empty<byte>();
+        }
+    }
+
+    public sealed class AuthenticodeDigestInfo
+    {
+        public string AlgorithmOid { get; }
+        public string AlgorithmName { get; }
+        public byte[] Digest { get; }
+
+        public AuthenticodeDigestInfo(string algorithmOid, string algorithmName, byte[] digest)
+        {
+            AlgorithmOid = algorithmOid ?? string.Empty;
+            AlgorithmName = algorithmName ?? string.Empty;
+            Digest = digest ?? Array.Empty<byte>();
+        }
+    }
+
+    public sealed class AuthenticodeVerificationResult
+    {
+        public AuthenticodeDigestInfo EmbeddedDigest { get; }
+        public string ComputedHash { get; }
+        public bool Matches { get; }
+
+        public AuthenticodeVerificationResult(AuthenticodeDigestInfo embeddedDigest, string computedHash, bool matches)
+        {
+            EmbeddedDigest = embeddedDigest;
+            ComputedHash = computedHash ?? string.Empty;
+            Matches = matches;
+        }
+    }
+
     public sealed class PECOFFResult
     {
         public string FilePath { get; }
@@ -96,6 +416,7 @@ namespace PECoff
         public string PrivateBuild { get; }
         public string SpecialBuild { get; }
         public string Language { get; }
+        public VersionInfoDetails VersionInfoDetails { get; }
         public uint FileAlignment { get; }
         public uint SectionAlignment { get; }
         public uint SizeOfHeaders { get; }
@@ -111,7 +432,9 @@ namespace PECoff
         public IReadOnlyList<ResourceEntry> Resources { get; }
         public IReadOnlyList<ResourceStringTableInfo> ResourceStringTables { get; }
         public IReadOnlyList<ResourceManifestInfo> ResourceManifests { get; }
+        public IReadOnlyList<IconGroupInfo> IconGroups { get; }
         public ClrMetadataInfo ClrMetadata { get; }
+        public StrongNameSignatureInfo StrongNameSignature { get; }
         public IReadOnlyList<string> Imports { get; }
         public IReadOnlyList<ImportEntry> ImportEntries { get; }
         public IReadOnlyList<ImportEntry> DelayImportEntries { get; }
@@ -119,6 +442,10 @@ namespace PECoff
         public IReadOnlyList<string> Exports { get; }
         public IReadOnlyList<ExportEntry> ExportEntries { get; }
         public IReadOnlyList<BoundImportEntry> BoundImports { get; }
+        public IReadOnlyList<DebugDirectoryEntry> DebugDirectories { get; }
+        public IReadOnlyList<BaseRelocationBlockInfo> BaseRelocations { get; }
+        public TlsInfo TlsInfo { get; }
+        public LoadConfigInfo LoadConfig { get; }
         public IReadOnlyList<string> AssemblyReferences { get; }
         public IReadOnlyList<AssemblyReferenceInfo> AssemblyReferenceInfos { get; }
 
@@ -142,6 +469,7 @@ namespace PECoff
             string privateBuild,
             string specialBuild,
             string language,
+            VersionInfoDetails versionInfoDetails,
             uint fileAlignment,
             uint sectionAlignment,
             uint sizeOfHeaders,
@@ -157,7 +485,9 @@ namespace PECoff
             ResourceEntry[] resources,
             ResourceStringTableInfo[] resourceStringTables,
             ResourceManifestInfo[] resourceManifests,
+            IconGroupInfo[] iconGroups,
             ClrMetadataInfo clrMetadata,
+            StrongNameSignatureInfo strongNameSignature,
             string[] imports,
             ImportEntry[] importEntries,
             ImportEntry[] delayImportEntries,
@@ -165,6 +495,10 @@ namespace PECoff
             string[] exports,
             ExportEntry[] exportEntries,
             BoundImportEntry[] boundImports,
+            DebugDirectoryEntry[] debugDirectories,
+            BaseRelocationBlockInfo[] baseRelocations,
+            TlsInfo tlsInfo,
+            LoadConfigInfo loadConfig,
             string[] assemblyReferences,
             AssemblyReferenceInfo[] assemblyReferenceInfos)
         {
@@ -187,6 +521,7 @@ namespace PECoff
             PrivateBuild = privateBuild ?? string.Empty;
             SpecialBuild = specialBuild ?? string.Empty;
             Language = language ?? string.Empty;
+            VersionInfoDetails = versionInfoDetails;
             FileAlignment = fileAlignment;
             SectionAlignment = sectionAlignment;
             SizeOfHeaders = sizeOfHeaders;
@@ -202,7 +537,9 @@ namespace PECoff
             Resources = Array.AsReadOnly(resources ?? Array.Empty<ResourceEntry>());
             ResourceStringTables = Array.AsReadOnly(resourceStringTables ?? Array.Empty<ResourceStringTableInfo>());
             ResourceManifests = Array.AsReadOnly(resourceManifests ?? Array.Empty<ResourceManifestInfo>());
+            IconGroups = Array.AsReadOnly(iconGroups ?? Array.Empty<IconGroupInfo>());
             ClrMetadata = clrMetadata;
+            StrongNameSignature = strongNameSignature;
             Imports = Array.AsReadOnly(imports ?? Array.Empty<string>());
             ImportEntries = Array.AsReadOnly(importEntries ?? Array.Empty<ImportEntry>());
             DelayImportEntries = Array.AsReadOnly(delayImportEntries ?? Array.Empty<ImportEntry>());
@@ -210,6 +547,10 @@ namespace PECoff
             Exports = Array.AsReadOnly(exports ?? Array.Empty<string>());
             ExportEntries = Array.AsReadOnly(exportEntries ?? Array.Empty<ExportEntry>());
             BoundImports = Array.AsReadOnly(boundImports ?? Array.Empty<BoundImportEntry>());
+            DebugDirectories = Array.AsReadOnly(debugDirectories ?? Array.Empty<DebugDirectoryEntry>());
+            BaseRelocations = Array.AsReadOnly(baseRelocations ?? Array.Empty<BaseRelocationBlockInfo>());
+            TlsInfo = tlsInfo;
+            LoadConfig = loadConfig;
             AssemblyReferences = Array.AsReadOnly(assemblyReferences ?? Array.Empty<string>());
             AssemblyReferenceInfos = Array.AsReadOnly(assemblyReferenceInfos ?? Array.Empty<AssemblyReferenceInfo>());
         }

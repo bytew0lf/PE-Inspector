@@ -44,6 +44,12 @@ public class SnapshotTests
             Assert.Equal(expectedEntry.BoundImportCount, actualEntry.BoundImportCount);
             Assert.Equal(expectedEntry.CertificateCount, actualEntry.CertificateCount);
             Assert.Equal(expectedEntry.ResourceCount, actualEntry.ResourceCount);
+            Assert.Equal(expectedEntry.DebugCount, actualEntry.DebugCount);
+            Assert.Equal(expectedEntry.RelocationBlockCount, actualEntry.RelocationBlockCount);
+            Assert.Equal(expectedEntry.IconGroupCount, actualEntry.IconGroupCount);
+            Assert.Equal(expectedEntry.HasTls, actualEntry.HasTls);
+            Assert.Equal(expectedEntry.HasLoadConfig, actualEntry.HasLoadConfig);
+            Assert.Equal(expectedEntry.AuthenticodeResultCount, actualEntry.AuthenticodeResultCount);
         }
     }
 
@@ -91,7 +97,13 @@ public class SnapshotTests
                 parser.DelayImportDescriptors.Length,
                 parser.BoundImports.Length,
                 parser.CertificateEntries.Length,
-                parser.Resources.Length);
+                parser.Resources.Length,
+                parser.DebugDirectories.Length,
+                parser.BaseRelocations.Length,
+                parser.IconGroups.Length,
+                parser.TlsInfo != null,
+                parser.LoadConfig != null,
+                parser.CertificateEntries.Sum(e => e.AuthenticodeResults?.Length ?? 0));
 
             snapshots[entry.Name] = entry;
         }
@@ -130,7 +142,7 @@ public class SnapshotTests
             }
 
             string[] parts = line.Split('|');
-            if (parts.Length != 10)
+            if (parts.Length != 16)
             {
                 continue;
             }
@@ -145,7 +157,13 @@ public class SnapshotTests
                 int.Parse(parts[6], CultureInfo.InvariantCulture),
                 int.Parse(parts[7], CultureInfo.InvariantCulture),
                 int.Parse(parts[8], CultureInfo.InvariantCulture),
-                int.Parse(parts[9], CultureInfo.InvariantCulture));
+                int.Parse(parts[9], CultureInfo.InvariantCulture),
+                int.Parse(parts[10], CultureInfo.InvariantCulture),
+                int.Parse(parts[11], CultureInfo.InvariantCulture),
+                int.Parse(parts[12], CultureInfo.InvariantCulture),
+                bool.Parse(parts[13]),
+                bool.Parse(parts[14]),
+                int.Parse(parts[15], CultureInfo.InvariantCulture));
 
             snapshots[entry.Name] = entry;
         }
@@ -168,7 +186,13 @@ public class SnapshotTests
                 entry.DelayImportDescriptorCount.ToString(CultureInfo.InvariantCulture),
                 entry.BoundImportCount.ToString(CultureInfo.InvariantCulture),
                 entry.CertificateCount.ToString(CultureInfo.InvariantCulture),
-                entry.ResourceCount.ToString(CultureInfo.InvariantCulture)));
+                entry.ResourceCount.ToString(CultureInfo.InvariantCulture),
+                entry.DebugCount.ToString(CultureInfo.InvariantCulture),
+                entry.RelocationBlockCount.ToString(CultureInfo.InvariantCulture),
+                entry.IconGroupCount.ToString(CultureInfo.InvariantCulture),
+                entry.HasTls.ToString(),
+                entry.HasLoadConfig.ToString(),
+                entry.AuthenticodeResultCount.ToString(CultureInfo.InvariantCulture)));
         }
 
         File.WriteAllLines(path, lines);
@@ -228,6 +252,12 @@ public class SnapshotTests
         public int BoundImportCount { get; }
         public int CertificateCount { get; }
         public int ResourceCount { get; }
+        public int DebugCount { get; }
+        public int RelocationBlockCount { get; }
+        public int IconGroupCount { get; }
+        public bool HasTls { get; }
+        public bool HasLoadConfig { get; }
+        public int AuthenticodeResultCount { get; }
 
         public SnapshotEntry(
             string name,
@@ -239,7 +269,13 @@ public class SnapshotTests
             int delayImportDescriptorCount,
             int boundImportCount,
             int certificateCount,
-            int resourceCount)
+            int resourceCount,
+            int debugCount,
+            int relocationBlockCount,
+            int iconGroupCount,
+            bool hasTls,
+            bool hasLoadConfig,
+            int authenticodeResultCount)
         {
             Name = name ?? string.Empty;
             Hash = hash ?? string.Empty;
@@ -251,6 +287,12 @@ public class SnapshotTests
             BoundImportCount = boundImportCount;
             CertificateCount = certificateCount;
             ResourceCount = resourceCount;
+            DebugCount = debugCount;
+            RelocationBlockCount = relocationBlockCount;
+            IconGroupCount = iconGroupCount;
+            HasTls = hasTls;
+            HasLoadConfig = hasLoadConfig;
+            AuthenticodeResultCount = authenticodeResultCount;
         }
     }
 }

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Formats.Asn1;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
@@ -157,6 +158,117 @@ namespace PECoff
             {
                 error = ex.Message;
                 return false;
+            }
+        }
+
+        public static bool TryGetAuthenticodeDigests(
+            byte[] data,
+            out AuthenticodeDigestInfo[] digests,
+            out string error)
+        {
+            digests = Array.Empty<AuthenticodeDigestInfo>();
+            error = string.Empty;
+
+            if (data == null || data.Length == 0)
+            {
+                error = "PKCS7 data is empty.";
+                return false;
+            }
+
+            try
+            {
+                SignedCms cms = new SignedCms();
+                cms.Decode(data);
+
+                byte[] content = cms.ContentInfo.Content;
+                if (content == null || content.Length == 0)
+                {
+                    return false;
+                }
+
+                if (!TryParseSpcIndirectData(content, out AuthenticodeDigestInfo digest))
+                {
+                    return false;
+                }
+
+                digests = new[] { digest };
+                return true;
+            }
+            catch (CryptographicException ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+                return false;
+            }
+        }
+
+        private static bool TryParseSpcIndirectData(byte[] content, out AuthenticodeDigestInfo digestInfo)
+        {
+            digestInfo = null;
+            try
+            {
+                AsnReader reader = new AsnReader(content, AsnEncodingRules.BER);
+                AsnReader sequence = reader.ReadSequence();
+                if (sequence.HasData)
+                {
+                    sequence.ReadEncodedValue(); // SpcAttributeTypeAndOptionalValue
+                }
+
+                if (!sequence.HasData)
+                {
+                    return false;
+                }
+
+                AsnReader digestSeq = sequence.ReadSequence();
+                AsnReader algSeq = digestSeq.ReadSequence();
+                string oid = algSeq.ReadObjectIdentifier();
+                if (algSeq.HasData)
+                {
+                    algSeq.ReadEncodedValue();
+                }
+
+                byte[] digest = digestSeq.ReadOctetString();
+                string algorithmName = TryGetHashAlgorithmName(oid, out HashAlgorithmName name)
+                    ? name.Name ?? oid
+                    : oid;
+
+                digestInfo = new AuthenticodeDigestInfo(oid, algorithmName, digest);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        public static bool TryGetHashAlgorithmName(string oid, out HashAlgorithmName name)
+        {
+            name = default;
+            if (string.IsNullOrWhiteSpace(oid))
+            {
+                return false;
+            }
+
+            switch (oid)
+            {
+                case "1.3.14.3.2.26":
+                    name = HashAlgorithmName.SHA1;
+                    return true;
+                case "2.16.840.1.101.3.4.2.1":
+                    name = HashAlgorithmName.SHA256;
+                    return true;
+                case "2.16.840.1.101.3.4.2.2":
+                    name = HashAlgorithmName.SHA384;
+                    return true;
+                case "2.16.840.1.101.3.4.2.3":
+                    name = HashAlgorithmName.SHA512;
+                    return true;
+                default:
+                    return false;
             }
         }
 

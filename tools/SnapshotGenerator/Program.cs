@@ -47,7 +47,13 @@ foreach (string file in Directory.GetFiles(testFilesDir, "*.*", SearchOption.Top
         parser.DelayImportDescriptors.Length,
         parser.BoundImports.Length,
         parser.CertificateEntries.Length,
-        parser.Resources.Length);
+        parser.Resources.Length,
+        parser.DebugDirectories.Length,
+        parser.BaseRelocations.Length,
+        parser.IconGroups.Length,
+        parser.TlsInfo != null,
+        parser.LoadConfig != null,
+        parser.CertificateEntries.Sum(e => e.AuthenticodeResults?.Length ?? 0));
 
     snapshots[entry.Name] = entry;
 }
@@ -65,7 +71,13 @@ foreach (SnapshotEntry entry in snapshots.Values.OrderBy(e => e.Name, StringComp
         entry.DelayImportDescriptorCount.ToString(CultureInfo.InvariantCulture),
         entry.BoundImportCount.ToString(CultureInfo.InvariantCulture),
         entry.CertificateCount.ToString(CultureInfo.InvariantCulture),
-        entry.ResourceCount.ToString(CultureInfo.InvariantCulture)));
+        entry.ResourceCount.ToString(CultureInfo.InvariantCulture),
+        entry.DebugCount.ToString(CultureInfo.InvariantCulture),
+        entry.RelocationBlockCount.ToString(CultureInfo.InvariantCulture),
+        entry.IconGroupCount.ToString(CultureInfo.InvariantCulture),
+        entry.HasTls.ToString(),
+        entry.HasLoadConfig.ToString(),
+        entry.AuthenticodeResultCount.ToString(CultureInfo.InvariantCulture)));
 }
 
 File.WriteAllLines(snapshotPath, lines);
@@ -104,6 +116,12 @@ sealed class SnapshotEntry
     public int BoundImportCount { get; }
     public int CertificateCount { get; }
     public int ResourceCount { get; }
+    public int DebugCount { get; }
+    public int RelocationBlockCount { get; }
+    public int IconGroupCount { get; }
+    public bool HasTls { get; }
+    public bool HasLoadConfig { get; }
+    public int AuthenticodeResultCount { get; }
 
     public SnapshotEntry(
         string name,
@@ -115,7 +133,13 @@ sealed class SnapshotEntry
         int delayImportDescriptorCount,
         int boundImportCount,
         int certificateCount,
-        int resourceCount)
+        int resourceCount,
+        int debugCount,
+        int relocationBlockCount,
+        int iconGroupCount,
+        bool hasTls,
+        bool hasLoadConfig,
+        int authenticodeResultCount)
     {
         Name = name ?? string.Empty;
         Hash = hash ?? string.Empty;
@@ -127,5 +151,11 @@ sealed class SnapshotEntry
         BoundImportCount = boundImportCount;
         CertificateCount = certificateCount;
         ResourceCount = resourceCount;
+        DebugCount = debugCount;
+        RelocationBlockCount = relocationBlockCount;
+        IconGroupCount = iconGroupCount;
+        HasTls = hasTls;
+        HasLoadConfig = hasLoadConfig;
+        AuthenticodeResultCount = authenticodeResultCount;
     }
 }

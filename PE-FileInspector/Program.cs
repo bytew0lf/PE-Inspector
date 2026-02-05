@@ -222,12 +222,21 @@ namespace PE_FileInspector
                         {
                             sb.AppendLine("    (no PKCS7 signer info)");
                         }
+                        if (entry.AuthenticodeResults != null && entry.AuthenticodeResults.Length > 0)
+                        {
+                            WriteAuthenticodeResults(sb, entry.AuthenticodeResults, "    ");
+                        }
                         continue;
                     }
 
                     foreach (Pkcs7SignerInfo signer in entry.Pkcs7SignerInfos)
                     {
                         WriteSignerInfo(sb, signer, "    ");
+                    }
+
+                    if (entry.AuthenticodeResults != null && entry.AuthenticodeResults.Length > 0)
+                    {
+                        WriteAuthenticodeResults(sb, entry.AuthenticodeResults, "    ");
                     }
                 }
             }
@@ -264,10 +273,16 @@ namespace PE_FileInspector
                 sb.AppendLine("  Metadata Version: " + Safe(pe.ClrMetadata.MetadataVersion));
                 sb.AppendLine("  Flags: 0x" + pe.ClrMetadata.Flags.ToString("X8", CultureInfo.InvariantCulture));
                 sb.AppendLine("  EntryPoint Token: 0x" + pe.ClrMetadata.EntryPointToken.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  IL Only: " + pe.ClrMetadata.IlOnly);
+                sb.AppendLine("  32-bit Required: " + pe.ClrMetadata.Requires32Bit);
+                sb.AppendLine("  32-bit Preferred: " + pe.ClrMetadata.Prefers32Bit);
+                sb.AppendLine("  StrongName Signed: " + pe.ClrMetadata.StrongNameSigned);
                 sb.AppendLine("  Assembly Name: " + Safe(pe.ClrMetadata.AssemblyName));
                 sb.AppendLine("  Assembly Version: " + Safe(pe.ClrMetadata.AssemblyVersion));
                 sb.AppendLine("  MVID: " + Safe(pe.ClrMetadata.Mvid));
                 sb.AppendLine("  Target Framework: " + Safe(pe.ClrMetadata.TargetFramework));
+                sb.AppendLine("  Module Count: " + pe.ClrMetadata.ModuleDefinitionCount.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  TypeDef Count: " + pe.ClrMetadata.TypeDefinitionCount.ToString(CultureInfo.InvariantCulture));
                 if (pe.ClrMetadata.AssemblyReferences.Length == 0)
                 {
                     sb.AppendLine("  Assembly References (metadata): (none)");
@@ -294,6 +309,18 @@ namespace PE_FileInspector
                         sb.AppendLine("    - " + stream.Name + " (Offset: " + stream.Offset.ToString(CultureInfo.InvariantCulture) + ", Size: " + stream.Size.ToString(CultureInfo.InvariantCulture) + ")");
                     }
                 }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Strong Name Signature:");
+            if (pe.StrongNameSignature == null)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                sb.AppendLine("  RVA: 0x" + pe.StrongNameSignature.Rva.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  Size: " + pe.StrongNameSignature.Size.ToString(CultureInfo.InvariantCulture));
             }
             sb.AppendLine();
 
@@ -481,6 +508,142 @@ namespace PE_FileInspector
             }
             sb.AppendLine();
 
+            sb.AppendLine("Debug Directory:");
+            if (pe.DebugDirectories.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (DebugDirectoryEntry entry in pe.DebugDirectories)
+                {
+                    sb.AppendLine("  - Type: " + entry.Type +
+                                  " | Size: " + entry.SizeOfData.ToString(CultureInfo.InvariantCulture) +
+                                  " | Timestamp: 0x" + entry.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture) +
+                                  " | RawPtr: 0x" + entry.PointerToRawData.ToString("X8", CultureInfo.InvariantCulture));
+                    if (entry.CodeView != null)
+                    {
+                        sb.AppendLine("    CodeView: " + entry.CodeView.Signature +
+                                      " | Age: " + entry.CodeView.Age.ToString(CultureInfo.InvariantCulture));
+                        if (!string.IsNullOrWhiteSpace(entry.CodeView.PdbPath))
+                        {
+                            sb.AppendLine("    PDB: " + entry.CodeView.PdbPath);
+                        }
+                        if (entry.CodeView.Guid != Guid.Empty)
+                        {
+                            sb.AppendLine("    GUID: " + entry.CodeView.Guid.ToString());
+                        }
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Base Relocations:");
+            if (pe.BaseRelocations.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                int totalEntries = pe.BaseRelocations.Sum(b => b.EntryCount);
+                sb.AppendLine("  Blocks: " + pe.BaseRelocations.Length.ToString(CultureInfo.InvariantCulture) +
+                              " | Entries: " + totalEntries.ToString(CultureInfo.InvariantCulture));
+                foreach (BaseRelocationBlockInfo block in pe.BaseRelocations)
+                {
+                    sb.AppendLine("  - Page RVA: 0x" + block.PageRva.ToString("X8", CultureInfo.InvariantCulture) +
+                                  " | Entries: " + block.EntryCount.ToString(CultureInfo.InvariantCulture));
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("TLS Directory:");
+            if (pe.TlsInfo == null)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                sb.AppendLine("  StartRawData: 0x" + pe.TlsInfo.StartAddressOfRawData.ToString("X", CultureInfo.InvariantCulture));
+                sb.AppendLine("  EndRawData: 0x" + pe.TlsInfo.EndAddressOfRawData.ToString("X", CultureInfo.InvariantCulture));
+                sb.AppendLine("  AddressOfIndex: 0x" + pe.TlsInfo.AddressOfIndex.ToString("X", CultureInfo.InvariantCulture));
+                sb.AppendLine("  AddressOfCallbacks: 0x" + pe.TlsInfo.AddressOfCallbacks.ToString("X", CultureInfo.InvariantCulture));
+                sb.AppendLine("  SizeOfZeroFill: " + pe.TlsInfo.SizeOfZeroFill.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  Characteristics: 0x" + pe.TlsInfo.Characteristics.ToString("X8", CultureInfo.InvariantCulture));
+                if (pe.TlsInfo.CallbackAddresses.Count == 0)
+                {
+                    sb.AppendLine("  Callbacks: (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Callbacks:");
+                    foreach (ulong callback in pe.TlsInfo.CallbackAddresses)
+                    {
+                        sb.AppendLine("    - 0x" + callback.ToString("X", CultureInfo.InvariantCulture));
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Load Config:");
+            if (pe.LoadConfig == null)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                sb.AppendLine("  Size: " + pe.LoadConfig.Size.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  TimeDateStamp: 0x" + pe.LoadConfig.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  SecurityCookie: 0x" + pe.LoadConfig.SecurityCookie.ToString("X", CultureInfo.InvariantCulture));
+                sb.AppendLine("  SEHandlerCount: " + pe.LoadConfig.SeHandlerCount.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  GuardFlags: 0x" + pe.LoadConfig.GuardFlags.ToString("X8", CultureInfo.InvariantCulture));
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Version Info Details:");
+            if (pe.VersionInfoDetails == null)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                if (pe.VersionInfoDetails.FixedFileInfo != null)
+                {
+                    sb.AppendLine("  Fixed File Info:");
+                    sb.AppendLine("    FileVersion: " + Safe(pe.VersionInfoDetails.FixedFileInfo.FileVersion));
+                    sb.AppendLine("    ProductVersion: " + Safe(pe.VersionInfoDetails.FixedFileInfo.ProductVersion));
+                    sb.AppendLine("    FileFlags: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileFlags.ToString("X8", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    FileOS: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileOs.ToString("X8", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    FileType: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileType.ToString("X8", CultureInfo.InvariantCulture));
+                }
+                sb.AppendLine("  Translation: " + Safe(pe.VersionInfoDetails.TranslationText));
+                if (pe.VersionInfoDetails.StringValues.Count > 0)
+                {
+                    sb.AppendLine("  String Values:");
+                    foreach (var pair in pe.VersionInfoDetails.StringValues.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+                    {
+                        sb.AppendLine("    - " + pair.Key + ": " + pair.Value);
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Icon Groups:");
+            if (pe.IconGroups.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (IconGroupInfo group in pe.IconGroups)
+                {
+                    sb.AppendLine("  - NameId: " + group.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + group.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Entries: " + group.Entries.Count.ToString(CultureInfo.InvariantCulture) +
+                                  " | IcoBytes: " + group.IcoData.Length.ToString(CultureInfo.InvariantCulture));
+                }
+            }
+            sb.AppendLine();
+
             sb.AppendLine("Resources:");
             ResourceEntry[] resources = pe.Resources;
             if (resources.Length == 0)
@@ -572,6 +735,20 @@ namespace PE_FileInspector
             return sb.ToString();
         }
 
+        private static void WriteAuthenticodeResults(StringBuilder sb, AuthenticodeVerificationResult[] results, string indent)
+        {
+            string prefix = indent ?? string.Empty;
+            sb.AppendLine(prefix + "Authenticode:");
+            foreach (AuthenticodeVerificationResult result in results)
+            {
+                sb.AppendLine(prefix + "  - " + Safe(result.EmbeddedDigest.AlgorithmName) +
+                              " (" + Safe(result.EmbeddedDigest.AlgorithmOid) + ")");
+                sb.AppendLine(prefix + "    Embedded: " + ToHex(result.EmbeddedDigest.Digest));
+                sb.AppendLine(prefix + "    Computed: " + Safe(result.ComputedHash));
+                sb.AppendLine(prefix + "    Match: " + result.Matches);
+            }
+        }
+
         private static void WriteSignerInfo(StringBuilder sb, Pkcs7SignerInfo signer, string indent)
         {
             string prefix = indent ?? string.Empty;
@@ -614,6 +791,21 @@ namespace PE_FileInspector
         private static string Safe(string? value)
         {
             return value ?? string.Empty;
+        }
+
+        private static string ToHex(byte[]? data)
+        {
+            if (data == null || data.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder sb = new StringBuilder(data.Length * 2);
+            foreach (byte b in data)
+            {
+                sb.Append(b.ToString("X2", CultureInfo.InvariantCulture));
+            }
+            return sb.ToString();
         }
 
         private static bool TryParseArgs(string[] args, out Options? options)
