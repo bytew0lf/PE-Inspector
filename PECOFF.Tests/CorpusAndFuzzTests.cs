@@ -63,6 +63,21 @@ public class CorpusAndFuzzTests
         Assert.Equal(parser.Exports.Length, result.Exports.Count);
     }
 
+    [Fact]
+    public void StrictMode_Throws_On_Invalid_File()
+    {
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, new byte[] { 0x00, 0x01, 0x02 });
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
     public static TheoryData<byte[]> CorruptSamples()
     {
         TheoryData<byte[]> data = new TheoryData<byte[]>();

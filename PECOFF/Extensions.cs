@@ -100,14 +100,29 @@ namespace PECoff
        */
         public static long IndexOf(byte[] haystack, byte[] needle)
         {
+            return IndexOf(haystack, haystack != null ? haystack.Length : 0, needle);
+        }
+
+        public static long IndexOf(byte[] haystack, int length, byte[] needle)
+        {
             if (needle.Length == 0)
             {
                 return 0;
             }
 
+            if (haystack == null || length <= 0)
+            {
+                return -1;
+            }
+
+            if (length > haystack.Length)
+            {
+                length = haystack.Length;
+            }
+
             long[] charTable = MakeCharTable(needle);
             long[] offsetTable = MakeOffsetTable(needle);
-            for (long i = needle.Length - 1, j; i < haystack.Length; )
+            for (long i = needle.Length - 1, j; i < length; )
             {
                 for (j = needle.Length - 1; needle[j] == haystack[i]; --i, --j)
                 {
@@ -443,24 +458,37 @@ namespace PECoff
 
         #region Constructors / Destructors
         public FileVersionInfo(byte[] buffer)
+            : this(buffer, buffer != null ? buffer.Length : 0)
         {
+        }
+
+        public FileVersionInfo(byte[] buffer, int length)
+        {
+            if (buffer == null || length <= 0)
+            {
+                _ms = new MemoryStream(Array.Empty<byte>());
+                return;
+            }
+
+            if (length > buffer.Length)
+            {
+                length = buffer.Length;
+            }
+
             // Constructor
-            _ms = new MemoryStream(buffer);
+            _ms = new MemoryStream(buffer, 0, length, false, true);
 
             // VS_VERSION_INFO
-            byte[] pattern = Encoding.Unicode.GetBytes("VS_VERSION_INFO");            
-            long pos = Search.IndexOf(buffer, pattern);
+            byte[] pattern = Encoding.Unicode.GetBytes("VS_VERSION_INFO");
+            long pos = Search.IndexOf(buffer, length, pattern);
             if (pos == -1)
             {
                 return; // No VersionInfo found
             }
-            
-            _ms.Position = pos - 6; // setup the correct offset            
+
+            _ms.Position = pos - 6; // setup the correct offset
             vi = new VS_VERSIONINFO(new BinaryReader(_ms));
             ParseVersionResource(buffer, (int)(pos - 6));
-                       
-            //_ms.Position -= 6;
-            //VarFileInfo sfi = new VarFileInfo(new BinaryReader(_ms));
         }
 
         ~FileVersionInfo()

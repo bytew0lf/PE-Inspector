@@ -58,6 +58,9 @@ public class PECOFFTests
         Assert.True(IsUpperHex(parser.Hash));
         Assert.NotNull(parser.Imports);
         Assert.NotNull(parser.Exports);
+        Assert.NotNull(parser.ClrMetadata);
+        Assert.False(string.IsNullOrWhiteSpace(parser.ClrMetadata.AssemblyName));
+        Assert.False(string.IsNullOrWhiteSpace(parser.ClrMetadata.Mvid));
     }
 
     [Fact]

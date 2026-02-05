@@ -68,6 +68,8 @@ namespace PECoff
         public IReadOnlyList<byte[]> Certificates { get; }
         public IReadOnlyList<CertificateEntry> CertificateEntries { get; }
         public IReadOnlyList<ResourceEntry> Resources { get; }
+        public IReadOnlyList<ResourceStringTableInfo> ResourceStringTables { get; }
+        public IReadOnlyList<ResourceManifestInfo> ResourceManifests { get; }
         public ClrMetadataInfo ClrMetadata { get; }
         public IReadOnlyList<string> Imports { get; }
         public IReadOnlyList<ImportEntry> ImportEntries { get; }
@@ -110,6 +112,8 @@ namespace PECoff
             byte[][] certificates,
             CertificateEntry[] certificateEntries,
             ResourceEntry[] resources,
+            ResourceStringTableInfo[] resourceStringTables,
+            ResourceManifestInfo[] resourceManifests,
             ClrMetadataInfo clrMetadata,
             string[] imports,
             ImportEntry[] importEntries,
@@ -151,6 +155,8 @@ namespace PECoff
             Certificates = Array.AsReadOnly(certificates ?? Array.Empty<byte[]>());
             CertificateEntries = Array.AsReadOnly(certificateEntries ?? Array.Empty<CertificateEntry>());
             Resources = Array.AsReadOnly(resources ?? Array.Empty<ResourceEntry>());
+            ResourceStringTables = Array.AsReadOnly(resourceStringTables ?? Array.Empty<ResourceStringTableInfo>());
+            ResourceManifests = Array.AsReadOnly(resourceManifests ?? Array.Empty<ResourceManifestInfo>());
             ClrMetadata = clrMetadata;
             Imports = Array.AsReadOnly(imports ?? Array.Empty<string>());
             ImportEntries = Array.AsReadOnly(importEntries ?? Array.Empty<ImportEntry>());
@@ -159,6 +165,50 @@ namespace PECoff
             ExportEntries = Array.AsReadOnly(exportEntries ?? Array.Empty<ExportEntry>());
             AssemblyReferences = Array.AsReadOnly(assemblyReferences ?? Array.Empty<string>());
             AssemblyReferenceInfos = Array.AsReadOnly(assemblyReferenceInfos ?? Array.Empty<AssemblyReferenceInfo>());
+        }
+    }
+
+    public sealed class ClrAssemblyReferenceInfo
+    {
+        public string Name { get; }
+        public string Version { get; }
+        public string Culture { get; }
+        public string PublicKeyOrToken { get; }
+
+        public ClrAssemblyReferenceInfo(string name, string version, string culture, string publicKeyOrToken)
+        {
+            Name = name ?? string.Empty;
+            Version = version ?? string.Empty;
+            Culture = culture ?? string.Empty;
+            PublicKeyOrToken = publicKeyOrToken ?? string.Empty;
+        }
+    }
+
+    public sealed class ResourceStringTableInfo
+    {
+        public uint BlockId { get; }
+        public ushort LanguageId { get; }
+        public string[] Strings { get; }
+
+        public ResourceStringTableInfo(uint blockId, ushort languageId, string[] strings)
+        {
+            BlockId = blockId;
+            LanguageId = languageId;
+            Strings = strings ?? Array.Empty<string>();
+        }
+    }
+
+    public sealed class ResourceManifestInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public string Content { get; }
+
+        public ResourceManifestInfo(uint nameId, ushort languageId, string content)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Content = content ?? string.Empty;
         }
     }
 }

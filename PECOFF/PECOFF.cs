@@ -6,6 +6,7 @@ using System.Text;
 
 using System.IO;
 using System.Reflection;
+using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 
 using System.Security.Cryptography;
@@ -180,6 +181,11 @@ namespace PECoff
         public uint EntryPointToken { get; }
         public string MetadataVersion { get; }
         public ClrStreamInfo[] Streams { get; }
+        public string AssemblyName { get; }
+        public string AssemblyVersion { get; }
+        public string Mvid { get; }
+        public string TargetFramework { get; }
+        public ClrAssemblyReferenceInfo[] AssemblyReferences { get; }
 
         public ClrMetadataInfo(
             ushort majorRuntimeVersion,
@@ -187,7 +193,12 @@ namespace PECoff
             uint flags,
             uint entryPointToken,
             string metadataVersion,
-            ClrStreamInfo[] streams)
+            ClrStreamInfo[] streams,
+            string assemblyName,
+            string assemblyVersion,
+            string mvid,
+            string targetFramework,
+            ClrAssemblyReferenceInfo[] assemblyReferences)
         {
             MajorRuntimeVersion = majorRuntimeVersion;
             MinorRuntimeVersion = minorRuntimeVersion;
@@ -195,6 +206,11 @@ namespace PECoff
             EntryPointToken = entryPointToken;
             MetadataVersion = metadataVersion ?? string.Empty;
             Streams = streams ?? Array.Empty<ClrStreamInfo>();
+            AssemblyName = assemblyName ?? string.Empty;
+            AssemblyVersion = assemblyVersion ?? string.Empty;
+            Mvid = mvid ?? string.Empty;
+            TargetFramework = targetFramework ?? string.Empty;
+            AssemblyReferences = assemblyReferences ?? Array.Empty<ClrAssemblyReferenceInfo>();
         }
     }
 
@@ -1087,6 +1103,18 @@ namespace PECoff
             get { return _resources.ToArray(); }
         }
 
+        private readonly List<ResourceStringTableInfo> _resourceStringTables = new List<ResourceStringTableInfo>();
+        public ResourceStringTableInfo[] ResourceStringTables
+        {
+            get { return _resourceStringTables.ToArray(); }
+        }
+
+        private readonly List<ResourceManifestInfo> _resourceManifests = new List<ResourceManifestInfo>();
+        public ResourceManifestInfo[] ResourceManifests
+        {
+            get { return _resourceManifests.ToArray(); }
+        }
+
         private ClrMetadataInfo _clrMetadata;
         public ClrMetadataInfo ClrMetadata
         {
@@ -1295,6 +1323,8 @@ namespace PECoff
                 _certificates.ToArray(),
                 _certificateEntries.ToArray(),
                 _resources.ToArray(),
+                _resourceStringTables.ToArray(),
+                _resourceManifests.ToArray(),
                 _clrMetadata,
                 imports.ToArray(),
                 _importEntries.ToArray(),
@@ -1481,7 +1511,30 @@ namespace PECoff
             return (ushort)(buffer[offset] | (buffer[offset + 1] << 8));
         }
 
+        private static ushort ReadUInt16(ReadOnlySpan<byte> buffer, int offset)
+        {
+            if (offset + 1 >= buffer.Length)
+            {
+                return 0;
+            }
+
+            return (ushort)(buffer[offset] | (buffer[offset + 1] << 8));
+        }
+
         private static uint ReadUInt32(byte[] buffer, int offset)
+        {
+            if (offset + 3 >= buffer.Length)
+            {
+                return 0;
+            }
+
+            return (uint)(buffer[offset] |
+                          (buffer[offset + 1] << 8) |
+                          (buffer[offset + 2] << 16) |
+                          (buffer[offset + 3] << 24));
+        }
+
+        private static uint ReadUInt32(ReadOnlySpan<byte> buffer, int offset)
         {
             if (offset + 3 >= buffer.Length)
             {
@@ -1523,7 +1576,25 @@ namespace PECoff
             return Encoding.ASCII.GetString(buffer, start, length);
         }
 
-        private static bool TryReadResourceName(byte[] buffer, int offset, out string name)
+        private static string ReadNullTerminatedAscii(ReadOnlySpan<byte> buffer, int offset, out int bytesRead)
+        {
+            int start = offset;
+            while (offset < buffer.Length && buffer[offset] != 0)
+            {
+                offset++;
+            }
+
+            bytesRead = offset - start + 1;
+            if (start >= buffer.Length)
+            {
+                return string.Empty;
+            }
+
+            int length = Math.Min(offset - start, buffer.Length - start);
+            return Encoding.ASCII.GetString(buffer.Slice(start, length));
+        }
+
+        private static bool TryReadResourceName(ReadOnlySpan<byte> buffer, int offset, out string name)
         {
             name = string.Empty;
             if (offset < 0 || offset + 2 > buffer.Length)
@@ -1544,11 +1615,11 @@ namespace PECoff
                 return false;
             }
 
-            name = Encoding.Unicode.GetString(buffer, start, byteLength).TrimEnd('\0');
+            name = Encoding.Unicode.GetString(buffer.Slice(start, byteLength)).TrimEnd('\0');
             return true;
         }
 
-        private static bool TryReadResourceDataEntry(byte[] buffer, int offset, out uint dataRva, out uint size, out uint codePage)
+        private static bool TryReadResourceDataEntry(ReadOnlySpan<byte> buffer, int offset, out uint dataRva, out uint size, out uint codePage)
         {
             dataRva = 0;
             size = 0;
@@ -1576,7 +1647,7 @@ namespace PECoff
         }
 
         private void ParseResourceDirectory(
-            byte[] buffer,
+            ReadOnlySpan<byte> buffer,
             int directoryOffset,
             int level,
             uint typeId,
@@ -1586,7 +1657,7 @@ namespace PECoff
             List<IMAGE_SECTION_HEADER> sections,
             HashSet<int> visited)
         {
-            if (buffer == null || buffer.Length == 0)
+            if (buffer.Length == 0)
             {
                 return;
             }
@@ -1710,7 +1781,7 @@ namespace PECoff
         }
 
         private bool TryGetResourceData(
-            byte[] resourceBuffer,
+            ReadOnlySpan<byte> resourceBuffer,
             uint resourceBaseRva,
             uint dataRva,
             uint dataSize,
@@ -1723,13 +1794,13 @@ namespace PECoff
                 return false;
             }
 
-            if (resourceBuffer != null && resourceBuffer.Length > 0 && dataRva >= resourceBaseRva)
+            if (resourceBuffer.Length > 0 && dataRva >= resourceBaseRva)
             {
                 uint offset = dataRva - resourceBaseRva;
                 if (offset <= int.MaxValue && size <= resourceBuffer.Length - (int)offset)
                 {
                     data = new byte[size];
-                    Buffer.BlockCopy(resourceBuffer, (int)offset, data, 0, size);
+                    resourceBuffer.Slice((int)offset, size).CopyTo(data);
                     return true;
                 }
             }
@@ -1743,6 +1814,137 @@ namespace PECoff
             }
 
             return false;
+        }
+
+        private void DecodeResourceStringTables(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.String)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceData(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out byte[] data))
+                {
+                    continue;
+                }
+
+                if (!TryParseStringTable(data, out string[] strings))
+                {
+                    continue;
+                }
+
+                _resourceStringTables.Add(new ResourceStringTableInfo(entry.NameId, entry.LanguageId, strings));
+            }
+        }
+
+        private void DecodeResourceManifests(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.Manifest)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceData(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out byte[] data))
+                {
+                    continue;
+                }
+
+                string content = DecodeTextResource(data);
+                if (!string.IsNullOrWhiteSpace(content))
+                {
+                    _resourceManifests.Add(new ResourceManifestInfo(entry.NameId, entry.LanguageId, content));
+                }
+            }
+        }
+
+        private static bool TryParseStringTable(byte[] data, out string[] strings)
+        {
+            strings = Array.Empty<string>();
+            if (data == null || data.Length < 2)
+            {
+                return false;
+            }
+
+            List<string> result = new List<string>(16);
+            int offset = 0;
+            for (int i = 0; i < 16 && offset + 2 <= data.Length; i++)
+            {
+                ushort length = ReadUInt16(data, offset);
+                offset += 2;
+
+                if (length == 0)
+                {
+                    result.Add(string.Empty);
+                    continue;
+                }
+
+                int byteLength = length * 2;
+                if (offset + byteLength > data.Length)
+                {
+                    break;
+                }
+
+                string value = Encoding.Unicode.GetString(data, offset, byteLength);
+                result.Add(value);
+                offset += byteLength;
+            }
+
+            if (result.Count == 0)
+            {
+                return false;
+            }
+
+            while (result.Count < 16)
+            {
+                result.Add(string.Empty);
+            }
+
+            strings = result.ToArray();
+            return true;
+        }
+
+        private static string DecodeTextResource(byte[] data)
+        {
+            if (data == null || data.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            if (data.Length >= 2)
+            {
+                if (data[0] == 0xFF && data[1] == 0xFE)
+                {
+                    return Encoding.Unicode.GetString(data, 2, data.Length - 2).TrimEnd('\0');
+                }
+
+                if (data[0] == 0xFE && data[1] == 0xFF)
+                {
+                    return Encoding.BigEndianUnicode.GetString(data, 2, data.Length - 2).TrimEnd('\0');
+                }
+            }
+
+            int sample = Math.Min(data.Length, 64);
+            int zeroCount = 0;
+            for (int i = 1; i < sample; i += 2)
+            {
+                if (data[i] == 0)
+                {
+                    zeroCount++;
+                }
+            }
+
+            if (zeroCount > sample / 4)
+            {
+                return Encoding.Unicode.GetString(data).TrimEnd('\0');
+            }
+
+            return Encoding.UTF8.GetString(data).TrimEnd('\0');
         }
 
         private void ValidateSections(IMAGE_DOS_HEADER dosHeader, IMAGE_NT_HEADERS peHeader, List<IMAGE_SECTION_HEADER> sections)
@@ -2025,26 +2227,33 @@ namespace PECoff
             }
         }
 
-        private static bool TryParseClrMetadata(byte[] buffer, IMAGE_COR20_HEADER header, out ClrMetadataInfo info)
+        private static bool TryParseClrMetadata(byte[] buffer, int length, IMAGE_COR20_HEADER header, out ClrMetadataInfo info)
         {
             info = null;
-            if (buffer == null || buffer.Length < 16)
+            if (buffer == null || length < 16)
             {
                 return false;
             }
 
-            uint signature = ReadUInt32(buffer, 0);
+            if (length > buffer.Length)
+            {
+                length = buffer.Length;
+            }
+
+            ReadOnlySpan<byte> metadataSpan = new ReadOnlySpan<byte>(buffer, 0, length);
+
+            uint signature = ReadUInt32(metadataSpan, 0);
             if (signature != 0x424A5342)
             {
                 return false;
             }
 
-            ushort majorVersion = ReadUInt16(buffer, 4);
-            ushort minorVersion = ReadUInt16(buffer, 6);
-            uint versionLength = ReadUInt32(buffer, 12);
+            ushort majorVersion = ReadUInt16(metadataSpan, 4);
+            ushort minorVersion = ReadUInt16(metadataSpan, 6);
+            uint versionLength = ReadUInt32(metadataSpan, 12);
             int versionOffset = 16;
 
-            if (versionOffset + versionLength > buffer.Length)
+            if (versionOffset + versionLength > metadataSpan.Length)
             {
                 return false;
             }
@@ -2052,32 +2261,39 @@ namespace PECoff
             string versionString = ReadAsciiString(buffer, versionOffset, (int)versionLength);
             int cursor = Align4(versionOffset + (int)versionLength);
 
-            if (cursor + 4 > buffer.Length)
+            if (cursor + 4 > metadataSpan.Length)
             {
                 return false;
             }
 
-            ushort flags = ReadUInt16(buffer, cursor);
-            ushort streams = ReadUInt16(buffer, cursor + 2);
+            ushort flags = ReadUInt16(metadataSpan, cursor);
+            ushort streams = ReadUInt16(metadataSpan, cursor + 2);
             cursor += 4;
 
             List<ClrStreamInfo> streamInfos = new List<ClrStreamInfo>();
             for (int i = 0; i < streams; i++)
             {
-                if (cursor + 8 > buffer.Length)
+                if (cursor + 8 > metadataSpan.Length)
                 {
-                    break;
+                    return false;
                 }
 
-                uint offset = ReadUInt32(buffer, cursor);
-                uint size = ReadUInt32(buffer, cursor + 4);
+                uint offset = ReadUInt32(metadataSpan, cursor);
+                uint size = ReadUInt32(metadataSpan, cursor + 4);
                 cursor += 8;
 
-                string name = ReadNullTerminatedAscii(buffer, cursor, out int nameBytes);
+                string name = ReadNullTerminatedAscii(metadataSpan, cursor, out int nameBytes);
                 cursor = Align4(cursor + nameBytes);
 
                 streamInfos.Add(new ClrStreamInfo(name, offset, size));
             }
+
+            string assemblyName = string.Empty;
+            string assemblyVersion = string.Empty;
+            string mvid = string.Empty;
+            string targetFramework = string.Empty;
+            ClrAssemblyReferenceInfo[] assemblyReferences = Array.Empty<ClrAssemblyReferenceInfo>();
+            TryParseMetadataDetails(buffer, length, out assemblyName, out assemblyVersion, out mvid, out targetFramework, out assemblyReferences);
 
             info = new ClrMetadataInfo(
                 header.MajorRuntimeVersion,
@@ -2085,14 +2301,191 @@ namespace PECoff
                 header.Flags,
                 header.EntryPointToken,
                 versionString,
-                streamInfos.ToArray());
+                streamInfos.ToArray(),
+                assemblyName,
+                assemblyVersion,
+                mvid,
+                targetFramework,
+                assemblyReferences);
 
             return true;
+        }
+
+        private static bool TryParseMetadataDetails(
+            byte[] metadata,
+            int length,
+            out string assemblyName,
+            out string assemblyVersion,
+            out string mvid,
+            out string targetFramework,
+            out ClrAssemblyReferenceInfo[] assemblyReferences)
+        {
+            assemblyName = string.Empty;
+            assemblyVersion = string.Empty;
+            mvid = string.Empty;
+            targetFramework = string.Empty;
+            assemblyReferences = Array.Empty<ClrAssemblyReferenceInfo>();
+
+            try
+            {
+                if (metadata == null || length <= 0)
+                {
+                    return false;
+                }
+
+                if (length > metadata.Length)
+                {
+                    length = metadata.Length;
+                }
+
+                System.Collections.Immutable.ImmutableArray<byte> image = System.Collections.Immutable.ImmutableArray.Create(metadata, 0, length);
+                using (MetadataReaderProvider provider = MetadataReaderProvider.FromMetadataImage(image))
+                {
+                    MetadataReader reader = provider.GetMetadataReader();
+                    if (!reader.IsAssembly)
+                    {
+                        return false;
+                    }
+
+                    AssemblyDefinition assembly = reader.GetAssemblyDefinition();
+                    assemblyName = reader.GetString(assembly.Name);
+                    assemblyVersion = assembly.Version.ToString();
+
+                    ModuleDefinition module = reader.GetModuleDefinition();
+                    Guid moduleMvid = reader.GetGuid(module.Mvid);
+                    if (moduleMvid != Guid.Empty)
+                    {
+                        mvid = moduleMvid.ToString();
+                    }
+
+                    List<ClrAssemblyReferenceInfo> refs = new List<ClrAssemblyReferenceInfo>();
+                    foreach (AssemblyReferenceHandle handle in reader.AssemblyReferences)
+                    {
+                        AssemblyReference reference = reader.GetAssemblyReference(handle);
+                        string name = reader.GetString(reference.Name);
+                        string version = reference.Version.ToString();
+                        string culture = reference.Culture.IsNil ? string.Empty : reader.GetString(reference.Culture);
+                        string token = ToHex(reader.GetBlobBytes(reference.PublicKeyOrToken));
+
+                        refs.Add(new ClrAssemblyReferenceInfo(name, version, culture, token));
+                    }
+
+                    assemblyReferences = refs.ToArray();
+                    targetFramework = TryGetTargetFramework(reader, assembly);
+                    return true;
+                }
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        private static string TryGetTargetFramework(MetadataReader reader, AssemblyDefinition assembly)
+        {
+            foreach (CustomAttributeHandle handle in assembly.GetCustomAttributes())
+            {
+                CustomAttribute attribute = reader.GetCustomAttribute(handle);
+                if (!IsTargetFrameworkAttribute(reader, attribute))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    BlobReader blob = reader.GetBlobReader(attribute.Value);
+                    if (blob.Length < 2)
+                    {
+                        continue;
+                    }
+
+                    if (blob.ReadUInt16() != 1)
+                    {
+                        continue;
+                    }
+
+                    string value = blob.ReadSerializedString();
+                    return value ?? string.Empty;
+                }
+                catch (Exception)
+                {
+                    return string.Empty;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static bool IsTargetFrameworkAttribute(MetadataReader reader, CustomAttribute attribute)
+        {
+            EntityHandle ctor = attribute.Constructor;
+            if (ctor.Kind == HandleKind.MemberReference)
+            {
+                MemberReference member = reader.GetMemberReference((MemberReferenceHandle)ctor);
+                return TryGetTypeName(reader, member.Parent, out string name, out string ns) &&
+                       string.Equals(name, "TargetFrameworkAttribute", StringComparison.Ordinal) &&
+                       string.Equals(ns, "System.Runtime.Versioning", StringComparison.Ordinal);
+            }
+
+            if (ctor.Kind == HandleKind.MethodDefinition)
+            {
+                MethodDefinition method = reader.GetMethodDefinition((MethodDefinitionHandle)ctor);
+                TypeDefinition typeDef = reader.GetTypeDefinition(method.GetDeclaringType());
+                string name = reader.GetString(typeDef.Name);
+                string ns = reader.GetString(typeDef.Namespace);
+                return string.Equals(name, "TargetFrameworkAttribute", StringComparison.Ordinal) &&
+                       string.Equals(ns, "System.Runtime.Versioning", StringComparison.Ordinal);
+            }
+
+            return false;
+        }
+
+        private static bool TryGetTypeName(MetadataReader reader, EntityHandle handle, out string name, out string ns)
+        {
+            name = string.Empty;
+            ns = string.Empty;
+
+            if (handle.Kind == HandleKind.TypeReference)
+            {
+                TypeReference typeRef = reader.GetTypeReference((TypeReferenceHandle)handle);
+                name = reader.GetString(typeRef.Name);
+                ns = reader.GetString(typeRef.Namespace);
+                return true;
+            }
+
+            if (handle.Kind == HandleKind.TypeDefinition)
+            {
+                TypeDefinition typeDef = reader.GetTypeDefinition((TypeDefinitionHandle)handle);
+                name = reader.GetString(typeDef.Name);
+                ns = reader.GetString(typeDef.Namespace);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string ToHex(byte[] data)
+        {
+            if (data == null || data.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder sb = new StringBuilder(data.Length * 2);
+            foreach (byte b in data)
+            {
+                sb.Append(b.ToString("X2", System.Globalization.CultureInfo.InvariantCulture));
+            }
+            return sb.ToString();
         }
 
         private void Fail(string message)
         {
             _parseResult.AddError(message);
+            if (_options != null && _options.StrictMode)
+            {
+                throw new PECOFFParseException(message);
+            }
         }
 
         private void Warn(string message)
@@ -2117,6 +2510,8 @@ namespace PECoff
             {
                 _parseResult.Clear();
                 _resources.Clear();
+                _resourceStringTables.Clear();
+                _resourceManifests.Clear();
                 imports.Clear();
                 exports.Clear();
                 _importEntries.Clear();
@@ -2460,79 +2855,90 @@ namespace PECoff
                                     break;
                                 }
 
-                                buffer = new byte[rsrcSize];
-                                ReadExactly(PEFileStream, buffer, 0, buffer.Length);
-
-                                int rootOffset = 0;
-                                if (dataDirectory[i].VirtualAddress >= resourceSection.VirtualAddress)
+                                byte[] resourceBuffer = ArrayPool<byte>.Shared.Rent(rsrcSize);
+                                ReadOnlySpan<byte> resourceSpan;
+                                try
                                 {
-                                    uint delta = dataDirectory[i].VirtualAddress - resourceSection.VirtualAddress;
-                                    if (delta <= int.MaxValue && delta < (uint)rsrcSize)
+                                    ReadExactly(PEFileStream, resourceBuffer, 0, rsrcSize);
+                                    resourceSpan = new ReadOnlySpan<byte>(resourceBuffer, 0, rsrcSize);
+
+                                    int rootOffset = 0;
+                                    if (dataDirectory[i].VirtualAddress >= resourceSection.VirtualAddress)
                                     {
-                                        rootOffset = (int)delta;
+                                        uint delta = dataDirectory[i].VirtualAddress - resourceSection.VirtualAddress;
+                                        if (delta <= int.MaxValue && delta < (uint)rsrcSize)
+                                        {
+                                            rootOffset = (int)delta;
+                                        }
+                                        else
+                                        {
+                                            Warn("Resource directory root offset outside section bounds.");
+                                        }
                                     }
                                     else
                                     {
-                                        Warn("Resource directory root offset outside section bounds.");
+                                        Warn("Resource directory RVA does not map to resource section.");
                                     }
-                                }
-                                else
-                                {
-                                    Warn("Resource directory RVA does not map to resource section.");
-                                }
 
-                                ParseResourceDirectory(buffer, rootOffset, 0, 0, string.Empty, 0, string.Empty, sections, new HashSet<int>());
+                                    ParseResourceDirectory(resourceSpan, rootOffset, 0, 0, string.Empty, 0, string.Empty, sections, new HashSet<int>());
+                                    DecodeResourceStringTables(resourceSpan, resourceSection.VirtualAddress, sections);
+                                    DecodeResourceManifests(resourceSpan, resourceSection.VirtualAddress, sections);
 
-                                FileVersionInfo fvi;
-                                ResourceEntry versionEntry = _resources.FirstOrDefault(r => r.TypeId == (uint)ResourceType.Version);
-                                if (versionEntry != null &&
-                                    TryGetResourceData(buffer, resourceSection.VirtualAddress, versionEntry.DataRva, versionEntry.Size, sections, out byte[] versionData))
-                                {
-                                    fvi = new FileVersionInfo(versionData);
-                                    if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
+                                    FileVersionInfo fvi;
+                                    ResourceEntry versionEntry = _resources.FirstOrDefault(r => r.TypeId == (uint)ResourceType.Version);
+                                    if (versionEntry != null &&
+                                        TryGetResourceData(resourceSpan, resourceSection.VirtualAddress, versionEntry.DataRva, versionEntry.Size, sections, out byte[] versionData))
                                     {
-                                        FileVersionInfo fallback = new FileVersionInfo(buffer);
-                                        if (!(fallback.ProductVersion.Equals("0.0.0.0") && fallback.FileVersion.Equals("0.0.0.0")))
+                                        fvi = new FileVersionInfo(versionData);
+                                        if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
                                         {
-                                            fvi = fallback;
+                                            FileVersionInfo fallback = new FileVersionInfo(resourceBuffer, rsrcSize);
+                                            if (!(fallback.ProductVersion.Equals("0.0.0.0") && fallback.FileVersion.Equals("0.0.0.0")))
+                                            {
+                                                fvi = fallback;
+                                            }
                                         }
                                     }
-                                }
-                                else
-                                {
-                                    fvi = new FileVersionInfo(buffer);
-                                }
+                                    else
+                                    {
+                                        fvi = new FileVersionInfo(resourceBuffer, rsrcSize);
+                                    }
 
-                                _fileversion = fvi.FileVersion;
-                                _productversion = fvi.ProductVersion;
-                                _companyName = fvi.CompanyName;
-                                _fileDescription = fvi.FileDescription;
-                                _internalName = fvi.InternalName;
-                                _originalFilename = fvi.OriginalFilename;
-                                _productName = fvi.ProductName;
-                                _comments = fvi.Comments;
-                                _legalCopyright = fvi.LegalCopyright;
-                                _legalTrademarks = fvi.LegalTrademarks;
-                                _privateBuild = fvi.PrivateBuild;
-                                _specialBuild = fvi.SpecialBuild;
-                                _language = fvi.Language;
+                                    _fileversion = fvi.FileVersion;
+                                    _productversion = fvi.ProductVersion;
+                                    _companyName = fvi.CompanyName;
+                                    _fileDescription = fvi.FileDescription;
+                                    _internalName = fvi.InternalName;
+                                    _originalFilename = fvi.OriginalFilename;
+                                    _productName = fvi.ProductName;
+                                    _comments = fvi.Comments;
+                                    _legalCopyright = fvi.LegalCopyright;
+                                    _legalTrademarks = fvi.LegalTrademarks;
+                                    _privateBuild = fvi.PrivateBuild;
+                                    _specialBuild = fvi.SpecialBuild;
+                                    _language = fvi.Language;
 
-                                if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
+                                    if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
+                                    {
+                                        System.Diagnostics.FileVersionInfo versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(PEFileStream.Name);
+                                        _fileversion = versionInfo.FileVersion;
+                                        _productversion = versionInfo.ProductVersion;
+                                        SetIfEmpty(ref _companyName, versionInfo.CompanyName);
+                                        SetIfEmpty(ref _fileDescription, versionInfo.FileDescription);
+                                        SetIfEmpty(ref _internalName, versionInfo.InternalName);
+                                        SetIfEmpty(ref _originalFilename, versionInfo.OriginalFilename);
+                                        SetIfEmpty(ref _productName, versionInfo.ProductName);
+                                        SetIfEmpty(ref _comments, versionInfo.Comments);
+                                        SetIfEmpty(ref _legalCopyright, versionInfo.LegalCopyright);
+                                        SetIfEmpty(ref _legalTrademarks, versionInfo.LegalTrademarks);
+                                        SetIfEmpty(ref _privateBuild, versionInfo.PrivateBuild);
+                                        SetIfEmpty(ref _specialBuild, versionInfo.SpecialBuild);
+                                        SetIfEmpty(ref _language, versionInfo.Language);
+                                    }
+                                }
+                                finally
                                 {
-                                    System.Diagnostics.FileVersionInfo versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(PEFileStream.Name);
-                                    _fileversion = versionInfo.FileVersion;
-                                    _productversion = versionInfo.ProductVersion;
-                                    SetIfEmpty(ref _companyName, versionInfo.CompanyName);
-                                    SetIfEmpty(ref _fileDescription, versionInfo.FileDescription);
-                                    SetIfEmpty(ref _internalName, versionInfo.InternalName);
-                                    SetIfEmpty(ref _originalFilename, versionInfo.OriginalFilename);
-                                    SetIfEmpty(ref _productName, versionInfo.ProductName);
-                                    SetIfEmpty(ref _comments, versionInfo.Comments);
-                                    SetIfEmpty(ref _legalCopyright, versionInfo.LegalCopyright);
-                                    SetIfEmpty(ref _legalTrademarks, versionInfo.LegalTrademarks);
-                                    SetIfEmpty(ref _privateBuild, versionInfo.PrivateBuild);
-                                    SetIfEmpty(ref _specialBuild, versionInfo.SpecialBuild);
-                                    SetIfEmpty(ref _language, versionInfo.Language);
+                                    ArrayPool<byte>.Shared.Return(resourceBuffer);
                                 }
 
                                 break;
@@ -2693,15 +3099,22 @@ namespace PECoff
                                     break;
                                 }
 
-                                byte[] metadataBuffer = new byte[metadataSize];
-                                ReadExactly(PEFileStream, metadataBuffer, 0, metadataBuffer.Length);
-                                if (!TryParseClrMetadata(metadataBuffer, clrHeader, out ClrMetadataInfo metadataInfo))
+                                byte[] metadataBuffer = ArrayPool<byte>.Shared.Rent(metadataSize);
+                                try
                                 {
-                                    Warn("Failed to parse CLR metadata.");
-                                    break;
-                                }
+                                    ReadExactly(PEFileStream, metadataBuffer, 0, metadataSize);
+                                    if (!TryParseClrMetadata(metadataBuffer, metadataSize, clrHeader, out ClrMetadataInfo metadataInfo))
+                                    {
+                                        Warn("Failed to parse CLR metadata.");
+                                        break;
+                                    }
 
-                                _clrMetadata = metadataInfo;
+                                    _clrMetadata = metadataInfo;
+                                }
+                                finally
+                                {
+                                    ArrayPool<byte>.Shared.Return(metadataBuffer);
+                                }
                                 break;
                             case 15:
                                 // Unknown

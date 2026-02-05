@@ -271,6 +271,24 @@ namespace PE_FileInspector
                 sb.AppendLine("  Metadata Version: " + Safe(pe.ClrMetadata.MetadataVersion));
                 sb.AppendLine("  Flags: 0x" + pe.ClrMetadata.Flags.ToString("X8", CultureInfo.InvariantCulture));
                 sb.AppendLine("  EntryPoint Token: 0x" + pe.ClrMetadata.EntryPointToken.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  Assembly Name: " + Safe(pe.ClrMetadata.AssemblyName));
+                sb.AppendLine("  Assembly Version: " + Safe(pe.ClrMetadata.AssemblyVersion));
+                sb.AppendLine("  MVID: " + Safe(pe.ClrMetadata.Mvid));
+                sb.AppendLine("  Target Framework: " + Safe(pe.ClrMetadata.TargetFramework));
+                if (pe.ClrMetadata.AssemblyReferences.Length == 0)
+                {
+                    sb.AppendLine("  Assembly References (metadata): (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Assembly References (metadata):");
+                    foreach (ClrAssemblyReferenceInfo reference in pe.ClrMetadata.AssemblyReferences)
+                    {
+                        sb.AppendLine("    - " + reference.Name + " " + reference.Version +
+                                      (string.IsNullOrWhiteSpace(reference.Culture) ? string.Empty : " (Culture: " + reference.Culture + ")") +
+                                      (string.IsNullOrWhiteSpace(reference.PublicKeyOrToken) ? string.Empty : " [PKT: " + reference.PublicKeyOrToken + "]"));
+                    }
+                }
                 if (pe.ClrMetadata.Streams.Length == 0)
                 {
                     sb.AppendLine("  Streams: (none)");
@@ -445,6 +463,52 @@ namespace PE_FileInspector
                                       " | Size: " + entry.Size.ToString(CultureInfo.InvariantCulture) +
                                       " | DataRVA: 0x" + entry.DataRva.ToString("X8", CultureInfo.InvariantCulture) +
                                       " | FileOffset: " + fileOffset);
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resource String Tables:");
+            if (pe.ResourceStringTables.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceStringTableInfo table in pe.ResourceStringTables.OrderBy(t => t.BlockId).ThenBy(t => t.LanguageId))
+                {
+                    sb.AppendLine("  Block: " + table.BlockId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + table.LanguageId.ToString("X4", CultureInfo.InvariantCulture));
+                    for (int i = 0; i < table.Strings.Length; i++)
+                    {
+                        string value = table.Strings[i];
+                        if (string.IsNullOrEmpty(value))
+                        {
+                            continue;
+                        }
+                        sb.AppendLine("    [" + i.ToString(CultureInfo.InvariantCulture) + "] " + value);
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resource Manifests:");
+            if (pe.ResourceManifests.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceManifestInfo manifest in pe.ResourceManifests.OrderBy(m => m.NameId).ThenBy(m => m.LanguageId))
+                {
+                    sb.AppendLine("  NameId: " + manifest.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + manifest.LanguageId.ToString("X4", CultureInfo.InvariantCulture));
+                    if (!string.IsNullOrWhiteSpace(manifest.Content))
+                    {
+                        foreach (string line in manifest.Content.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None))
+                        {
+                            sb.AppendLine("    " + line);
+                        }
                     }
                 }
             }
