@@ -6,8 +6,7 @@ using System.Text;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.Security;
-using System.Security.Permissions;
+using System.Runtime.Loader;
 
 namespace PECoff
 {
@@ -520,52 +519,25 @@ namespace PECoff
 
     public class AnalyzeAssembly
     {
-        /// <summary>
-        /// Create an app domain
-        /// </summary>
-        /// <returns></returns>
-        private static AppDomain GetTempAppDomain()
-        {
-            //copy the current app domain setup but don't shadow copy files
-            var appName = "TempDomain" + Guid.NewGuid();
-            var domainSetup = new AppDomainSetup
-            {
-                ApplicationName = appName,
-                ShadowCopyFiles = "false",
-                ApplicationBase = AppDomain.CurrentDomain.SetupInformation.ApplicationBase,
-                ConfigurationFile = AppDomain.CurrentDomain.SetupInformation.ConfigurationFile,
-                DynamicBase = AppDomain.CurrentDomain.SetupInformation.DynamicBase,
-                LicenseFile = AppDomain.CurrentDomain.SetupInformation.LicenseFile,
-                LoaderOptimization = AppDomain.CurrentDomain.SetupInformation.LoaderOptimization,
-                PrivateBinPath = AppDomain.CurrentDomain.SetupInformation.PrivateBinPath,
-                PrivateBinPathProbe = AppDomain.CurrentDomain.SetupInformation.PrivateBinPathProbe
-            };
-
-            //create new domain with full trust
-            //return AppDomain.CreateDomain(appName, AppDomain.CurrentDomain.Evidence, domainSetup, new PermissionSet(PermissionState.Unrestricted));
-            return AppDomain.CreateDomain(appName);
-        }
-
         #region Constructors / Destructors
         public AnalyzeAssembly(byte[] RawData)
         {
-            AppDomain appDomain = GetTempAppDomain();
+            TempAssemblyLoadContext loadContext = new TempAssemblyLoadContext();
             // Constructor          
             try
             {
-                // To dynamically load and unload assemblies for analysis we each have to load them in its own AppDomain
-                // When a AppDomain is unloaded, each associated assembly is unloaded as well.
-                // https://docs.microsoft.com/de-de/dotnet/csharp/programming-guide/concepts/assemblies-gac/how-to-load-and-unload-assemblies
-                // AppDomain Example from https://gist.github.com/Shazwazza/7147978
-                var type = typeof(AssemblyLoader);
-                var value = (AssemblyLoader)appDomain.CreateInstanceAndUnwrap(type.Assembly.FullName, type.FullName);
-                value.Load(RawData);
+                AssemblyLoader value = new AssemblyLoader();
+                using (MemoryStream ms = new MemoryStream(RawData, false))
+                {
+                    Assembly asm = loadContext.LoadFromStream(ms);
+                    value.Load(asm);
+                }
 
                 _isDotNetFile = value.IsDotNetFile;
                 _isObfuscated = value.IsObfuscated;
                 _obfuscationPercentage = value.ObfuscationPercentage;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 //Console.WriteLine("General Exception");
                 _obfuscationPercentage = 0.0;
@@ -574,7 +546,7 @@ namespace PECoff
             }
             finally
             {
-                AppDomain.Unload(appDomain);
+                loadContext.Unload();
                 GC.Collect();
                 GC.WaitForPendingFinalizers();
                 GC.Collect();
@@ -631,11 +603,10 @@ namespace PECoff
         private bool _isDotNetFile;
         public bool IsDotNetFile => _isDotNetFile;
 
-        public void Load(byte[] buffer)
+        public void Load(Assembly asm)
         {
             try
             {
-                System.Reflection.Assembly asm = AppDomain.CurrentDomain.Load(buffer);
                 _isDotNetFile = true;
 
                 Type[] types = new Type[] { };
@@ -753,7 +724,7 @@ namespace PECoff
                 _isDotNetFile = false;
                 _isObfuscated = false;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 //Console.WriteLine("General Exception");
                 _obfuscationPercentage = 0.0;
@@ -761,5 +732,12 @@ namespace PECoff
                 _isObfuscated = false;
             }
         }   
+    }
+
+    internal sealed class TempAssemblyLoadContext : AssemblyLoadContext
+    {
+        public TempAssemblyLoadContext() : base(isCollectible: true)
+        {
+        }
     }
 }

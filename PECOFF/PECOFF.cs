@@ -11,6 +11,38 @@ using System.Security.Cryptography;
 
 namespace PECoff
 {
+    public sealed class ParseResult
+    {
+        private readonly List<string> _errors = new List<string>();
+        private readonly List<string> _warnings = new List<string>();
+
+        public IReadOnlyList<string> Errors => _errors;
+        public IReadOnlyList<string> Warnings => _warnings;
+        public bool IsSuccess => _errors.Count == 0;
+
+        internal void Clear()
+        {
+            _errors.Clear();
+            _warnings.Clear();
+        }
+
+        internal void AddError(string message)
+        {
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                _errors.Add(message);
+            }
+        }
+
+        internal void AddWarning(string message)
+        {
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                _warnings.Add(message);
+            }
+        }
+    }
+
     // Based on https://docs.microsoft.com/en-us/windows/desktop/debug/pe-format
     // https://en.wikibooks.org/wiki/X86_Disassembly/Windows_Executable_Files#Section_Table
     // https://tech-zealots.com/malware-analysis/understanding-concepts-of-va-rva-and-offset/
@@ -19,8 +51,8 @@ namespace PECoff
     public class PECOFF
     {
         private BinaryReader PEFile;
-        private StreamReader PEFileStreamReader;
-        private Stream PEFileStream;
+        private FileStream PEFileStream;
+        private readonly ParseResult _parseResult = new ParseResult();
 
         #region Constructor / Destructor
         public PECOFF(string FileName)
@@ -31,15 +63,16 @@ namespace PECoff
             // Constructor
             if (File.Exists(FileName))
             {
-                PEFileStreamReader = new StreamReader(FileName);
-                PEFileStream = PEFileStreamReader.BaseStream;
-                PEFile = new BinaryReader(PEFileStream);
+                PEFileStream = new FileStream(FileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                PEFile = new BinaryReader(PEFileStream, Encoding.UTF8, leaveOpen: true);
 
                 ReadPE();
             }
             else
             {
                 PEFile = null;
+                PEFileStream = null;
+                _parseResult.AddError("File does not exist.");
             }
         }
         
@@ -48,8 +81,12 @@ namespace PECoff
             // Destructor
             if (PEFile != null)
             {
-                PEFile.Close();
                 PEFile.Dispose();
+            }
+
+            if (PEFileStream != null)
+            {
+                PEFileStream.Dispose();
             }
         }
         #endregion
@@ -288,8 +325,7 @@ namespace PECoff
                 IMAGE_DOS_HEADER hdr = new IMAGE_DOS_HEADER();
                 this = hdr;
 
-                byte[] buffer = new byte[Marshal.SizeOf(this)];
-                reader.Read(buffer, 0, buffer.Length);
+                byte[] buffer = ReadBytesExact(reader, Marshal.SizeOf(typeof(IMAGE_DOS_HEADER)));
                 hdr = buffer.ToStructure<IMAGE_DOS_HEADER>();
                 
                 this = hdr;
@@ -301,43 +337,46 @@ namespace PECoff
         {
             public UInt32 Signature;
             public IMAGE_FILE_HEADER FileHeader;
-            public IntPtr OptionalHeader;
             public PEFormat Magic;
+            public IMAGE_DATA_DIRECTORY[] DataDirectory;
 
             public IMAGE_NT_HEADERS(BinaryReader reader)
             {
-                IMAGE_NT_HEADERS hdr = new IMAGE_NT_HEADERS();
+                IMAGE_NT_HEADERS hdr = new IMAGE_NT_HEADERS
+                {
+                    DataDirectory = Array.Empty<IMAGE_DATA_DIRECTORY>()
+                };
                 this = hdr;
 
-                byte[] buffer = new byte[Marshal.SizeOf(this)];
-                reader.Read(buffer, 0, buffer.Length);
-                hdr = buffer.ToStructure<IMAGE_NT_HEADERS>();
+                hdr.Signature = reader.ReadUInt32();
 
-                Extensions.Int64Words w = hdr.OptionalHeader.ToInt64().GetWords();
-                PEFormat _magic = (PEFormat)w.Word0;
+                byte[] fileHeaderBuffer = ReadBytesExact(reader, Marshal.SizeOf(typeof(IMAGE_FILE_HEADER)));
+                hdr.FileHeader = fileHeaderBuffer.ToStructure<IMAGE_FILE_HEADER>();
 
-                reader.BaseStream.Position -= (Marshal.SizeOf(new IntPtr()) + sizeof(PEFormat)); // Correct the position of the Stream for continued reading
-                switch (_magic)
+                if (hdr.FileHeader.SizeOfOptionalHeader < sizeof(ushort))
                 {
-                    case PEFormat.PE32:
-                        buffer = new byte[Marshal.SizeOf(new IMAGE_OPTIONAL_HEADER32())];                        
-                        GCHandle handle32 = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-                        reader.Read(buffer, 0, buffer.Length);
-                        hdr.OptionalHeader = handle32.AddrOfPinnedObject();
-                        handle32.Free(); // hopefully this is right
-                        hdr.Magic = PEFormat.PE32;
-                        break;
+                    this = hdr;
+                    return;
+                }
 
-                    case PEFormat.PE32plus:
-                        buffer = new byte[Marshal.SizeOf(new IMAGE_OPTIONAL_HEADER64())];
-                        GCHandle handle64 = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-                        reader.Read(buffer, 0, buffer.Length);
-                        hdr.OptionalHeader = handle64.AddrOfPinnedObject();
-                        handle64.Free(); // hopefully this is right
-                        hdr.Magic = PEFormat.PE32plus;
-                        break;
-                    default:
-                        break;
+                byte[] optionalHeaderBuffer = ReadBytesExact(reader, hdr.FileHeader.SizeOfOptionalHeader);
+                hdr.Magic = (PEFormat)BitConverter.ToUInt16(optionalHeaderBuffer, 0);
+
+                if (hdr.Magic == PEFormat.PE32 &&
+                    optionalHeaderBuffer.Length >= Marshal.SizeOf(typeof(IMAGE_OPTIONAL_HEADER32)))
+                {
+                    IMAGE_OPTIONAL_HEADER32 opt32 = optionalHeaderBuffer.ToStructure<IMAGE_OPTIONAL_HEADER32>();
+                    hdr.DataDirectory = opt32.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
+                }
+                else if (hdr.Magic == PEFormat.PE32plus &&
+                         optionalHeaderBuffer.Length >= Marshal.SizeOf(typeof(IMAGE_OPTIONAL_HEADER64)))
+                {
+                    IMAGE_OPTIONAL_HEADER64 opt64 = optionalHeaderBuffer.ToStructure<IMAGE_OPTIONAL_HEADER64>();
+                    hdr.DataDirectory = opt64.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
+                }
+                else
+                {
+                    hdr.DataDirectory = Array.Empty<IMAGE_DATA_DIRECTORY>();
                 }
 
                 this = hdr;
@@ -488,8 +527,7 @@ namespace PECoff
                 IMAGE_SECTION_HEADER section = new IMAGE_SECTION_HEADER();
                 this = section;
 
-                byte[] buffer = new byte[Marshal.SizeOf(this)];
-                reader.Read(buffer, 0, buffer.Length);
+                byte[] buffer = ReadBytesExact(reader, Marshal.SizeOf(typeof(IMAGE_SECTION_HEADER)));
                 section = buffer.ToStructure<IMAGE_SECTION_HEADER>();
 
                 this = section;
@@ -497,7 +535,7 @@ namespace PECoff
 
             public string Section
             {
-                get { return new string(Name); }
+                get { return Name == null ? string.Empty : new string(Name); }
             }
         }
         
@@ -555,6 +593,14 @@ namespace PECoff
             public CertificateRevision wRevision;
             public CertificateType wCertificateType;
             public byte[] bCertificate;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct CertificateTableHeader
+        {
+            public UInt32 dwLength;
+            public CertificateRevision wRevision;
+            public CertificateType wCertificateType;
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -688,42 +734,157 @@ namespace PECoff
         {
             get { return exports.ToArray(); }
         }
+
+        public ParseResult ParseResult => _parseResult;
         #endregion
 
         #region Functions
 
-        private long GetFileOffset(List<IMAGE_SECTION_HEADER> sections, UInt32 DirectoryVA)
+        private static byte[] ReadBytesExact(BinaryReader reader, int length)
         {
-            long fileoffset = 0;
+            byte[] buffer = reader.ReadBytes(length);
+            if (buffer.Length != length)
+            {
+                throw new EndOfStreamException("Unexpected end of PE file while reading structure.");
+            }
+
+            return buffer;
+        }
+
+        private static void ReadExactly(Stream stream, byte[] buffer, int offset, int count)
+        {
+            int totalRead = 0;
+            while (totalRead < count)
+            {
+                int bytesRead = stream.Read(buffer, offset + totalRead, count - totalRead);
+                if (bytesRead == 0)
+                {
+                    throw new EndOfStreamException("Unexpected end of PE file while reading stream.");
+                }
+
+                totalRead += bytesRead;
+            }
+        }
+
+        private bool TrySetPosition(long position, int requiredBytes = 0)
+        {
+            if (PEFileStream == null || position < 0)
+            {
+                return false;
+            }
+
+            if (requiredBytes < 0)
+            {
+                requiredBytes = 0;
+            }
+
+            long upperBound = position + requiredBytes;
+            if (upperBound > PEFileStream.Length)
+            {
+                return false;
+            }
+
+            PEFileStream.Position = position;
+            return true;
+        }
+
+        private bool TryGetFileOffset(List<IMAGE_SECTION_HEADER> sections, UInt32 directoryVA, out long fileOffset)
+        {
+            fileOffset = -1;
             foreach (IMAGE_SECTION_HEADER section in sections)
             {
-                if (DirectoryVA >= section.VirtualAddress && DirectoryVA <= (section.VirtualAddress + section.VirtualSize))
+                uint sectionSize = Math.Max(section.VirtualSize, section.SizeOfRawData);
+                if (sectionSize == 0)
                 {
-                    fileoffset = (DirectoryVA - section.VirtualAddress) + section.PointerToRawData;
-                    break;
+                    continue;
+                }
+
+                ulong sectionStart = section.VirtualAddress;
+                ulong sectionEnd = sectionStart + sectionSize;
+                ulong rva = directoryVA;
+                if (rva >= sectionStart && rva < sectionEnd)
+                {
+                    fileOffset = (directoryVA - section.VirtualAddress) + section.PointerToRawData;
+                    return fileOffset <= PEFileStream.Length;
                 }
             }
-            return fileoffset;
+
+            return false;
+        }
+
+        private bool TryReadNullTerminatedString(long startOffset, out string value, int maxLength = 4096)
+        {
+            value = null;
+            if (!TrySetPosition(startOffset))
+            {
+                return false;
+            }
+
+            List<byte> bytes = new List<byte>();
+            while (bytes.Count < maxLength && PEFileStream.Position < PEFileStream.Length)
+            {
+                byte b = PEFile.ReadByte();
+                if (b == 0)
+                {
+                    value = Encoding.UTF8.GetString(bytes.ToArray());
+                    return true;
+                }
+
+                bytes.Add(b);
+            }
+
+            return false;
+        }
+
+        private static bool TryGetIntSize(uint size, out int intSize)
+        {
+            if (size > int.MaxValue)
+            {
+                intSize = 0;
+                return false;
+            }
+
+            intSize = (int)size;
+            return true;
+        }
+
+        private void Fail(string message)
+        {
+            _parseResult.AddError(message);
+        }
+
+        private void Warn(string message)
+        {
+            _parseResult.AddWarning(message);
         }
 
         private void ReadPE()
         {
             try
             {
+                _parseResult.Clear();
+                if (PEFile == null || PEFileStream == null)
+                {
+                    Fail("No PE file stream available.");
+                    return;
+                }
 
                 Stream fs = PEFileStream;
                 {
                     byte[] rawData = new byte[fs.Length];
-                    fs.Read(rawData, 0, rawData.Length);
+                    ReadExactly(fs, rawData, 0, rawData.Length);
                     fs.Position = 0;
 
                     // Compute a Hashvalue for the file
-                    StringBuilder sbHash = new StringBuilder();
-                    foreach (byte b in SHA256.Create().ComputeHash(rawData))
+                    using (SHA256 sha256 = SHA256.Create())
                     {
-                        sbHash.Append(string.Format("{0:X2}", b));
+                        StringBuilder sbHash = new StringBuilder();
+                        foreach (byte b in sha256.ComputeHash(rawData))
+                        {
+                            sbHash.Append(string.Format("{0:X2}", b));
+                        }
+                        _hash = sbHash.ToString();
                     }
-                    _hash = sbHash.ToString();
 
                     try
                     {
@@ -740,56 +901,68 @@ namespace PECoff
                             _isObfuscated = a.IsObfuscated;
                         }
                     }
-                    catch (Exception)
+                    catch (Exception ex)
                     {
                         // Something is wrong
+                        Warn($"AnalyzeAssembly failed: {ex.Message}");
                         _obfuscationPercentage = 0.0;
                         _isDotNetFile = false;
                         _isObfuscated = false;
                     }
                 }
                 
+                if (!TrySetPosition(0, Marshal.SizeOf(typeof(IMAGE_DOS_HEADER))))
+                {
+                    Fail("File too small for DOS header.");
+                    return;
+                }
 
-               IMAGE_DOS_HEADER header = new IMAGE_DOS_HEADER(PEFile);
+                IMAGE_DOS_HEADER header = new IMAGE_DOS_HEADER(PEFile);
                                
                 byte[] buffer = new byte[]{};
                 
                 // Check the File header signature
                 if ((header.e_magic == MagicByteSignature.IMAGE_DOS_SIGNATURE) || (header.e_magic == MagicByteSignature.IMAGE_OS2_SIGNATURE) || (header.e_magic == MagicByteSignature.IMAGE_OS2_SIGNATURE_LE))
                 {
-                    // Set the position to the PE-Header
-                    PEFileStream.Position = header.e_lfanew;
-
-                    // Read the PE Header
-                    IMAGE_NT_HEADERS peHeader = new IMAGE_NT_HEADERS(PEFile);
-                    
-                    IMAGE_DATA_DIRECTORY[] DataDirectory = new IMAGE_DATA_DIRECTORY[] { };
-                    var OptionalHeader = new object();
-                    switch (peHeader.Magic)
+                    if (!TrySetPosition(header.e_lfanew, sizeof(uint) + Marshal.SizeOf(typeof(IMAGE_FILE_HEADER))))
                     {
-                        case PEFormat.PE32:
-                            OptionalHeader = peHeader.OptionalHeader.ToStructure<IMAGE_OPTIONAL_HEADER32>();
-                            DataDirectory = ((IMAGE_OPTIONAL_HEADER32)OptionalHeader).DataDirectory;
-                            break;
-                        case PEFormat.PE32plus:
-                            OptionalHeader = peHeader.OptionalHeader.ToStructure<IMAGE_OPTIONAL_HEADER64>();
-                            DataDirectory = ((IMAGE_OPTIONAL_HEADER64)OptionalHeader).DataDirectory;
-                            break;
-                        default:
-                            break;
-                    }                   
+                        Fail("PE header offset is outside the file bounds.");
+                        return;
+                    }
+
+                    // Set the position to the PE-Header
+                    IMAGE_NT_HEADERS peHeader = new IMAGE_NT_HEADERS(PEFile);
+                    if (peHeader.Signature != 0x00004550)
+                    {
+                        Fail("Invalid PE signature.");
+                        return;
+                    }
+
+                    if (peHeader.Magic != PEFormat.PE32 && peHeader.Magic != PEFormat.PE32plus)
+                    {
+                        Fail("Unknown PE optional header format.");
+                        return;
+                    }
+                    
+                    IMAGE_DATA_DIRECTORY[] dataDirectory = peHeader.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
                     
                     List<IMAGE_SECTION_HEADER> sections = new List<IMAGE_SECTION_HEADER>();
+                    int sectionTableSize = peHeader.FileHeader.NumberOfSections * Marshal.SizeOf(typeof(IMAGE_SECTION_HEADER));
+                    if (!TrySetPosition(PEFileStream.Position, sectionTableSize))
+                    {
+                        Fail("Section table exceeds file bounds.");
+                        return;
+                    }
+
                     for (int i = 0; i < peHeader.FileHeader.NumberOfSections; i++)
                     {                       
                         sections.Add(new IMAGE_SECTION_HEADER(PEFile));
                     }
 
-                    DateTime dt;
-                    for (int i = 0; i < DataDirectory.Length; i++)
+                    for (int i = 0; i < dataDirectory.Length; i++)
                     {
                         // skip empty directories
-                        if (DataDirectory[i].Size == 0) { continue; }
+                        if (dataDirectory[i].Size == 0) { continue; }
 
                         switch (i)
                         {
@@ -799,11 +972,34 @@ namespace PECoff
                                 // Read the export directory table
                                 buffer = new byte[Marshal.SizeOf(new EXPORT_DIRECTORY_TABLE())];
                                 EXPORT_DIRECTORY_TABLE edt = new EXPORT_DIRECTORY_TABLE();
-                                PEFileStream.Position = GetFileOffset(sections, DataDirectory[i].VirtualAddress);
-                                PEFile.Read(buffer, 0, buffer.Length);
+                                if (!TryGetFileOffset(sections, dataDirectory[i].VirtualAddress, out long exportTableOffset))
+                                {
+                                    Warn("Export table RVA not mapped to a section.");
+                                    break;
+                                }
+
+                                if (!TrySetPosition(exportTableOffset, buffer.Length))
+                                {
+                                    Warn("Export table offset outside file bounds.");
+                                    break;
+                                }
+
+                                ReadExactly(PEFileStream, buffer, 0, buffer.Length);
                                 edt = (ByteArrayToStructure<EXPORT_DIRECTORY_TABLE>(buffer));
 
-                                PEFileStream.Position = GetFileOffset(sections, edt.NamePointerRVA);
+                                if (!TryGetFileOffset(sections, edt.NamePointerRVA, out long namePtrOffset))
+                                {
+                                    Warn("Export name pointer RVA not mapped to a section.");
+                                    break;
+                                }
+
+                                long pointerBytes = edt.NumberOfNamePointers * sizeof(UInt32);
+                                if (pointerBytes > int.MaxValue || !TrySetPosition(namePtrOffset, (int)pointerBytes))
+                                {
+                                    Warn("Export name pointer table outside file bounds.");
+                                    break;
+                                }
+
                                 List<UInt32> NamePointers = new List<uint>();
                                 for (int j = 0; j < edt.NumberOfNamePointers; j++)
                                 {
@@ -811,17 +1007,29 @@ namespace PECoff
                                 }
 
                                 // Read all exports
-                                
-                                List<byte> exportname = new List<byte>();
+                                bool exportNameFailure = false;
                                 foreach (UInt32 ptr in NamePointers)
                                 {
-                                    PEFileStream.Position = GetFileOffset(sections, ptr);
-                                    while (PEFile.PeekChar() != '\0')
+                                    if (!TryGetFileOffset(sections, ptr, out long exportNameOffset))
                                     {
-                                        exportname.Add(PEFile.ReadByte());
+                                        exportNameFailure = true;
+                                        continue;
                                     }
-                                    exports.Add(Encoding.UTF8.GetString(exportname.ToArray()));
-                                    exportname.Clear();
+
+                                    if (TryReadNullTerminatedString(exportNameOffset, out string exportName) &&
+                                        !string.IsNullOrWhiteSpace(exportName))
+                                    {
+                                        exports.Add(exportName);
+                                    }
+                                    else
+                                    {
+                                        exportNameFailure = true;
+                                    }
+                                }
+
+                                if (exportNameFailure)
+                                {
+                                    Warn("One or more export names could not be read.");
                                 }
 
                                 break;
@@ -829,27 +1037,58 @@ namespace PECoff
                                 // Import Table
                                 buffer = new byte[Marshal.SizeOf(new IMPORT_DIRECTORY_TABLE())];
                                 List<IMPORT_DIRECTORY_TABLE> idt = new List<IMPORT_DIRECTORY_TABLE>();
-                                PEFileStream.Position = GetFileOffset(sections, DataDirectory[i].VirtualAddress);
+                                if (!TryGetFileOffset(sections, dataDirectory[i].VirtualAddress, out long importTableOffset))
+                                {
+                                    Warn("Import table RVA not mapped to a section.");
+                                    break;
+                                }
+
+                                if (!TryGetIntSize(dataDirectory[i].Size, out int importTableSize))
+                                {
+                                    Warn("Import table size exceeds supported limits.");
+                                    break;
+                                }
 
                                 // Read the Import directory table
-                                for (int j = 0; j < (DataDirectory[i].Size / Marshal.SizeOf(new IMPORT_DIRECTORY_TABLE())) -1; j++)
+                                int importEntrySize = Marshal.SizeOf(typeof(IMPORT_DIRECTORY_TABLE));
+                                int importEntryCount = importTableSize / importEntrySize;
+                                for (int j = 0; j < importEntryCount; j++)
                                 {
-                                    PEFile.Read(buffer, 0, buffer.Length);
-                                    idt.Add(ByteArrayToStructure<IMPORT_DIRECTORY_TABLE>(buffer));
+                                    long entryOffset = importTableOffset + (j * importEntrySize);
+                                    if (!TrySetPosition(entryOffset, importEntrySize))
+                                    {
+                                        Warn("Import table entry outside file bounds.");
+                                        break;
+                                    }
+
+                                    ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+                                    IMPORT_DIRECTORY_TABLE entry = ByteArrayToStructure<IMPORT_DIRECTORY_TABLE>(buffer);
+                                    if (entry.LookupTableVirtualAddress == 0 &&
+                                        entry.TimeDateStamp == 0 &&
+                                        entry.FowarderChain == 0 &&
+                                        entry.NameRVA == 0 &&
+                                        entry.ImportAddressTableRVA == 0)
+                                    {
+                                        break;
+                                    }
+
+                                    idt.Add(entry);
                                 }
                                 
                                 // Read the import names
-                                
-                                List<byte> name = new List<byte>();
                                 foreach (IMPORT_DIRECTORY_TABLE table in idt)
                                 {
-                                    PEFileStream.Position = GetFileOffset(sections, table.NameRVA);                                    
-                                    while (PEFile.PeekChar() != '\0')
+                                    if (!TryGetFileOffset(sections, table.NameRVA, out long importNameOffset))
                                     {
-                                        name.Add(PEFile.ReadByte());
+                                        Warn("Import name RVA not mapped to a section.");
+                                        continue;
                                     }
-                                    imports.Add(Encoding.UTF8.GetString(name.ToArray()));
-                                    name.Clear();
+
+                                    if (TryReadNullTerminatedString(importNameOffset, out string importName) &&
+                                        !string.IsNullOrWhiteSpace(importName))
+                                    {
+                                        imports.Add(importName);
+                                    }
                                 }
                                 
                                 break;
@@ -857,10 +1096,23 @@ namespace PECoff
                                 // Resource Table                                
 
                                 // Read the Version info for the file
-                                IMAGE_SECTION_HEADER sect = sections.Find(p => p.Section == ".rsrc\0\0\0");
-                                PEFileStream.Position = sect.PointerToRawData;
-                                buffer = new byte[sect.SizeOfRawData];
-                                PEFile.Read(buffer, 0, buffer.Length);                           
+                                IMAGE_SECTION_HEADER sect = sections.Find(
+                                    p => p.Section.TrimEnd('\0').Equals(".rsrc", StringComparison.OrdinalIgnoreCase));
+
+                                if (sect.Name == null || !TryGetIntSize(sect.SizeOfRawData, out int rsrcSize))
+                                {
+                                    Warn("Resource section not found or invalid.");
+                                    break;
+                                }
+
+                                if (!TrySetPosition(sect.PointerToRawData, rsrcSize))
+                                {
+                                    Warn("Resource section offset outside file bounds.");
+                                    break;
+                                }
+
+                                buffer = new byte[rsrcSize];
+                                ReadExactly(PEFileStream, buffer, 0, buffer.Length);                           
 
                                 FileVersionInfo fvi = new FileVersionInfo(buffer);                                
                                 _fileversion = fvi.FileVersion;
@@ -868,7 +1120,7 @@ namespace PECoff
 
                                 if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
                                 {
-                                    System.Diagnostics.FileVersionInfo versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(((FileStream)PEFileStream).Name);
+                                    System.Diagnostics.FileVersionInfo versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(PEFileStream.Name);
                                     _fileversion = versionInfo.FileVersion;
                                     _productversion = versionInfo.ProductVersion;
                                 }
@@ -886,32 +1138,39 @@ namespace PECoff
                                 break;
                             case 4:
                                 // Certificate Table -> The attribute certificate table
-                                CertificateTable cert = new CertificateTable();                                
+                                if (!TryGetIntSize(dataDirectory[i].Size, out int certSize) ||
+                                    certSize < (sizeof(UInt32) + sizeof(CertificateRevision) + sizeof(CertificateType)))
+                                {
+                                    Warn("Certificate table size is invalid.");
+                                    break;
+                                }
 
-                                buffer = new byte[DataDirectory[i].Size];
-                                PEFileStream.Position = DataDirectory[i].VirtualAddress;
+                                if (!TrySetPosition(dataDirectory[i].VirtualAddress, certSize))
+                                {
+                                    Warn("Certificate table offset outside file bounds.");
+                                    break;
+                                }
 
-                                PEFile.Read(buffer, 0, buffer.Length);
+                                buffer = new byte[certSize];
+                                ReadExactly(PEFileStream, buffer, 0, buffer.Length);
 
-                                byte[] tmp = new byte[sizeof(UInt32) + sizeof(CertificateRevision) + sizeof(CertificateType)];
+                                int headerSize = Marshal.SizeOf(typeof(CertificateTableHeader));
+                                byte[] tmp = new byte[headerSize];
                                 Array.Copy(buffer, tmp, tmp.Length);
 
-                                cert = ByteArrayToStructure<CertificateTable>(tmp);
-                                int size_tmp = tmp.Length;
-                                tmp = new byte[buffer.Length - size_tmp];
-                                Array.Copy(buffer, size_tmp, tmp, 0, tmp.Length);
-                                cert.bCertificate = tmp;
+                                CertificateTableHeader certHeader = ByteArrayToStructure<CertificateTableHeader>(tmp);
+                                int certDataLength = buffer.Length - headerSize;
+                                if (certDataLength <= 0)
+                                {
+                                    Warn("Certificate table does not contain certificate data.");
+                                    break;
+                                }
+
+                                tmp = new byte[certDataLength];
+                                Array.Copy(buffer, headerSize, tmp, 0, tmp.Length);
 
                                 _hasCertificate = true;
                                 _certificate = tmp;
-
-                                //// Debug output
-                                //dt = DateTime.Now;
-                                //string fn_cert = string.Format("{0}_Cert_.p7b", Path.GetFileName(((FileStream)PEFileStream).Name));
-                                //BinaryWriter bw = new BinaryWriter(new StreamWriter(Path.Combine(Directory.GetCurrentDirectory(), fn_cert)).BaseStream);
-                                //bw.Write(tmp);
-                                //bw.Close();
-                                //bw.Dispose();
 
                                 break;
                             case 5:
@@ -958,11 +1217,12 @@ namespace PECoff
                 else
                 {
                     // not a DOS-File
+                    Fail("Invalid DOS signature.");
                 }
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-               // we need to handle this exception
+               Fail($"Unexpected error while parsing PE: {ex.Message}");
             }
             
 
