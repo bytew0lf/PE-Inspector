@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "PE-FileInspector",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "${workspaceFolder}/PE-FileInspector/bin/Debug/net9.0/PE-FileInspector.dll",
+      "args": [
+        "--output",
+        "report.txt",
+        "--output-dir",
+        "${workspaceFolder}/test-output",
+        "--file",
+        "${workspaceFolder}/testfiles/PE-Inspector.dll"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    }
+  ]
+}

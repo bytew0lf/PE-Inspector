@@ -55,6 +55,27 @@ namespace PECoff
         }
     }
 
+    public enum CertificateTypeKind : ushort
+    {
+        Unknown = 0x0000,
+        X509 = 0x0001,
+        PkcsSignedData = 0x0002,
+        Reserved1 = 0x0003,
+        TsStackSigned = 0x0004
+    }
+
+    public sealed class CertificateEntry
+    {
+        public CertificateTypeKind Type { get; }
+        public byte[] Data { get; }
+
+        public CertificateEntry(CertificateTypeKind type, byte[] data)
+        {
+            Type = type;
+            Data = data ?? Array.Empty<byte>();
+        }
+    }
+
     // Based on https://docs.microsoft.com/en-us/windows/desktop/debug/pe-format
     // https://en.wikibooks.org/wiki/X86_Disassembly/Windows_Executable_Files#Section_Table
     // https://tech-zealots.com/malware-analysis/understanding-concepts-of-va-rva-and-offset/
@@ -692,6 +713,72 @@ namespace PECoff
             }
         }
 
+        private string _companyName;
+        public string CompanyName
+        {
+            get { return _companyName; }
+        }
+
+        private string _fileDescription;
+        public string FileDescription
+        {
+            get { return _fileDescription; }
+        }
+
+        private string _internalName;
+        public string InternalName
+        {
+            get { return _internalName; }
+        }
+
+        private string _originalFilename;
+        public string OriginalFilename
+        {
+            get { return _originalFilename; }
+        }
+
+        private string _productName;
+        public string ProductName
+        {
+            get { return _productName; }
+        }
+
+        private string _comments;
+        public string Comments
+        {
+            get { return _comments; }
+        }
+
+        private string _legalCopyright;
+        public string LegalCopyright
+        {
+            get { return _legalCopyright; }
+        }
+
+        private string _legalTrademarks;
+        public string LegalTrademarks
+        {
+            get { return _legalTrademarks; }
+        }
+
+        private string _privateBuild;
+        public string PrivateBuild
+        {
+            get { return _privateBuild; }
+        }
+
+        private string _specialBuild;
+        public string SpecialBuild
+        {
+            get { return _specialBuild; }
+        }
+
+        private string _language;
+        public string Language
+        {
+            get { return _language; }
+        }
+
         private bool _isObfuscated;
         public bool IsObfuscated
         {
@@ -740,6 +827,12 @@ namespace PECoff
         public byte[][] Certificates
         {
             get { return _certificates.ToArray(); }
+        }
+
+        private List<CertificateEntry> _certificateEntries = new List<CertificateEntry>();
+        public CertificateEntry[] CertificateEntries
+        {
+            get { return _certificateEntries.ToArray(); }
         }
 
         private List<string> imports = new List<string>();
@@ -876,6 +969,14 @@ namespace PECoff
 
             intSize = (int)size;
             return true;
+        }
+
+        private static void SetIfEmpty(ref string target, string value)
+        {
+            if (string.IsNullOrWhiteSpace(target) && !string.IsNullOrWhiteSpace(value))
+            {
+                target = value;
+            }
         }
 
         private static int Align8(int value)
@@ -1154,12 +1255,34 @@ namespace PECoff
                                 FileVersionInfo fvi = new FileVersionInfo(buffer);                                
                                 _fileversion = fvi.FileVersion;
                                 _productversion = fvi.ProductVersion;
+                                _companyName = fvi.CompanyName;
+                                _fileDescription = fvi.FileDescription;
+                                _internalName = fvi.InternalName;
+                                _originalFilename = fvi.OriginalFilename;
+                                _productName = fvi.ProductName;
+                                _comments = fvi.Comments;
+                                _legalCopyright = fvi.LegalCopyright;
+                                _legalTrademarks = fvi.LegalTrademarks;
+                                _privateBuild = fvi.PrivateBuild;
+                                _specialBuild = fvi.SpecialBuild;
+                                _language = fvi.Language;
 
                                 if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
                                 {
                                     System.Diagnostics.FileVersionInfo versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(PEFileStream.Name);
                                     _fileversion = versionInfo.FileVersion;
                                     _productversion = versionInfo.ProductVersion;
+                                    SetIfEmpty(ref _companyName, versionInfo.CompanyName);
+                                    SetIfEmpty(ref _fileDescription, versionInfo.FileDescription);
+                                    SetIfEmpty(ref _internalName, versionInfo.InternalName);
+                                    SetIfEmpty(ref _originalFilename, versionInfo.OriginalFilename);
+                                    SetIfEmpty(ref _productName, versionInfo.ProductName);
+                                    SetIfEmpty(ref _comments, versionInfo.Comments);
+                                    SetIfEmpty(ref _legalCopyright, versionInfo.LegalCopyright);
+                                    SetIfEmpty(ref _legalTrademarks, versionInfo.LegalTrademarks);
+                                    SetIfEmpty(ref _privateBuild, versionInfo.PrivateBuild);
+                                    SetIfEmpty(ref _specialBuild, versionInfo.SpecialBuild);
+                                    SetIfEmpty(ref _language, versionInfo.Language);
                                 }
 
                                 // This will read the Directory table --> further implementation needed
@@ -1177,6 +1300,7 @@ namespace PECoff
                                 // Certificate Table -> The attribute certificate table
                                 _certificates.Clear();
                                 _certificate = null;
+                                _certificateEntries.Clear();
                                 if (!TryGetIntSize(dataDirectory[i].Size, out int certSize) ||
                                     certSize < (sizeof(UInt32) + sizeof(CertificateRevision) + sizeof(CertificateType)))
                                 {
@@ -1230,6 +1354,8 @@ namespace PECoff
                                     byte[] certData = new byte[certDataLength];
                                     Array.Copy(buffer, offset + headerSize, certData, 0, certDataLength);
                                     _certificates.Add(certData);
+                                    CertificateTypeKind typeKind = (CertificateTypeKind)certHeader.wCertificateType;
+                                    _certificateEntries.Add(new CertificateEntry(typeKind, certData));
 
                                     int aligned = Align8(entryLength);
                                     if (aligned <= 0)

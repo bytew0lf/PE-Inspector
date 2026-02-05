@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 
@@ -198,6 +199,8 @@ namespace PECoff
     {
         private MemoryStream _ms;
         private VS_VERSIONINFO vi;
+        private readonly Dictionary<string, string> _stringValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private uint? _translation;
 
         #region enums
         [Flags]
@@ -454,6 +457,7 @@ namespace PECoff
             
             _ms.Position = pos - 6; // setup the correct offset            
             vi = new VS_VERSIONINFO(new BinaryReader(_ms));
+            ParseVersionResource(buffer, (int)(pos - 6));
                        
             //_ms.Position -= 6;
             //VarFileInfo sfi = new VarFileInfo(new BinaryReader(_ms));
@@ -514,7 +518,344 @@ namespace PECoff
                 return String.Format("{0}.{1}.{2}.{3}", major, minor, release, build);
             }
         }
+
+        public string CompanyName => GetStringValue("CompanyName");
+        public string FileDescription => GetStringValue("FileDescription");
+        public string InternalName => GetStringValue("InternalName");
+        public string OriginalFilename => GetStringValue("OriginalFilename");
+        public string ProductName => GetStringValue("ProductName");
+        public string Comments => GetStringValue("Comments");
+        public string LegalCopyright => GetStringValue("LegalCopyright");
+        public string LegalTrademarks => GetStringValue("LegalTrademarks");
+        public string PrivateBuild => GetStringValue("PrivateBuild");
+        public string SpecialBuild => GetStringValue("SpecialBuild");
+        public string Language => GetLanguage();
         #endregion
+
+        private string GetStringValue(string key)
+        {
+            return _stringValues.TryGetValue(key, out string value) ? value : string.Empty;
+        }
+
+        private string GetLanguage()
+        {
+            string language = GetStringValue("Language");
+            if (!string.IsNullOrWhiteSpace(language))
+            {
+                language = language.Trim();
+                if (TryParseLanguageCode(language, out ushort langId, out ushort codePage))
+                {
+                    string cultureName = ResolveCultureName(langId);
+
+                    if (!string.IsNullOrWhiteSpace(cultureName))
+                    {
+                        return string.Format("{0} ({1:X4}-{2:X4})", cultureName, langId, codePage);
+                    }
+                }
+
+                return language;
+            }
+
+            if (_translation.HasValue)
+            {
+                ushort langId = (ushort)(_translation.Value & 0xFFFF);
+                ushort codePage = (ushort)((_translation.Value >> 16) & 0xFFFF);
+                string cultureName = ResolveCultureName(langId);
+
+                if (!string.IsNullOrWhiteSpace(cultureName))
+                {
+                    return string.Format("{0} ({1:X4}-{2:X4})", cultureName, langId, codePage);
+                }
+
+                return string.Format("{0:X4}-{1:X4}", langId, codePage);
+            }
+
+            return string.Empty;
+        }
+
+        private static string ResolveCultureName(ushort langId)
+        {
+            try
+            {
+                return CultureInfo.GetCultureInfo(langId).EnglishName;
+            }
+            catch (CultureNotFoundException)
+            {
+            }
+
+            try
+            {
+                foreach (CultureInfo culture in CultureInfo.GetCultures(CultureTypes.AllCultures))
+                {
+                    if (culture.LCID == langId)
+                    {
+                        return culture.EnglishName;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+            }
+
+            return ResolveCultureNameFromLangId(langId);
+        }
+
+        private static string ResolveCultureNameFromLangId(ushort langId)
+        {
+            int primary = langId & 0x03FF;
+            int sub = (langId >> 10) & 0x003F;
+
+            string primaryName = GetPrimaryLanguageName(primary);
+            if (string.IsNullOrWhiteSpace(primaryName))
+            {
+                return string.Empty;
+            }
+
+            string subName = GetSublanguageName(primary, sub);
+            if (string.IsNullOrWhiteSpace(subName))
+            {
+                return primaryName;
+            }
+
+            return string.Format("{0} ({1})", primaryName, subName);
+        }
+
+        private static string GetPrimaryLanguageName(int primary)
+        {
+            switch (primary)
+            {
+                case 0x01: return "Arabic";
+                case 0x04: return "Chinese";
+                case 0x05: return "Czech";
+                case 0x06: return "Danish";
+                case 0x07: return "German";
+                case 0x08: return "Greek";
+                case 0x09: return "English";
+                case 0x0A: return "Spanish";
+                case 0x0B: return "Finnish";
+                case 0x0C: return "French";
+                case 0x0D: return "Hebrew";
+                case 0x0E: return "Hungarian";
+                case 0x0F: return "Icelandic";
+                case 0x10: return "Italian";
+                case 0x11: return "Japanese";
+                case 0x12: return "Korean";
+                case 0x13: return "Dutch";
+                case 0x14: return "Norwegian";
+                case 0x15: return "Polish";
+                case 0x16: return "Portuguese";
+                case 0x19: return "Russian";
+                case 0x1D: return "Swedish";
+                default: return string.Empty;
+            }
+        }
+
+        private static string GetSublanguageName(int primary, int sub)
+        {
+            switch (primary)
+            {
+                case 0x09: // English
+                    switch (sub)
+                    {
+                        case 0x01: return "United States";
+                        case 0x02: return "United Kingdom";
+                        case 0x03: return "Australia";
+                        case 0x04: return "Canada";
+                        case 0x05: return "New Zealand";
+                        case 0x06: return "Ireland";
+                        case 0x07: return "South Africa";
+                        case 0x08: return "Jamaica";
+                        case 0x09: return "Caribbean";
+                        case 0x0A: return "Belize";
+                        case 0x0B: return "Trinidad";
+                        case 0x0C: return "Zimbabwe";
+                        case 0x0D: return "Philippines";
+                        default: return string.Empty;
+                    }
+                case 0x07: // German
+                    switch (sub)
+                    {
+                        case 0x01: return "Germany";
+                        case 0x02: return "Switzerland";
+                        case 0x03: return "Austria";
+                        case 0x04: return "Luxembourg";
+                        case 0x05: return "Liechtenstein";
+                        default: return string.Empty;
+                    }
+                case 0x0C: // French
+                    switch (sub)
+                    {
+                        case 0x01: return "France";
+                        case 0x02: return "Belgium";
+                        case 0x03: return "Canada";
+                        case 0x04: return "Switzerland";
+                        case 0x05: return "Luxembourg";
+                        case 0x06: return "Monaco";
+                        default: return string.Empty;
+                    }
+                case 0x16: // Portuguese
+                    switch (sub)
+                    {
+                        case 0x01: return "Brazil";
+                        case 0x02: return "Portugal";
+                        default: return string.Empty;
+                    }
+                default:
+                    return string.Empty;
+            }
+        }
+
+        private static bool TryParseLanguageCode(string value, out ushort langId, out ushort codePage)
+        {
+            langId = 0;
+            codePage = 0;
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return false;
+            }
+
+            int dashIndex = value.IndexOf('-');
+            if (dashIndex != 4)
+            {
+                return false;
+            }
+
+            if (value.Length < 9)
+            {
+                return false;
+            }
+
+            string langPart = value.Substring(0, 4);
+            string codePart = value.Substring(5, 4);
+
+            if (!ushort.TryParse(langPart, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out langId))
+            {
+                return false;
+            }
+
+            if (!ushort.TryParse(codePart, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out codePage))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private void ParseVersionResource(byte[] buffer, int offset)
+        {
+            if (buffer == null || buffer.Length == 0 || offset < 0 || offset >= buffer.Length)
+            {
+                return;
+            }
+
+            ParseBlock(buffer, offset, buffer.Length);
+        }
+
+        private int ParseBlock(byte[] buffer, int offset, int maxOffset)
+        {
+            if (offset + 6 > buffer.Length || offset >= maxOffset)
+            {
+                return maxOffset;
+            }
+
+            ushort wLength = ReadUInt16(buffer, offset);
+            ushort wValueLength = ReadUInt16(buffer, offset + 2);
+            ushort wType = ReadUInt16(buffer, offset + 4);
+
+            if (wLength < 6)
+            {
+                return maxOffset;
+            }
+
+            int blockEnd = offset + wLength;
+            if (blockEnd > maxOffset)
+            {
+                blockEnd = maxOffset;
+            }
+
+            if (blockEnd > buffer.Length)
+            {
+                blockEnd = buffer.Length;
+            }
+
+            int keyOffset = offset + 6;
+            string key = ReadUnicodeString(buffer, keyOffset, out int keyBytes);
+            int cursor = keyOffset + keyBytes;
+            cursor = Align4(cursor);
+
+            int valueByteLength = 0;
+            if (wValueLength > 0)
+            {
+                valueByteLength = wType == 1 ? wValueLength * 2 : wValueLength;
+            }
+
+            if (valueByteLength > 0 && cursor + valueByteLength <= buffer.Length && cursor + valueByteLength <= blockEnd)
+            {
+                if (wType == 1)
+                {
+                    string value = Encoding.Unicode.GetString(buffer, cursor, valueByteLength).TrimEnd('\0');
+                    if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value))
+                    {
+                        _stringValues[key] = value;
+                    }
+                }
+                else if (string.Equals(key, "Translation", StringComparison.OrdinalIgnoreCase) && valueByteLength >= 4)
+                {
+                    _translation = BitConverter.ToUInt32(buffer, cursor);
+                }
+            }
+
+            cursor += valueByteLength;
+            cursor = Align4(cursor);
+
+            while (cursor < blockEnd)
+            {
+                int next = ParseBlock(buffer, cursor, blockEnd);
+                if (next <= cursor)
+                {
+                    break;
+                }
+
+                cursor = next;
+            }
+
+            return blockEnd;
+        }
+
+        private static ushort ReadUInt16(byte[] buffer, int offset)
+        {
+            if (offset + 1 >= buffer.Length)
+            {
+                return 0;
+            }
+
+            return (ushort)(buffer[offset] | (buffer[offset + 1] << 8));
+        }
+
+        private static string ReadUnicodeString(byte[] buffer, int offset, out int bytesRead)
+        {
+            StringBuilder sb = new StringBuilder();
+            int i = offset;
+            while (i + 1 < buffer.Length)
+            {
+                ushort ch = (ushort)(buffer[i] | (buffer[i + 1] << 8));
+                i += 2;
+                if (ch == 0)
+                {
+                    bytesRead = i - offset;
+                    return sb.ToString();
+                }
+                sb.Append((char)ch);
+            }
+
+            bytesRead = i - offset;
+            return sb.ToString();
+        }
+
+        private static int Align4(int value)
+        {
+            return (value + 3) & ~3;
+        }
     }
 
     public class AnalyzeAssembly

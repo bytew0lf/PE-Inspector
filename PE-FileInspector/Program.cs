@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using SysFileVersionInfo = System.Diagnostics.FileVersionInfo;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -49,10 +48,15 @@ namespace PE_FileInspector
             string reportPath = Path.Combine(options.OutputDir, reportFileName);
 
             PECOFF pe = new PECOFF(options.FilePath);
-            SysFileVersionInfo versionInfo = SysFileVersionInfo.GetVersionInfo(options.FilePath);
-
             List<string> certPaths = new List<string>();
-            if (pe.Certificates.Length > 0)
+            List<string> pemPaths = new List<string>();
+            CertificateEntry[] entries = pe.CertificateEntries.Length > 0
+                ? pe.CertificateEntries
+                : (pe.HasCertificate && pe.Certificate != null
+                    ? new[] { new CertificateEntry(CertificateTypeKind.Unknown, pe.Certificate) }
+                    : Array.Empty<CertificateEntry>());
+
+            if (entries.Length > 0)
             {
                 string baseName = Path.GetFileNameWithoutExtension(options.FilePath);
                 if (string.IsNullOrWhiteSpace(baseName))
@@ -60,17 +64,31 @@ namespace PE_FileInspector
                     baseName = "certificate";
                 }
 
-                for (int i = 0; i < pe.Certificates.Length; i++)
+                for (int i = 0; i < entries.Length; i++)
                 {
-                    string suffix = i == 0 ? string.Empty : "-" + (i + 1).ToString(CultureInfo.InvariantCulture);
-                    string certFileName = baseName + suffix + ".crt";
+                    CertificateEntry entry = entries[i];
+                    if (entry.Data.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    string typeToken = GetCertificateTypeToken(entry.Type);
+                    string indexToken = (i + 1).ToString(CultureInfo.InvariantCulture);
+                    string extension = GetCertificateExtension(entry.Type);
+                    string certFileName = baseName + "-" + typeToken + "-" + indexToken + extension;
                     string certPath = GetUniqueFilePath(options.OutputDir, certFileName);
-                    File.WriteAllBytes(certPath, pe.Certificates[i]);
+                    File.WriteAllBytes(certPath, entry.Data);
                     certPaths.Add(certPath);
+
+                    string pemLabel = GetPemLabel(entry.Type);
+                    string pemFileName = baseName + "-" + typeToken + "-" + indexToken + ".pem";
+                    string pemPath = GetUniqueFilePath(options.OutputDir, pemFileName);
+                    File.WriteAllText(pemPath, ToPem(pemLabel, entry.Data), Encoding.ASCII);
+                    pemPaths.Add(pemPath);
                 }
             }
 
-            string report = BuildReport(options.FilePath, pe, versionInfo, certPaths);
+            string report = BuildReport(options.FilePath, pe, certPaths, pemPaths);
             File.WriteAllText(reportPath, report, Encoding.UTF8);
 
             Console.WriteLine("Report written to: {0}", reportPath);
@@ -81,11 +99,18 @@ namespace PE_FileInspector
                     Console.WriteLine("Certificate written to: {0}", path);
                 }
             }
+            if (pemPaths.Count > 0)
+            {
+                foreach (string path in pemPaths)
+                {
+                    Console.WriteLine("PEM written to: {0}", path);
+                }
+            }
 
             return 0;
         }
 
-        private static string BuildReport(string filePath, PECOFF pe, SysFileVersionInfo versionInfo, List<string> certPaths)
+        private static string BuildReport(string filePath, PECOFF pe, List<string> certPaths, List<string> pemPaths)
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("PE File Inspection Report");
@@ -104,19 +129,19 @@ namespace PE_FileInspector
             sb.AppendLine();
 
             sb.AppendLine("Version Information:");
-            sb.AppendLine("  Product Version: " + Safe(versionInfo.ProductVersion));
-            sb.AppendLine("  File Version: " + Safe(versionInfo.FileVersion));
-            sb.AppendLine("  Company Name: " + Safe(versionInfo.CompanyName));
-            sb.AppendLine("  File Description: " + Safe(versionInfo.FileDescription));
-            sb.AppendLine("  Internal Name: " + Safe(versionInfo.InternalName));
-            sb.AppendLine("  Original Filename: " + Safe(versionInfo.OriginalFilename));
-            sb.AppendLine("  Product Name: " + Safe(versionInfo.ProductName));
-            sb.AppendLine("  Copyright: " + Safe(versionInfo.LegalCopyright));
-            sb.AppendLine("  Trademarks: " + Safe(versionInfo.LegalTrademarks));
-            sb.AppendLine("  Language: " + Safe(versionInfo.Language));
-            sb.AppendLine("  Comments: " + Safe(versionInfo.Comments));
-            sb.AppendLine("  Private Build: " + Safe(versionInfo.PrivateBuild));
-            sb.AppendLine("  Special Build: " + Safe(versionInfo.SpecialBuild));
+            sb.AppendLine("  Product Version: " + Safe(pe.ProductVersion));
+            sb.AppendLine("  File Version: " + Safe(pe.FileVersion));
+            sb.AppendLine("  Company Name: " + Safe(pe.CompanyName));
+            sb.AppendLine("  File Description: " + Safe(pe.FileDescription));
+            sb.AppendLine("  Internal Name: " + Safe(pe.InternalName));
+            sb.AppendLine("  Original Filename: " + Safe(pe.OriginalFilename));
+            sb.AppendLine("  Product Name: " + Safe(pe.ProductName));
+            sb.AppendLine("  Copyright: " + Safe(pe.LegalCopyright));
+            sb.AppendLine("  Trademarks: " + Safe(pe.LegalTrademarks));
+            sb.AppendLine("  Language: " + Safe(pe.Language));
+            sb.AppendLine("  Comments: " + Safe(pe.Comments));
+            sb.AppendLine("  Private Build: " + Safe(pe.PrivateBuild));
+            sb.AppendLine("  Special Build: " + Safe(pe.SpecialBuild));
             sb.AppendLine();
 
             sb.AppendLine("PE Analysis:");
@@ -127,12 +152,24 @@ namespace PE_FileInspector
             sb.AppendLine("  Certificate Count: " + certPaths.Count.ToString(CultureInfo.InvariantCulture));
             if (certPaths.Count == 0)
             {
-                sb.AppendLine("  Certificate Paths: (none)");
+                sb.AppendLine("  Certificate Paths (Raw): (none)");
             }
             else
             {
-                sb.AppendLine("  Certificate Paths:");
+                sb.AppendLine("  Certificate Paths (Raw):");
                 foreach (string path in certPaths)
+                {
+                    sb.AppendLine("    - " + path);
+                }
+            }
+            if (pemPaths.Count == 0)
+            {
+                sb.AppendLine("  Certificate Paths (PEM): (none)");
+            }
+            else
+            {
+                sb.AppendLine("  Certificate Paths (PEM):");
+                foreach (string path in pemPaths)
                 {
                     sb.AppendLine("    - " + path);
                 }
@@ -261,6 +298,61 @@ namespace PE_FileInspector
         {
             Console.WriteLine("Usage:");
             Console.WriteLine("  PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze>");
+        }
+
+        private static string GetCertificateExtension(CertificateTypeKind type)
+        {
+            switch (type)
+            {
+                case CertificateTypeKind.X509:
+                    return ".cer";
+                case CertificateTypeKind.PkcsSignedData:
+                case CertificateTypeKind.TsStackSigned:
+                    return ".p7b";
+                default:
+                    return ".bin";
+            }
+        }
+
+        private static string GetPemLabel(CertificateTypeKind type)
+        {
+            switch (type)
+            {
+                case CertificateTypeKind.X509:
+                    return "CERTIFICATE";
+                case CertificateTypeKind.PkcsSignedData:
+                case CertificateTypeKind.TsStackSigned:
+                    return "PKCS7";
+                default:
+                    return "BINARY";
+            }
+        }
+
+        private static string GetCertificateTypeToken(CertificateTypeKind type)
+        {
+            switch (type)
+            {
+                case CertificateTypeKind.X509:
+                    return "x509";
+                case CertificateTypeKind.PkcsSignedData:
+                    return "pkcs7";
+                case CertificateTypeKind.TsStackSigned:
+                    return "tsstack";
+                case CertificateTypeKind.Reserved1:
+                    return "reserved";
+                default:
+                    return "unknown";
+            }
+        }
+
+        private static string ToPem(string label, byte[] data)
+        {
+            string base64 = Convert.ToBase64String(data, Base64FormattingOptions.InsertLineBreaks);
+            StringBuilder sb = new StringBuilder();
+            sb.Append("-----BEGIN ").Append(label).AppendLine("-----");
+            sb.AppendLine(base64);
+            sb.Append("-----END ").Append(label).AppendLine("-----");
+            return sb.ToString();
         }
 
         private static string GetUniqueFilePath(string directory, string fileName)

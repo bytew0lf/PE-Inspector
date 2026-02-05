@@ -14,7 +14,7 @@ Usage:
 
     PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze>
 
-The report contains all analysis details, and any embedded certificates are written to the output directory as `.crt` files.
+The report contains all analysis details, and any embedded certificates are written to the output directory with their native extensions (e.g. `.cer`, `.p7b`) and additionally as PEM (`.pem`).
 
 ## Additional functionality
 The PECOFF Library has also the ability to get all imports and exports of the PE-file as well as the certificate.
