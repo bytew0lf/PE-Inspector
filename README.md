@@ -16,6 +16,8 @@ Usage:
 
 The report contains all analysis details, and any embedded certificates are written to the output directory with their native extensions (e.g. `.cer`, `.p7b`) and additionally as PEM (`.pem`).
 
+The report also includes CLR/.NET metadata when present (runtime version, metadata version, and stream list).
+
 ## Additional functionality
 The PECOFF Library has also the ability to get all imports and exports of the PE-file as well as the certificate.
 

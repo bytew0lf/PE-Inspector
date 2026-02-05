@@ -76,6 +76,81 @@ namespace PECoff
         }
     }
 
+    public sealed class ResourceEntry
+    {
+        public uint TypeId { get; }
+        public string TypeName { get; }
+        public uint NameId { get; }
+        public string Name { get; }
+        public ushort LanguageId { get; }
+        public uint CodePage { get; }
+        public uint DataRva { get; }
+        public uint Size { get; }
+        public long FileOffset { get; }
+
+        public ResourceEntry(
+            uint typeId,
+            string typeName,
+            uint nameId,
+            string name,
+            ushort languageId,
+            uint codePage,
+            uint dataRva,
+            uint size,
+            long fileOffset)
+        {
+            TypeId = typeId;
+            TypeName = typeName ?? string.Empty;
+            NameId = nameId;
+            Name = name ?? string.Empty;
+            LanguageId = languageId;
+            CodePage = codePage;
+            DataRva = dataRva;
+            Size = size;
+            FileOffset = fileOffset;
+        }
+    }
+
+    public sealed class ClrStreamInfo
+    {
+        public string Name { get; }
+        public uint Offset { get; }
+        public uint Size { get; }
+
+        public ClrStreamInfo(string name, uint offset, uint size)
+        {
+            Name = name ?? string.Empty;
+            Offset = offset;
+            Size = size;
+        }
+    }
+
+    public sealed class ClrMetadataInfo
+    {
+        public ushort MajorRuntimeVersion { get; }
+        public ushort MinorRuntimeVersion { get; }
+        public uint Flags { get; }
+        public uint EntryPointToken { get; }
+        public string MetadataVersion { get; }
+        public ClrStreamInfo[] Streams { get; }
+
+        public ClrMetadataInfo(
+            ushort majorRuntimeVersion,
+            ushort minorRuntimeVersion,
+            uint flags,
+            uint entryPointToken,
+            string metadataVersion,
+            ClrStreamInfo[] streams)
+        {
+            MajorRuntimeVersion = majorRuntimeVersion;
+            MinorRuntimeVersion = minorRuntimeVersion;
+            Flags = flags;
+            EntryPointToken = entryPointToken;
+            MetadataVersion = metadataVersion ?? string.Empty;
+            Streams = streams ?? Array.Empty<ClrStreamInfo>();
+        }
+    }
+
     // Based on https://docs.microsoft.com/en-us/windows/desktop/debug/pe-format
     // https://en.wikibooks.org/wiki/X86_Disassembly/Windows_Executable_Files#Section_Table
     // https://tech-zealots.com/malware-analysis/understanding-concepts-of-va-rva-and-offset/
@@ -517,6 +592,23 @@ namespace PECoff
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct IMAGE_COR20_HEADER
+        {
+            public UInt32 cb;
+            public UInt16 MajorRuntimeVersion;
+            public UInt16 MinorRuntimeVersion;
+            public IMAGE_DATA_DIRECTORY MetaData;
+            public UInt32 Flags;
+            public UInt32 EntryPointToken;
+            public IMAGE_DATA_DIRECTORY Resources;
+            public IMAGE_DATA_DIRECTORY StrongNameSignature;
+            public IMAGE_DATA_DIRECTORY CodeManagerTable;
+            public IMAGE_DATA_DIRECTORY VTableFixups;
+            public IMAGE_DATA_DIRECTORY ExportAddressTableJumps;
+            public IMAGE_DATA_DIRECTORY ManagedNativeHeader;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
         private struct IMPORT_DIRECTORY_TABLE
         {
             public UInt32 LookupTableVirtualAddress;
@@ -835,6 +927,18 @@ namespace PECoff
             get { return _certificateEntries.ToArray(); }
         }
 
+        private readonly List<ResourceEntry> _resources = new List<ResourceEntry>();
+        public ResourceEntry[] Resources
+        {
+            get { return _resources.ToArray(); }
+        }
+
+        private ClrMetadataInfo _clrMetadata;
+        public ClrMetadataInfo ClrMetadata
+        {
+            get { return _clrMetadata; }
+        }
+
         private List<string> imports = new List<string>();
         public string[] Imports
         {
@@ -935,6 +1039,29 @@ namespace PECoff
             return false;
         }
 
+        private static bool TryGetSectionByRva(List<IMAGE_SECTION_HEADER> sections, uint rva, out IMAGE_SECTION_HEADER result)
+        {
+            foreach (IMAGE_SECTION_HEADER section in sections)
+            {
+                uint sectionSize = Math.Max(section.VirtualSize, section.SizeOfRawData);
+                if (sectionSize == 0)
+                {
+                    continue;
+                }
+
+                uint sectionStart = section.VirtualAddress;
+                uint sectionEnd = sectionStart + sectionSize;
+                if (rva >= sectionStart && rva < sectionEnd)
+                {
+                    result = section;
+                    return true;
+                }
+            }
+
+            result = default;
+            return false;
+        }
+
         private bool TryReadNullTerminatedString(long startOffset, out string value, int maxLength = 4096)
         {
             value = null;
@@ -984,6 +1111,350 @@ namespace PECoff
             return (value + 7) & ~7;
         }
 
+        private static int Align4(int value)
+        {
+            return (value + 3) & ~3;
+        }
+
+        private static ushort ReadUInt16(byte[] buffer, int offset)
+        {
+            if (offset + 1 >= buffer.Length)
+            {
+                return 0;
+            }
+
+            return (ushort)(buffer[offset] | (buffer[offset + 1] << 8));
+        }
+
+        private static uint ReadUInt32(byte[] buffer, int offset)
+        {
+            if (offset + 3 >= buffer.Length)
+            {
+                return 0;
+            }
+
+            return (uint)(buffer[offset] |
+                          (buffer[offset + 1] << 8) |
+                          (buffer[offset + 2] << 16) |
+                          (buffer[offset + 3] << 24));
+        }
+
+        private static string ReadAsciiString(byte[] buffer, int offset, int length)
+        {
+            if (length <= 0 || offset >= buffer.Length)
+            {
+                return string.Empty;
+            }
+
+            int safeLength = Math.Min(length, buffer.Length - offset);
+            return Encoding.ASCII.GetString(buffer, offset, safeLength).TrimEnd('\0', ' ');
+        }
+
+        private static string ReadNullTerminatedAscii(byte[] buffer, int offset, out int bytesRead)
+        {
+            int start = offset;
+            while (offset < buffer.Length && buffer[offset] != 0)
+            {
+                offset++;
+            }
+
+            bytesRead = offset - start + 1;
+            if (start >= buffer.Length)
+            {
+                return string.Empty;
+            }
+
+            int length = Math.Min(offset - start, buffer.Length - start);
+            return Encoding.ASCII.GetString(buffer, start, length);
+        }
+
+        private static bool TryReadResourceName(byte[] buffer, int offset, out string name)
+        {
+            name = string.Empty;
+            if (offset < 0 || offset + 2 > buffer.Length)
+            {
+                return false;
+            }
+
+            ushort length = ReadUInt16(buffer, offset);
+            if (length == 0)
+            {
+                return true;
+            }
+
+            int byteLength = length * 2;
+            int start = offset + 2;
+            if (start + byteLength > buffer.Length)
+            {
+                return false;
+            }
+
+            name = Encoding.Unicode.GetString(buffer, start, byteLength).TrimEnd('\0');
+            return true;
+        }
+
+        private static bool TryReadResourceDataEntry(byte[] buffer, int offset, out uint dataRva, out uint size, out uint codePage)
+        {
+            dataRva = 0;
+            size = 0;
+            codePage = 0;
+
+            if (offset < 0 || offset + 16 > buffer.Length)
+            {
+                return false;
+            }
+
+            dataRva = ReadUInt32(buffer, offset);
+            size = ReadUInt32(buffer, offset + 4);
+            codePage = ReadUInt32(buffer, offset + 8);
+            return true;
+        }
+
+        private static string GetResourceTypeName(uint typeId)
+        {
+            if (Enum.IsDefined(typeof(ResourceType), (ResourceType)typeId))
+            {
+                return ((ResourceType)typeId).ToString();
+            }
+
+            return string.Empty;
+        }
+
+        private void ParseResourceDirectory(
+            byte[] buffer,
+            int directoryOffset,
+            int level,
+            uint typeId,
+            string typeName,
+            uint nameId,
+            string name,
+            List<IMAGE_SECTION_HEADER> sections,
+            HashSet<int> visited)
+        {
+            if (buffer == null || buffer.Length == 0)
+            {
+                return;
+            }
+
+            if (level > 2)
+            {
+                Warn("Resource directory depth exceeded expected limits.");
+                return;
+            }
+
+            if (directoryOffset < 0 || directoryOffset + 16 > buffer.Length)
+            {
+                Warn("Resource directory entry offset outside section bounds.");
+                return;
+            }
+
+            if (!visited.Add(directoryOffset))
+            {
+                Warn("Resource directory contains a circular reference.");
+                return;
+            }
+
+            ushort numberOfNamed = ReadUInt16(buffer, directoryOffset + 12);
+            ushort numberOfId = ReadUInt16(buffer, directoryOffset + 14);
+            int entryCount = numberOfNamed + numberOfId;
+            int entriesOffset = directoryOffset + 16;
+            int maxEntries = (buffer.Length - entriesOffset) / 8;
+            if (entryCount > maxEntries)
+            {
+                entryCount = maxEntries;
+                Warn("Resource directory entry count exceeds available data.");
+            }
+
+            for (int i = 0; i < entryCount; i++)
+            {
+                int entryOffset = entriesOffset + (i * 8);
+                if (entryOffset + 8 > buffer.Length)
+                {
+                    Warn("Resource directory entry outside section bounds.");
+                    break;
+                }
+
+                uint nameOrId = ReadUInt32(buffer, entryOffset);
+                uint dataOrSubdir = ReadUInt32(buffer, entryOffset + 4);
+
+                bool isName = (nameOrId & 0x80000000) != 0;
+                uint entryId = nameOrId & 0xFFFF;
+                string entryName = string.Empty;
+                if (isName)
+                {
+                    int nameOffset = (int)(nameOrId & 0x7FFFFFFF);
+                    if (!TryReadResourceName(buffer, nameOffset, out entryName))
+                    {
+                        Warn("Resource name entry offset outside section bounds.");
+                        continue;
+                    }
+                }
+
+                bool isDirectory = (dataOrSubdir & 0x80000000) != 0;
+                int dataOffset = (int)(dataOrSubdir & 0x7FFFFFFF);
+
+                if (level == 0)
+                {
+                    uint nextTypeId = isName ? 0u : entryId;
+                    string nextTypeName = isName ? entryName : GetResourceTypeName(entryId);
+                    if (isDirectory)
+                    {
+                        ParseResourceDirectory(buffer, dataOffset, level + 1, nextTypeId, nextTypeName, nameId, name, sections, visited);
+                    }
+                    else
+                    {
+                        Warn("Resource type entry points directly to data.");
+                    }
+                }
+                else if (level == 1)
+                {
+                    uint nextNameId = isName ? 0u : entryId;
+                    string nextName = isName ? entryName : string.Empty;
+                    if (isDirectory)
+                    {
+                        ParseResourceDirectory(buffer, dataOffset, level + 1, typeId, typeName, nextNameId, nextName, sections, visited);
+                    }
+                    else
+                    {
+                        Warn("Resource name entry points directly to data.");
+                    }
+                }
+                else
+                {
+                    ushort languageId = isName ? (ushort)0 : (ushort)entryId;
+                    if (isDirectory)
+                    {
+                        Warn("Resource language entry points to a subdirectory.");
+                        continue;
+                    }
+
+                    if (!TryReadResourceDataEntry(buffer, dataOffset, out uint dataRva, out uint size, out uint codePage))
+                    {
+                        Warn("Resource data entry outside section bounds.");
+                        continue;
+                    }
+
+                    long fileOffset = -1;
+                    if (TryGetFileOffset(sections, dataRva, out long dataFileOffset))
+                    {
+                        fileOffset = dataFileOffset;
+                    }
+
+                        _resources.Add(new ResourceEntry(
+                            typeId,
+                            typeName,
+                            nameId,
+                            name,
+                            languageId,
+                            codePage,
+                            dataRva,
+                            size,
+                            fileOffset));
+                }
+            }
+        }
+
+        private bool TryGetResourceData(
+            byte[] resourceBuffer,
+            uint resourceBaseRva,
+            uint dataRva,
+            uint dataSize,
+            List<IMAGE_SECTION_HEADER> sections,
+            out byte[] data)
+        {
+            data = Array.Empty<byte>();
+            if (!TryGetIntSize(dataSize, out int size) || size <= 0)
+            {
+                return false;
+            }
+
+            if (resourceBuffer != null && resourceBuffer.Length > 0 && dataRva >= resourceBaseRva)
+            {
+                uint offset = dataRva - resourceBaseRva;
+                if (offset <= int.MaxValue && size <= resourceBuffer.Length - (int)offset)
+                {
+                    data = new byte[size];
+                    Buffer.BlockCopy(resourceBuffer, (int)offset, data, 0, size);
+                    return true;
+                }
+            }
+
+            if (TryGetFileOffset(sections, dataRva, out long fileOffset) &&
+                TrySetPosition(fileOffset, size))
+            {
+                data = new byte[size];
+                ReadExactly(PEFileStream, data, 0, size);
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryParseClrMetadata(byte[] buffer, IMAGE_COR20_HEADER header, out ClrMetadataInfo info)
+        {
+            info = null;
+            if (buffer == null || buffer.Length < 16)
+            {
+                return false;
+            }
+
+            uint signature = ReadUInt32(buffer, 0);
+            if (signature != 0x424A5342)
+            {
+                return false;
+            }
+
+            ushort majorVersion = ReadUInt16(buffer, 4);
+            ushort minorVersion = ReadUInt16(buffer, 6);
+            uint versionLength = ReadUInt32(buffer, 12);
+            int versionOffset = 16;
+
+            if (versionOffset + versionLength > buffer.Length)
+            {
+                return false;
+            }
+
+            string versionString = ReadAsciiString(buffer, versionOffset, (int)versionLength);
+            int cursor = Align4(versionOffset + (int)versionLength);
+
+            if (cursor + 4 > buffer.Length)
+            {
+                return false;
+            }
+
+            ushort flags = ReadUInt16(buffer, cursor);
+            ushort streams = ReadUInt16(buffer, cursor + 2);
+            cursor += 4;
+
+            List<ClrStreamInfo> streamInfos = new List<ClrStreamInfo>();
+            for (int i = 0; i < streams; i++)
+            {
+                if (cursor + 8 > buffer.Length)
+                {
+                    break;
+                }
+
+                uint offset = ReadUInt32(buffer, cursor);
+                uint size = ReadUInt32(buffer, cursor + 4);
+                cursor += 8;
+
+                string name = ReadNullTerminatedAscii(buffer, cursor, out int nameBytes);
+                cursor = Align4(cursor + nameBytes);
+
+                streamInfos.Add(new ClrStreamInfo(name, offset, size));
+            }
+
+            info = new ClrMetadataInfo(
+                header.MajorRuntimeVersion,
+                header.MinorRuntimeVersion,
+                header.Flags,
+                header.EntryPointToken,
+                versionString,
+                streamInfos.ToArray());
+
+            return true;
+        }
+
         private void Fail(string message)
         {
             _parseResult.AddError(message);
@@ -999,6 +1470,7 @@ namespace PECoff
             try
             {
                 _parseResult.Clear();
+                _resources.Clear();
                 if (PEFile == null || PEFileStream == null)
                 {
                     Fail("No PE file stream available.");
@@ -1232,27 +1704,68 @@ namespace PECoff
                                 break;
                             case 2:
                                 // Resource Table                                
+                                IMAGE_SECTION_HEADER resourceSection;
+                                if (!TryGetSectionByRva(sections, dataDirectory[i].VirtualAddress, out resourceSection))
+                                {
+                                    resourceSection = sections.Find(
+                                        p => p.Section.TrimEnd('\0').Equals(".rsrc", StringComparison.OrdinalIgnoreCase));
+                                }
 
-                                // Read the Version info for the file
-                                IMAGE_SECTION_HEADER sect = sections.Find(
-                                    p => p.Section.TrimEnd('\0').Equals(".rsrc", StringComparison.OrdinalIgnoreCase));
-
-                                if (sect.Name == null || !TryGetIntSize(sect.SizeOfRawData, out int rsrcSize))
+                                if (resourceSection.Name == null || !TryGetIntSize(resourceSection.SizeOfRawData, out int rsrcSize))
                                 {
                                     Warn("Resource section not found or invalid.");
                                     break;
                                 }
 
-                                if (!TrySetPosition(sect.PointerToRawData, rsrcSize))
+                                if (!TrySetPosition(resourceSection.PointerToRawData, rsrcSize))
                                 {
                                     Warn("Resource section offset outside file bounds.");
                                     break;
                                 }
 
                                 buffer = new byte[rsrcSize];
-                                ReadExactly(PEFileStream, buffer, 0, buffer.Length);                           
+                                ReadExactly(PEFileStream, buffer, 0, buffer.Length);
 
-                                FileVersionInfo fvi = new FileVersionInfo(buffer);                                
+                                int rootOffset = 0;
+                                if (dataDirectory[i].VirtualAddress >= resourceSection.VirtualAddress)
+                                {
+                                    uint delta = dataDirectory[i].VirtualAddress - resourceSection.VirtualAddress;
+                                    if (delta <= int.MaxValue && delta < (uint)rsrcSize)
+                                    {
+                                        rootOffset = (int)delta;
+                                    }
+                                    else
+                                    {
+                                        Warn("Resource directory root offset outside section bounds.");
+                                    }
+                                }
+                                else
+                                {
+                                    Warn("Resource directory RVA does not map to resource section.");
+                                }
+
+                                ParseResourceDirectory(buffer, rootOffset, 0, 0, string.Empty, 0, string.Empty, sections, new HashSet<int>());
+
+                                FileVersionInfo fvi;
+                                ResourceEntry versionEntry = _resources.FirstOrDefault(r => r.TypeId == (uint)ResourceType.Version);
+                                if (versionEntry != null &&
+                                    TryGetResourceData(buffer, resourceSection.VirtualAddress, versionEntry.DataRva, versionEntry.Size, sections, out byte[] versionData))
+                                {
+                                    fvi = new FileVersionInfo(versionData);
+                                    if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
+                                    {
+                                        FileVersionInfo fallback = new FileVersionInfo(buffer);
+                                        if (!(fallback.ProductVersion.Equals("0.0.0.0") && fallback.FileVersion.Equals("0.0.0.0")))
+                                        {
+                                            fvi = fallback;
+                                        }
+                                    }
+                                }
+                                else
+                                {
+                                    fvi = new FileVersionInfo(buffer);
+                                }
+
                                 _fileversion = fvi.FileVersion;
                                 _productversion = fvi.ProductVersion;
                                 _companyName = fvi.CompanyName;
@@ -1285,13 +1798,6 @@ namespace PECoff
                                     SetIfEmpty(ref _language, versionInfo.Language);
                                 }
 
-                                // This will read the Directory table --> further implementation needed
-                                //buffer = new byte[Marshal.SizeOf(new RESOURCE_DIRECTORY_TABLE())];
-                                //RESOURCE_DIRECTORY_TABLE rdt = new RESOURCE_DIRECTORY_TABLE();
-                                //PEFileStream.Position = GetFileOffset(sections, DataDirectory[i].VirtualAddress);
-                                //PEFile.Read(buffer, 0, buffer.Length);
-                                //rdt = (ByteArrayToStructure<RESOURCE_DIRECTORY_TABLE>(buffer));
-                                
                                 break;
                             case 3:
                                 // Exception Table -> The .pdata Section
@@ -1401,6 +1907,55 @@ namespace PECoff
                                 break;
                             case 14:
                                 // CLR Runtime Header -> The .cormeta Section (Object Only)
+                                _clrMetadata = null;
+                                if (!TryGetFileOffset(sections, dataDirectory[i].VirtualAddress, out long clrOffset))
+                                {
+                                    Warn("CLR header RVA not mapped to a section.");
+                                    break;
+                                }
+
+                                buffer = new byte[Marshal.SizeOf(typeof(IMAGE_COR20_HEADER))];
+                                if (!TrySetPosition(clrOffset, buffer.Length))
+                                {
+                                    Warn("CLR header offset outside file bounds.");
+                                    break;
+                                }
+
+                                ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+                                IMAGE_COR20_HEADER clrHeader = ByteArrayToStructure<IMAGE_COR20_HEADER>(buffer);
+                                if (clrHeader.MetaData.Size == 0)
+                                {
+                                    Warn("CLR header does not reference metadata.");
+                                    break;
+                                }
+
+                                if (!TryGetIntSize(clrHeader.MetaData.Size, out int metadataSize))
+                                {
+                                    Warn("Metadata size exceeds supported limits.");
+                                    break;
+                                }
+
+                                if (!TryGetFileOffset(sections, clrHeader.MetaData.VirtualAddress, out long metadataOffset))
+                                {
+                                    Warn("Metadata RVA not mapped to a section.");
+                                    break;
+                                }
+
+                                if (!TrySetPosition(metadataOffset, metadataSize))
+                                {
+                                    Warn("Metadata offset outside file bounds.");
+                                    break;
+                                }
+
+                                byte[] metadataBuffer = new byte[metadataSize];
+                                ReadExactly(PEFileStream, metadataBuffer, 0, metadataBuffer.Length);
+                                if (!TryParseClrMetadata(metadataBuffer, clrHeader, out ClrMetadataInfo metadataInfo))
+                                {
+                                    Warn("Failed to parse CLR metadata.");
+                                    break;
+                                }
+
+                                _clrMetadata = metadataInfo;
                                 break;
                             case 15:
                                 // Unknown

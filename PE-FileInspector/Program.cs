@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using PECoff;
 
@@ -196,6 +197,32 @@ namespace PE_FileInspector
             }
             sb.AppendLine();
 
+            sb.AppendLine("CLR / .NET Metadata:");
+            if (pe.ClrMetadata == null)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                sb.AppendLine("  Runtime Version: " + pe.ClrMetadata.MajorRuntimeVersion + "." + pe.ClrMetadata.MinorRuntimeVersion);
+                sb.AppendLine("  Metadata Version: " + Safe(pe.ClrMetadata.MetadataVersion));
+                sb.AppendLine("  Flags: 0x" + pe.ClrMetadata.Flags.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  EntryPoint Token: 0x" + pe.ClrMetadata.EntryPointToken.ToString("X8", CultureInfo.InvariantCulture));
+                if (pe.ClrMetadata.Streams.Length == 0)
+                {
+                    sb.AppendLine("  Streams: (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Streams:");
+                    foreach (ClrStreamInfo stream in pe.ClrMetadata.Streams)
+                    {
+                        sb.AppendLine("    - " + stream.Name + " (Offset: " + stream.Offset.ToString(CultureInfo.InvariantCulture) + ", Size: " + stream.Size.ToString(CultureInfo.InvariantCulture) + ")");
+                    }
+                }
+            }
+            sb.AppendLine();
+
             sb.AppendLine("Assembly References:");
             if (!pe.IsDotNetFile)
             {
@@ -238,6 +265,49 @@ namespace PE_FileInspector
                 foreach (string exportName in pe.Exports)
                 {
                     sb.AppendLine("  - " + exportName);
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resources:");
+            ResourceEntry[] resources = pe.Resources;
+            if (resources.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                sb.AppendLine("  Total: " + resources.Length.ToString(CultureInfo.InvariantCulture));
+                var grouped = resources
+                    .GroupBy(r => string.IsNullOrWhiteSpace(r.TypeName) ? "Type#" + r.TypeId.ToString(CultureInfo.InvariantCulture) : r.TypeName)
+                    .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase);
+
+                foreach (var group in grouped)
+                {
+                    sb.AppendLine("  Type: " + group.Key + " (" + group.Count().ToString(CultureInfo.InvariantCulture) + ")");
+                    foreach (ResourceEntry entry in group.OrderBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+                                                         .ThenBy(r => r.NameId)
+                                                         .ThenBy(r => r.LanguageId))
+                    {
+                        string namePart = !string.IsNullOrWhiteSpace(entry.Name)
+                            ? entry.Name
+                            : "Id#" + entry.NameId.ToString(CultureInfo.InvariantCulture);
+
+                        string codePage = entry.CodePage == 0
+                            ? "n/a"
+                            : "0x" + entry.CodePage.ToString("X4", CultureInfo.InvariantCulture);
+
+                        string fileOffset = entry.FileOffset >= 0
+                            ? "0x" + entry.FileOffset.ToString("X", CultureInfo.InvariantCulture)
+                            : "n/a";
+
+                        sb.AppendLine("    - " + namePart +
+                                      " | Lang: 0x" + entry.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | CodePage: " + codePage +
+                                      " | Size: " + entry.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | DataRVA: 0x" + entry.DataRva.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | FileOffset: " + fileOffset);
+                    }
                 }
             }
 

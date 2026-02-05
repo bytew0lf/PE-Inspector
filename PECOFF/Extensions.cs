@@ -560,6 +560,10 @@ namespace PECoff
             {
                 ushort langId = (ushort)(_translation.Value & 0xFFFF);
                 ushort codePage = (ushort)((_translation.Value >> 16) & 0xFFFF);
+                if (langId == 0)
+                {
+                    return string.Empty;
+                }
                 string cultureName = ResolveCultureName(langId);
 
                 if (!string.IsNullOrWhiteSpace(cultureName))
@@ -575,6 +579,11 @@ namespace PECoff
 
         private static string ResolveCultureName(ushort langId)
         {
+            if (langId == 0)
+            {
+                return string.Empty;
+            }
+
             try
             {
                 return CultureInfo.GetCultureInfo(langId).EnglishName;
@@ -734,6 +743,11 @@ namespace PECoff
             }
 
             if (!ushort.TryParse(codePart, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out codePage))
+            {
+                return false;
+            }
+
+            if (langId == 0)
             {
                 return false;
             }
