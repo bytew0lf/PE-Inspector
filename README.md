@@ -12,7 +12,12 @@ Single-file inspector that writes a human-readable report and extracts certifica
 
 Usage:
 
-    PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze>
+    PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze> [--suppress-cssm <true|false>]
+
+Notes:
+
+- On macOS, `CSSM_ModuleLoad()` warnings can appear when the runtime touches the Security framework. They are suppressed by default in PE-FileInspector.
+- Set `--suppress-cssm false` or `PE_INSPECTOR_SUPPRESS_CSSM=0` to allow these warnings.
 
 The report contains all analysis details, and any embedded certificates are written to the output directory with their native extensions (e.g. `.cer`, `.p7b`) and additionally as PEM (`.pem`).
 

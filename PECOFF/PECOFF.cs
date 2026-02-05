@@ -111,6 +111,38 @@ namespace PECoff
         }
     }
 
+    public sealed class ExportEntry
+    {
+        public string Name { get; }
+        public uint Ordinal { get; }
+        public uint AddressRva { get; }
+
+        public ExportEntry(string name, uint ordinal, uint addressRva)
+        {
+            Name = name ?? string.Empty;
+            Ordinal = ordinal;
+            AddressRva = addressRva;
+        }
+    }
+
+    public sealed class ImportEntry
+    {
+        public string DllName { get; }
+        public string Name { get; }
+        public ushort Hint { get; }
+        public ushort Ordinal { get; }
+        public bool IsByOrdinal { get; }
+
+        public ImportEntry(string dllName, string name, ushort hint, ushort ordinal, bool isByOrdinal)
+        {
+            DllName = dllName ?? string.Empty;
+            Name = name ?? string.Empty;
+            Hint = hint;
+            Ordinal = ordinal;
+            IsByOrdinal = isByOrdinal;
+        }
+    }
+
     public sealed class ClrStreamInfo
     {
         public string Name { get; }
@@ -449,12 +481,22 @@ namespace PECoff
             public IMAGE_FILE_HEADER FileHeader;
             public PEFormat Magic;
             public IMAGE_DATA_DIRECTORY[] DataDirectory;
+            public uint SectionAlignment;
+            public uint FileAlignment;
+            public uint SizeOfHeaders;
+            public uint CheckSum;
+            public ulong ImageBase;
 
             public IMAGE_NT_HEADERS(BinaryReader reader)
             {
                 IMAGE_NT_HEADERS hdr = new IMAGE_NT_HEADERS
                 {
-                    DataDirectory = Array.Empty<IMAGE_DATA_DIRECTORY>()
+                    DataDirectory = Array.Empty<IMAGE_DATA_DIRECTORY>(),
+                    SectionAlignment = 0,
+                    FileAlignment = 0,
+                    SizeOfHeaders = 0,
+                    CheckSum = 0,
+                    ImageBase = 0
                 };
                 this = hdr;
 
@@ -477,12 +519,22 @@ namespace PECoff
                 {
                     IMAGE_OPTIONAL_HEADER32 opt32 = optionalHeaderBuffer.ToStructure<IMAGE_OPTIONAL_HEADER32>();
                     hdr.DataDirectory = opt32.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
+                    hdr.SectionAlignment = opt32.SectionAlignment;
+                    hdr.FileAlignment = opt32.FileAlignment;
+                    hdr.SizeOfHeaders = opt32.SizeOfHeaders;
+                    hdr.CheckSum = opt32.CheckSum;
+                    hdr.ImageBase = opt32.ImageBase;
                 }
                 else if (hdr.Magic == PEFormat.PE32plus &&
                          optionalHeaderBuffer.Length >= Marshal.SizeOf(typeof(IMAGE_OPTIONAL_HEADER64)))
                 {
                     IMAGE_OPTIONAL_HEADER64 opt64 = optionalHeaderBuffer.ToStructure<IMAGE_OPTIONAL_HEADER64>();
                     hdr.DataDirectory = opt64.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
+                    hdr.SectionAlignment = opt64.SectionAlignment;
+                    hdr.FileAlignment = opt64.FileAlignment;
+                    hdr.SizeOfHeaders = opt64.SizeOfHeaders;
+                    hdr.CheckSum = opt64.CheckSum;
+                    hdr.ImageBase = opt64.ImageBase;
                 }
                 else
                 {
@@ -616,6 +668,19 @@ namespace PECoff
             public UInt32 FowarderChain;
             public UInt32 NameRVA;
             public UInt32 ImportAddressTableRVA;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct IMAGE_DELAY_IMPORT_DESCRIPTOR
+        {
+            public UInt32 Attributes;
+            public UInt32 NameRVA;
+            public UInt32 ModuleHandleRVA;
+            public UInt32 ImportAddressTableRVA;
+            public UInt32 ImportNameTableRVA;
+            public UInt32 BoundImportAddressTableRVA;
+            public UInt32 UnloadInformationTableRVA;
+            public UInt32 TimeDateStamp;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -889,6 +954,60 @@ namespace PECoff
             }
         }
 
+        private uint _fileAlignment;
+        public uint FileAlignment
+        {
+            get { return _fileAlignment; }
+        }
+
+        private uint _sectionAlignment;
+        public uint SectionAlignment
+        {
+            get { return _sectionAlignment; }
+        }
+
+        private uint _sizeOfHeaders;
+        public uint SizeOfHeaders
+        {
+            get { return _sizeOfHeaders; }
+        }
+
+        private uint _optionalHeaderChecksum;
+        public uint OptionalHeaderChecksum
+        {
+            get { return _optionalHeaderChecksum; }
+        }
+
+        private uint _computedChecksum;
+        public uint ComputedChecksum
+        {
+            get { return _computedChecksum; }
+        }
+
+        public bool IsChecksumValid
+        {
+            get { return _optionalHeaderChecksum != 0 && _optionalHeaderChecksum == _computedChecksum; }
+        }
+
+        private uint _timeDateStamp;
+        public uint TimeDateStamp
+        {
+            get { return _timeDateStamp; }
+        }
+
+        public DateTimeOffset? TimeDateStampUtc
+        {
+            get
+            {
+                if (_timeDateStamp == 0)
+                {
+                    return null;
+                }
+
+                return DateTimeOffset.FromUnixTimeSeconds(_timeDateStamp);
+            }
+        }
+
         private bool _isDotNetFile;
         public bool IsDotNetFile
         {
@@ -945,10 +1064,28 @@ namespace PECoff
             get { return imports.ToArray(); }
         }
 
+        private readonly List<ImportEntry> _importEntries = new List<ImportEntry>();
+        public ImportEntry[] ImportEntries
+        {
+            get { return _importEntries.ToArray(); }
+        }
+
+        private readonly List<ImportEntry> _delayImportEntries = new List<ImportEntry>();
+        public ImportEntry[] DelayImportEntries
+        {
+            get { return _delayImportEntries.ToArray(); }
+        }
+
         private List<string> exports = new List<string>();
         public string[] Exports
         {
             get { return exports.ToArray(); }
+        }
+
+        private readonly List<ExportEntry> _exportEntries = new List<ExportEntry>();
+        public ExportEntry[] ExportEntries
+        {
+            get { return _exportEntries.ToArray(); }
         }
 
         private List<AssemblyReferenceInfo> _assemblyReferenceInfos = new List<AssemblyReferenceInfo>();
@@ -1114,6 +1251,73 @@ namespace PECoff
         private static int Align4(int value)
         {
             return (value + 3) & ~3;
+        }
+
+        private static uint AlignUp(uint value, uint alignment)
+        {
+            if (alignment == 0)
+            {
+                return value;
+            }
+
+            uint mask = alignment - 1;
+            return (value + mask) & ~mask;
+        }
+
+        private static bool IsPowerOfTwo(uint value)
+        {
+            return value != 0 && (value & (value - 1)) == 0;
+        }
+
+        private static int GetOptionalHeaderChecksumOffset(PEFormat magic)
+        {
+            if (magic == PEFormat.PE32plus)
+            {
+                return (int)Marshal.OffsetOf(typeof(IMAGE_OPTIONAL_HEADER64), nameof(IMAGE_OPTIONAL_HEADER64.CheckSum));
+            }
+
+            return (int)Marshal.OffsetOf(typeof(IMAGE_OPTIONAL_HEADER32), nameof(IMAGE_OPTIONAL_HEADER32.CheckSum));
+        }
+
+        private static uint ComputeChecksum(byte[] data, int checksumOffset)
+        {
+            if (data == null || data.Length == 0 || checksumOffset < 0)
+            {
+                return 0;
+            }
+
+            ulong sum = 0;
+            int length = data.Length;
+            int index = 0;
+            while (index < length)
+            {
+                if (index == checksumOffset)
+                {
+                    index += 4;
+                    continue;
+                }
+
+                ushort word;
+                if (index + 1 < length)
+                {
+                    word = (ushort)(data[index] | (data[index + 1] << 8));
+                }
+                else
+                {
+                    word = data[index];
+                }
+
+                sum += word;
+                sum = (sum & 0xFFFF) + (sum >> 16);
+                index += 2;
+            }
+
+            sum = (sum & 0xFFFF) + (sum >> 16);
+            sum = (sum & 0xFFFF) + (sum >> 16);
+            sum += (uint)length;
+            sum = (sum & 0xFFFF) + (sum >> 16);
+            sum = sum & 0xFFFF;
+            return (uint)sum;
         }
 
         private static ushort ReadUInt16(byte[] buffer, int offset)
@@ -1390,6 +1594,286 @@ namespace PECoff
             return false;
         }
 
+        private void ValidateSections(IMAGE_DOS_HEADER dosHeader, IMAGE_NT_HEADERS peHeader, List<IMAGE_SECTION_HEADER> sections)
+        {
+            uint fileAlignment = peHeader.FileAlignment;
+            uint sectionAlignment = peHeader.SectionAlignment;
+            uint sizeOfHeaders = peHeader.SizeOfHeaders;
+
+            if (fileAlignment == 0)
+            {
+                Warn("FileAlignment is zero.");
+            }
+            else
+            {
+                if (!IsPowerOfTwo(fileAlignment) || fileAlignment < 512 || fileAlignment > 65536)
+                {
+                    Warn("FileAlignment is not a valid power of two.");
+                }
+            }
+
+            if (sectionAlignment == 0)
+            {
+                Warn("SectionAlignment is zero.");
+            }
+            else
+            {
+                if (!IsPowerOfTwo(sectionAlignment))
+                {
+                    Warn("SectionAlignment is not a power of two.");
+                }
+
+                if (fileAlignment != 0 && sectionAlignment < fileAlignment)
+                {
+                    Warn("SectionAlignment is smaller than FileAlignment.");
+                }
+            }
+
+            long minHeaderSize = dosHeader.e_lfanew +
+                                 sizeof(uint) +
+                                 Marshal.SizeOf(typeof(IMAGE_FILE_HEADER)) +
+                                 peHeader.FileHeader.SizeOfOptionalHeader +
+                                 (sections.Count * Marshal.SizeOf(typeof(IMAGE_SECTION_HEADER)));
+
+            if (sizeOfHeaders != 0)
+            {
+                if (sizeOfHeaders < minHeaderSize)
+                {
+                    Warn("SizeOfHeaders is smaller than the minimum header size.");
+                }
+
+                if (fileAlignment != 0 && sizeOfHeaders % fileAlignment != 0)
+                {
+                    Warn("SizeOfHeaders is not aligned to FileAlignment.");
+                }
+
+                if (sizeOfHeaders > PEFileStream.Length)
+                {
+                    Warn("SizeOfHeaders exceeds file size.");
+                }
+            }
+
+            List<(long Start, long End, string Name)> ranges = new List<(long, long, string)>();
+            foreach (IMAGE_SECTION_HEADER section in sections)
+            {
+                string name = section.Section.TrimEnd('\0');
+                if (section.SizeOfRawData == 0)
+                {
+                    continue;
+                }
+
+                long start = section.PointerToRawData;
+                long end = start + section.SizeOfRawData;
+
+                if (fileAlignment != 0)
+                {
+                    if (section.PointerToRawData % fileAlignment != 0)
+                    {
+                        Warn($"Section {name} PointerToRawData is not aligned to FileAlignment.");
+                    }
+
+                    if (section.SizeOfRawData % fileAlignment != 0)
+                    {
+                        Warn($"Section {name} SizeOfRawData is not aligned to FileAlignment.");
+                    }
+                }
+
+                if (sectionAlignment != 0 && section.VirtualAddress % sectionAlignment != 0)
+                {
+                    Warn($"Section {name} VirtualAddress is not aligned to SectionAlignment.");
+                }
+
+                if (end > PEFileStream.Length)
+                {
+                    Warn($"Section {name} raw data extends beyond end of file.");
+                }
+
+                ranges.Add((start, end, name));
+            }
+
+            if (ranges.Count > 0)
+            {
+                ranges.Sort((a, b) => a.Start.CompareTo(b.Start));
+                long minStart = ranges[0].Start;
+                if (sizeOfHeaders != 0 && sizeOfHeaders > minStart)
+                {
+                    Warn("SizeOfHeaders exceeds the first section raw data pointer.");
+                }
+
+                for (int i = 1; i < ranges.Count; i++)
+                {
+                    if (ranges[i].Start < ranges[i - 1].End)
+                    {
+                        Warn($"Section {ranges[i].Name} overlaps section {ranges[i - 1].Name} in the file.");
+                    }
+                }
+            }
+        }
+
+        private bool TryReadImportByName(List<IMAGE_SECTION_HEADER> sections, uint nameRva, out ushort hint, out string name)
+        {
+            hint = 0;
+            name = string.Empty;
+
+            if (!TryGetFileOffset(sections, nameRva, out long fileOffset))
+            {
+                return false;
+            }
+
+            if (!TrySetPosition(fileOffset, 2))
+            {
+                return false;
+            }
+
+            hint = PEFile.ReadUInt16();
+            if (!TryReadNullTerminatedString(fileOffset + 2, out string importName))
+            {
+                return false;
+            }
+
+            name = importName;
+            return true;
+        }
+
+        private void ParseImportThunks(
+            string dllName,
+            uint thunkRva,
+            List<IMAGE_SECTION_HEADER> sections,
+            bool isPe32Plus,
+            List<ImportEntry> targetList)
+        {
+            if (thunkRva == 0)
+            {
+                return;
+            }
+
+            if (!TryGetFileOffset(sections, thunkRva, out long thunkOffset))
+            {
+                Warn("Import thunk RVA not mapped to a section.");
+                return;
+            }
+
+            int thunkSize = isPe32Plus ? 8 : 4;
+            int maxIterations = 65536;
+            for (int index = 0; index < maxIterations; index++)
+            {
+                long entryOffset = thunkOffset + (index * thunkSize);
+                if (!TrySetPosition(entryOffset, thunkSize))
+                {
+                    Warn("Import thunk entry outside file bounds.");
+                    break;
+                }
+
+                ulong value = isPe32Plus ? PEFile.ReadUInt64() : PEFile.ReadUInt32();
+                if (value == 0)
+                {
+                    break;
+                }
+
+                bool isOrdinal = isPe32Plus
+                    ? (value & 0x8000000000000000UL) != 0
+                    : (value & 0x80000000UL) != 0;
+
+                if (isOrdinal)
+                {
+                    ushort ordinal = (ushort)(value & 0xFFFF);
+                    targetList.Add(new ImportEntry(dllName, string.Empty, 0, ordinal, true));
+                    continue;
+                }
+
+                uint nameRva = (uint)value;
+                if (TryReadImportByName(sections, nameRva, out ushort hint, out string importName))
+                {
+                    targetList.Add(new ImportEntry(dllName, importName, hint, 0, false));
+                }
+                else
+                {
+                    Warn("Import name entry could not be read.");
+                }
+            }
+        }
+
+        private void ParseDelayImportTable(
+            IMAGE_DATA_DIRECTORY directory,
+            List<IMAGE_SECTION_HEADER> sections,
+            bool isPe32Plus,
+            ulong imageBase)
+        {
+            if (!TryGetFileOffset(sections, directory.VirtualAddress, out long tableOffset))
+            {
+                Warn("Delay import table RVA not mapped to a section.");
+                return;
+            }
+
+            if (!TryGetIntSize(directory.Size, out int tableSize))
+            {
+                Warn("Delay import table size exceeds supported limits.");
+                return;
+            }
+
+            int descriptorSize = Marshal.SizeOf(typeof(IMAGE_DELAY_IMPORT_DESCRIPTOR));
+            int descriptorCount = tableSize / descriptorSize;
+            for (int i = 0; i < descriptorCount; i++)
+            {
+                long entryOffset = tableOffset + (i * descriptorSize);
+                if (!TrySetPosition(entryOffset, descriptorSize))
+                {
+                    Warn("Delay import descriptor outside file bounds.");
+                    break;
+                }
+
+                byte[] buffer = new byte[descriptorSize];
+                ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+                IMAGE_DELAY_IMPORT_DESCRIPTOR descriptor = ByteArrayToStructure<IMAGE_DELAY_IMPORT_DESCRIPTOR>(buffer);
+
+                if (descriptor.Attributes == 0 &&
+                    descriptor.NameRVA == 0 &&
+                    descriptor.ModuleHandleRVA == 0 &&
+                    descriptor.ImportAddressTableRVA == 0 &&
+                    descriptor.ImportNameTableRVA == 0)
+                {
+                    break;
+                }
+
+                bool isRva = (descriptor.Attributes & 0x1) != 0;
+                uint nameRva = descriptor.NameRVA;
+                uint importNameTable = descriptor.ImportNameTableRVA;
+                if (!isRva)
+                {
+                    if (imageBase == 0)
+                    {
+                        Warn("Delay import descriptor uses VA addresses without image base.");
+                        continue;
+                    }
+
+                    nameRva = (uint)(descriptor.NameRVA - imageBase);
+                    importNameTable = (uint)(descriptor.ImportNameTableRVA - imageBase);
+                }
+
+                string dllName = string.Empty;
+                if (nameRva != 0 && TryGetFileOffset(sections, nameRva, out long nameOffset))
+                {
+                    if (TryReadNullTerminatedString(nameOffset, out string name))
+                    {
+                        dllName = name;
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(dllName))
+                {
+                    dllName = "delayimport";
+                }
+
+                if (!imports.Contains(dllName))
+                {
+                    imports.Add(dllName);
+                }
+
+                uint thunkRva = importNameTable != 0 ? importNameTable : descriptor.ImportAddressTableRVA;
+                ParseImportThunks(dllName, thunkRva, sections, isPe32Plus, _delayImportEntries);
+            }
+        }
+
         private static bool TryParseClrMetadata(byte[] buffer, IMAGE_COR20_HEADER header, out ClrMetadataInfo info)
         {
             info = null;
@@ -1471,6 +1955,18 @@ namespace PECoff
             {
                 _parseResult.Clear();
                 _resources.Clear();
+                imports.Clear();
+                exports.Clear();
+                _importEntries.Clear();
+                _delayImportEntries.Clear();
+                _exportEntries.Clear();
+                _clrMetadata = null;
+                _fileAlignment = 0;
+                _sectionAlignment = 0;
+                _sizeOfHeaders = 0;
+                _optionalHeaderChecksum = 0;
+                _computedChecksum = 0;
+                _timeDateStamp = 0;
                 if (PEFile == null || PEFileStream == null)
                 {
                     Fail("No PE file stream available.");
@@ -1478,47 +1974,42 @@ namespace PECoff
                 }
 
                 Stream fs = PEFileStream;
+                byte[] rawData = new byte[fs.Length];
+                ReadExactly(fs, rawData, 0, rawData.Length);
+                fs.Position = 0;
+
+                // Compute a Hashvalue for the file
+                using (SHA256 sha256 = SHA256.Create())
                 {
-                    byte[] rawData = new byte[fs.Length];
-                    ReadExactly(fs, rawData, 0, rawData.Length);
-                    fs.Position = 0;
-
-                    // Compute a Hashvalue for the file
-                    using (SHA256 sha256 = SHA256.Create())
+                    StringBuilder sbHash = new StringBuilder();
+                    foreach (byte b in sha256.ComputeHash(rawData))
                     {
-                        StringBuilder sbHash = new StringBuilder();
-                        foreach (byte b in sha256.ComputeHash(rawData))
-                        {
-                            sbHash.Append(string.Format("{0:X2}", b));
-                        }
-                        _hash = sbHash.ToString();
+                        sbHash.Append(string.Format("{0:X2}", b));
                     }
+                    _hash = sbHash.ToString();
+                }
 
-                    try
+                try
+                {
+                    if (rawData.Length > 0)
                     {
-                        if (rawData.Length > 0)
-                        {
-                            // analyze Assembly
-                            AnalyzeAssembly a = new AnalyzeAssembly(rawData);
-                            
-                            Array.Clear(rawData, 0, rawData.Length);
-                            rawData = null;
+                        // analyze Assembly
+                        AnalyzeAssembly a = new AnalyzeAssembly(rawData);
 
-                            _obfuscationPercentage = a.ObfuscationPercentage;
-                            _isDotNetFile = a.IsDotNetFile;
-                            _isObfuscated = a.IsObfuscated;
-                            _assemblyReferenceInfos = a.AssemblyReferenceInfos.ToList();
-                        }
+                        _obfuscationPercentage = a.ObfuscationPercentage;
+                        _isDotNetFile = a.IsDotNetFile;
+                        _isObfuscated = a.IsObfuscated;
+                        _assemblyReferenceInfos = a.AssemblyReferenceInfos.ToList();
                     }
-                    catch (Exception ex)
-                    {
-                        // Something is wrong
-                        Warn($"AnalyzeAssembly failed: {ex.Message}");
-                        _obfuscationPercentage = 0.0;
-                        _isDotNetFile = false;
-                        _isObfuscated = false;
-                        _assemblyReferenceInfos.Clear();
-                    }
+                }
+                catch (Exception ex)
+                {
+                    // Something is wrong
+                    Warn($"AnalyzeAssembly failed: {ex.Message}");
+                    _obfuscationPercentage = 0.0;
+                    _isDotNetFile = false;
+                    _isObfuscated = false;
+                    _assemblyReferenceInfos.Clear();
                 }
                 
                 if (!TrySetPosition(0, Marshal.SizeOf(typeof(IMAGE_DOS_HEADER))))
@@ -1553,6 +2044,30 @@ namespace PECoff
                         Fail("Unknown PE optional header format.");
                         return;
                     }
+
+                    bool isPe32Plus = peHeader.Magic == PEFormat.PE32plus;
+                    _timeDateStamp = peHeader.FileHeader.TimeDateStamp;
+                    _fileAlignment = peHeader.FileAlignment;
+                    _sectionAlignment = peHeader.SectionAlignment;
+                    _sizeOfHeaders = peHeader.SizeOfHeaders;
+                    _optionalHeaderChecksum = peHeader.CheckSum;
+
+                    int checksumOffset = (int)header.e_lfanew +
+                                         sizeof(uint) +
+                                         Marshal.SizeOf(typeof(IMAGE_FILE_HEADER)) +
+                                         GetOptionalHeaderChecksumOffset(peHeader.Magic);
+                    int optionalHeaderSize = peHeader.FileHeader.SizeOfOptionalHeader;
+                    int checksumFieldOffset = GetOptionalHeaderChecksumOffset(peHeader.Magic);
+                    if (checksumFieldOffset + 4 <= optionalHeaderSize &&
+                        checksumOffset >= 0 &&
+                        checksumOffset + 4 <= rawData.Length)
+                    {
+                        _computedChecksum = ComputeChecksum(rawData, checksumOffset);
+                    }
+                    else
+                    {
+                        Warn("Checksum field offset is outside file bounds.");
+                    }
                     
                     IMAGE_DATA_DIRECTORY[] dataDirectory = peHeader.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
                     
@@ -1568,6 +2083,8 @@ namespace PECoff
                     {                       
                         sections.Add(new IMAGE_SECTION_HEADER(PEFile));
                     }
+
+                    ValidateSections(header, peHeader, sections);
 
                     for (int i = 0; i < dataDirectory.Length; i++)
                     {
@@ -1597,49 +2114,105 @@ namespace PECoff
                                 ReadExactly(PEFileStream, buffer, 0, buffer.Length);
                                 edt = (ByteArrayToStructure<EXPORT_DIRECTORY_TABLE>(buffer));
 
-                                if (!TryGetFileOffset(sections, edt.NamePointerRVA, out long namePtrOffset))
+                                Dictionary<uint, string> exportNamesByIndex = new Dictionary<uint, string>();
+                                if (edt.NumberOfNamePointers > 0)
                                 {
-                                    Warn("Export name pointer RVA not mapped to a section.");
-                                    break;
-                                }
-
-                                long pointerBytes = edt.NumberOfNamePointers * sizeof(UInt32);
-                                if (pointerBytes > int.MaxValue || !TrySetPosition(namePtrOffset, (int)pointerBytes))
-                                {
-                                    Warn("Export name pointer table outside file bounds.");
-                                    break;
-                                }
-
-                                List<UInt32> NamePointers = new List<uint>();
-                                for (int j = 0; j < edt.NumberOfNamePointers; j++)
-                                {
-                                    NamePointers.Add(PEFile.ReadUInt32());
-                                }
-
-                                // Read all exports
-                                bool exportNameFailure = false;
-                                foreach (UInt32 ptr in NamePointers)
-                                {
-                                    if (!TryGetFileOffset(sections, ptr, out long exportNameOffset))
+                                    if (!TryGetFileOffset(sections, edt.NamePointerRVA, out long namePtrOffset))
                                     {
-                                        exportNameFailure = true;
-                                        continue;
+                                        Warn("Export name pointer RVA not mapped to a section.");
+                                        break;
                                     }
 
-                                    if (TryReadNullTerminatedString(exportNameOffset, out string exportName) &&
-                                        !string.IsNullOrWhiteSpace(exportName))
+                                    long pointerBytes = edt.NumberOfNamePointers * sizeof(UInt32);
+                                    if (pointerBytes > int.MaxValue || !TrySetPosition(namePtrOffset, (int)pointerBytes))
                                     {
-                                        exports.Add(exportName);
+                                        Warn("Export name pointer table outside file bounds.");
+                                        break;
                                     }
-                                    else
+
+                                    List<UInt32> namePointers = new List<uint>();
+                                    for (int j = 0; j < edt.NumberOfNamePointers; j++)
                                     {
-                                        exportNameFailure = true;
+                                        namePointers.Add(PEFile.ReadUInt32());
+                                    }
+
+                                    if (!TryGetFileOffset(sections, edt.OrdinalTableRVA, out long ordinalTableOffset))
+                                    {
+                                        Warn("Export ordinal table RVA not mapped to a section.");
+                                        break;
+                                    }
+
+                                    long ordinalBytes = edt.NumberOfNamePointers * sizeof(ushort);
+                                    if (ordinalBytes > int.MaxValue || !TrySetPosition(ordinalTableOffset, (int)ordinalBytes))
+                                    {
+                                        Warn("Export ordinal table outside file bounds.");
+                                        break;
+                                    }
+
+                                    List<ushort> nameOrdinals = new List<ushort>();
+                                    for (int j = 0; j < edt.NumberOfNamePointers; j++)
+                                    {
+                                        nameOrdinals.Add(PEFile.ReadUInt16());
+                                    }
+
+                                    bool exportNameFailure = false;
+                                    for (int j = 0; j < namePointers.Count; j++)
+                                    {
+                                        uint ptr = namePointers[j];
+                                        if (!TryGetFileOffset(sections, ptr, out long exportNameOffset))
+                                        {
+                                            exportNameFailure = true;
+                                            continue;
+                                        }
+
+                                        if (TryReadNullTerminatedString(exportNameOffset, out string exportName) &&
+                                            !string.IsNullOrWhiteSpace(exportName))
+                                        {
+                                            exports.Add(exportName);
+                                            if (j < nameOrdinals.Count)
+                                            {
+                                                exportNamesByIndex[nameOrdinals[j]] = exportName;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            exportNameFailure = true;
+                                        }
+                                    }
+
+                                    if (exportNameFailure)
+                                    {
+                                        Warn("One or more export names could not be read.");
                                     }
                                 }
 
-                                if (exportNameFailure)
+                                if (edt.AddressTableEntries > 0)
                                 {
-                                    Warn("One or more export names could not be read.");
+                                    if (!TryGetFileOffset(sections, edt.ExportAddressTableRVA, out long addrTableOffset))
+                                    {
+                                        Warn("Export address table RVA not mapped to a section.");
+                                        break;
+                                    }
+
+                                    long addressBytes = edt.AddressTableEntries * sizeof(UInt32);
+                                    if (addressBytes > int.MaxValue || !TrySetPosition(addrTableOffset, (int)addressBytes))
+                                    {
+                                        Warn("Export address table outside file bounds.");
+                                        break;
+                                    }
+
+                                    List<uint> addressTable = new List<uint>();
+                                    for (int j = 0; j < edt.AddressTableEntries; j++)
+                                    {
+                                        addressTable.Add(PEFile.ReadUInt32());
+                                    }
+
+                                    for (int j = 0; j < addressTable.Count; j++)
+                                    {
+                                        uint ordinal = edt.OrdinalBase + (uint)j;
+                                        exportNamesByIndex.TryGetValue((uint)j, out string exportName);
+                                        _exportEntries.Add(new ExportEntry(exportName ?? string.Empty, ordinal, addressTable[j]));
+                                    }
                                 }
 
                                 break;
@@ -1698,6 +2271,10 @@ namespace PECoff
                                         !string.IsNullOrWhiteSpace(importName))
                                     {
                                         imports.Add(importName);
+                                        uint thunkRva = table.LookupTableVirtualAddress != 0
+                                            ? table.LookupTableVirtualAddress
+                                            : table.ImportAddressTableRVA;
+                                        ParseImportThunks(importName, thunkRva, sections, isPe32Plus, _importEntries);
                                     }
                                 }
                                 
@@ -1904,6 +2481,7 @@ namespace PECoff
                                 break;
                             case 13:
                                 // Delay Import Descriptor -> Delay-Load Import Tables 
+                                ParseDelayImportTable(dataDirectory[i], sections, isPe32Plus, peHeader.ImageBase);
                                 break;
                             case 14:
                                 // CLR Runtime Header -> The .cormeta Section (Object Only)
