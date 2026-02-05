@@ -80,18 +80,18 @@ namespace PE_FileInspector
                             continue;
                         }
 
-                        string typeToken = GetCertificateTypeToken(entry.Type);
+                        string typeToken = CertificateUtilities.GetCertificateTypeToken(entry.Type);
                         string indexToken = (i + 1).ToString(CultureInfo.InvariantCulture);
-                        string extension = GetCertificateExtension(entry.Type);
+                        string extension = CertificateUtilities.GetCertificateExtension(entry.Type);
                         string certFileName = baseName + "-" + typeToken + "-" + indexToken + extension;
                         string certPath = GetUniqueFilePath(options.OutputDir, certFileName);
                         File.WriteAllBytes(certPath, entry.Data);
                         certPaths.Add(certPath);
 
-                        string pemLabel = GetPemLabel(entry.Type);
+                        string pemLabel = CertificateUtilities.GetPemLabel(entry.Type);
                         string pemFileName = baseName + "-" + typeToken + "-" + indexToken + ".pem";
                         string pemPath = GetUniqueFilePath(options.OutputDir, pemFileName);
-                        File.WriteAllText(pemPath, ToPem(pemLabel, entry.Data), Encoding.ASCII);
+                        File.WriteAllText(pemPath, CertificateUtilities.ToPem(pemLabel, entry.Data), Encoding.ASCII);
                         pemPaths.Add(pemPath);
                     }
                 }
@@ -193,6 +193,49 @@ namespace PE_FileInspector
                 foreach (string path in pemPaths)
                 {
                     sb.AppendLine("    - " + path);
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Certificate Signer Information:");
+            CertificateEntry[] certEntries = pe.CertificateEntries;
+            if (certEntries.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                for (int i = 0; i < certEntries.Length; i++)
+                {
+                    CertificateEntry entry = certEntries[i];
+                    string typeToken = CertificateUtilities.GetCertificateTypeToken(entry.Type);
+                    sb.AppendLine("  Entry " + (i + 1).ToString(CultureInfo.InvariantCulture) +
+                                  " (" + typeToken + ", " + entry.Data.Length.ToString(CultureInfo.InvariantCulture) + " bytes)");
+
+                    if (entry.Pkcs7SignerInfos == null || entry.Pkcs7SignerInfos.Length == 0)
+                    {
+                        if (!string.IsNullOrWhiteSpace(entry.Pkcs7Error))
+                        {
+                            sb.AppendLine("    PKCS7 Error: " + entry.Pkcs7Error);
+                        }
+                        else
+                        {
+                            sb.AppendLine("    (no PKCS7 signer info)");
+                        }
+                        continue;
+                    }
+
+                    foreach (Pkcs7SignerInfo signer in entry.Pkcs7SignerInfos)
+                    {
+                        sb.AppendLine("    - Subject: " + Safe(signer.Subject));
+                        sb.AppendLine("      Issuer: " + Safe(signer.Issuer));
+                        sb.AppendLine("      Serial: " + Safe(signer.SerialNumber));
+                        sb.AppendLine("      Thumbprint: " + Safe(signer.Thumbprint));
+                        sb.AppendLine("      Digest: " + Safe(signer.DigestAlgorithm));
+                        sb.AppendLine("      Signature: " + Safe(signer.SignatureAlgorithm));
+                        sb.AppendLine("      Signer ID Type: " + Safe(signer.SignerIdentifierType));
+                        sb.AppendLine("      Signing Time: " + (signer.SigningTime?.ToString("u", CultureInfo.InvariantCulture) ?? string.Empty));
+                    }
                 }
             }
             sb.AppendLine();
@@ -508,61 +551,6 @@ namespace PE_FileInspector
         {
             Console.WriteLine("Usage:");
             Console.WriteLine("  PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze> [--suppress-cssm <true|false>]");
-        }
-
-        private static string GetCertificateExtension(CertificateTypeKind type)
-        {
-            switch (type)
-            {
-                case CertificateTypeKind.X509:
-                    return ".cer";
-                case CertificateTypeKind.PkcsSignedData:
-                case CertificateTypeKind.TsStackSigned:
-                    return ".p7b";
-                default:
-                    return ".bin";
-            }
-        }
-
-        private static string GetPemLabel(CertificateTypeKind type)
-        {
-            switch (type)
-            {
-                case CertificateTypeKind.X509:
-                    return "CERTIFICATE";
-                case CertificateTypeKind.PkcsSignedData:
-                case CertificateTypeKind.TsStackSigned:
-                    return "PKCS7";
-                default:
-                    return "BINARY";
-            }
-        }
-
-        private static string GetCertificateTypeToken(CertificateTypeKind type)
-        {
-            switch (type)
-            {
-                case CertificateTypeKind.X509:
-                    return "x509";
-                case CertificateTypeKind.PkcsSignedData:
-                    return "pkcs7";
-                case CertificateTypeKind.TsStackSigned:
-                    return "tsstack";
-                case CertificateTypeKind.Reserved1:
-                    return "reserved";
-                default:
-                    return "unknown";
-            }
-        }
-
-        private static string ToPem(string label, byte[] data)
-        {
-            string base64 = Convert.ToBase64String(data, Base64FormattingOptions.InsertLineBreaks);
-            StringBuilder sb = new StringBuilder();
-            sb.Append("-----BEGIN ").Append(label).AppendLine("-----");
-            sb.AppendLine(base64);
-            sb.Append("-----END ").Append(label).AppendLine("-----");
-            return sb.ToString();
         }
 
         private static string GetUniqueFilePath(string directory, string fileName)

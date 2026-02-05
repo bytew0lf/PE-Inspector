@@ -93,6 +93,11 @@ public class PECOFFTests
                 {
                     Assert.NotNull(parser.Certificate);
                     Assert.NotEmpty(parser.Certificate);
+                    foreach (CertificateEntry entry in parser.CertificateEntries)
+                    {
+                        Assert.NotNull(entry.Pkcs7SignerInfos);
+                        Assert.NotNull(entry.Pkcs7Error);
+                    }
                 }
             }
             else

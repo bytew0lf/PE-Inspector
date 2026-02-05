@@ -882,7 +882,7 @@ namespace PECoff
             try
             {
                 AssemblyLoader value = new AssemblyLoader();
-                using (MemoryStream ms = new MemoryStream(RawData, false))
+                using (MemoryStream ms = new MemoryStream(RawData ?? Array.Empty<byte>(), false))
                 {
                     Assembly asm = loadContext.LoadFromStream(ms);
                     value.Load(asm);
@@ -897,6 +897,73 @@ namespace PECoff
             catch (Exception)
             {
                 //Console.WriteLine("General Exception");
+                _obfuscationPercentage = 0.0;
+                _isDotNetFile = false;
+                _isObfuscated = false;
+                _assemblyReferences = new List<string>();
+                _assemblyReferenceInfos = new List<AssemblyReferenceInfo>();
+            }
+            finally
+            {
+                loadContext.Unload();
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+            }
+        }
+
+        public AnalyzeAssembly(Stream stream)
+        {
+            TempAssemblyLoadContext loadContext = new TempAssemblyLoadContext();
+            try
+            {
+                AssemblyLoader value = new AssemblyLoader();
+                Assembly asm = loadContext.LoadFromStream(stream);
+                value.Load(asm);
+
+                _isDotNetFile = value.IsDotNetFile;
+                _isObfuscated = value.IsObfuscated;
+                _obfuscationPercentage = value.ObfuscationPercentage;
+                _assemblyReferences = new List<string>(value.AssemblyReferences);
+                _assemblyReferenceInfos = new List<AssemblyReferenceInfo>(value.AssemblyReferenceInfos);
+            }
+            catch (Exception)
+            {
+                _obfuscationPercentage = 0.0;
+                _isDotNetFile = false;
+                _isObfuscated = false;
+                _assemblyReferences = new List<string>();
+                _assemblyReferenceInfos = new List<AssemblyReferenceInfo>();
+            }
+            finally
+            {
+                loadContext.Unload();
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+            }
+        }
+
+        public AnalyzeAssembly(string filePath)
+        {
+            TempAssemblyLoadContext loadContext = new TempAssemblyLoadContext();
+            try
+            {
+                AssemblyLoader value = new AssemblyLoader();
+                using (FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    Assembly asm = loadContext.LoadFromStream(fs);
+                    value.Load(asm);
+                }
+
+                _isDotNetFile = value.IsDotNetFile;
+                _isObfuscated = value.IsObfuscated;
+                _obfuscationPercentage = value.ObfuscationPercentage;
+                _assemblyReferences = new List<string>(value.AssemblyReferences);
+                _assemblyReferenceInfos = new List<AssemblyReferenceInfo>(value.AssemblyReferenceInfos);
+            }
+            catch (Exception)
+            {
                 _obfuscationPercentage = 0.0;
                 _isDotNetFile = false;
                 _isObfuscated = false;

@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -41,6 +42,11 @@ namespace PECoff
                 _warnings.Add(message);
             }
         }
+
+        public ParseResultSnapshot Snapshot()
+        {
+            return new ParseResultSnapshot(_errors.ToArray(), _warnings.ToArray());
+        }
     }
 
     public sealed class AssemblyReferenceInfo
@@ -68,11 +74,20 @@ namespace PECoff
     {
         public CertificateTypeKind Type { get; }
         public byte[] Data { get; }
+        public Pkcs7SignerInfo[] Pkcs7SignerInfos { get; }
+        public string Pkcs7Error { get; }
 
         public CertificateEntry(CertificateTypeKind type, byte[] data)
+            : this(type, data, Array.Empty<Pkcs7SignerInfo>(), string.Empty)
+        {
+        }
+
+        public CertificateEntry(CertificateTypeKind type, byte[] data, Pkcs7SignerInfo[] pkcs7SignerInfos, string pkcs7Error)
         {
             Type = type;
             Data = data ?? Array.Empty<byte>();
+            Pkcs7SignerInfos = pkcs7SignerInfos ?? Array.Empty<Pkcs7SignerInfo>();
+            Pkcs7Error = pkcs7Error ?? string.Empty;
         }
     }
 
@@ -193,15 +208,25 @@ namespace PECoff
         private BinaryReader PEFile;
         private FileStream PEFileStream;
         private readonly ParseResult _parseResult = new ParseResult();
+        private readonly PECOFFOptions _options;
+        private readonly string _filePath;
 
         #region Constructor / Destructor
         public PECOFF(string FileName)
+            : this(FileName, null)
+        {
+        }
+
+        public PECOFF(string FileName, PECOFFOptions options)
         {
             // For Debug
             //();
 
             // Constructor
-            if (File.Exists(FileName))
+            _options = options ?? new PECOFFOptions();
+            _filePath = FileName ?? string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(FileName) && File.Exists(FileName))
             {
                 PEFileStream = new FileStream(FileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 PEFile = new BinaryReader(PEFileStream, Encoding.UTF8, leaveOpen: true);
@@ -212,8 +237,18 @@ namespace PECoff
             {
                 PEFile = null;
                 PEFileStream = null;
-                _parseResult.AddError("File does not exist.");
+                Fail("File does not exist.");
+                if (_options.StrictMode)
+                {
+                    throw new PECOFFParseException("File does not exist.");
+                }
             }
+        }
+
+        public static PECOFFResult Parse(string fileName, PECOFFOptions options = null)
+        {
+            PECOFF parser = new PECOFF(fileName, options);
+            return parser.ToResult();
         }
         
         ~PECOFF()
@@ -1100,6 +1135,8 @@ namespace PECoff
         }
 
         public ParseResult ParseResult => _parseResult;
+
+        public PECOFFResult Result => ToResult();
         #endregion
 
         #region Functions
@@ -1223,6 +1260,51 @@ namespace PECoff
             return false;
         }
 
+        public PECOFFResult ToResult()
+        {
+            return new PECOFFResult(
+                _filePath,
+                _parseResult.Snapshot(),
+                _hash ?? string.Empty,
+                _isDotNetFile,
+                _isObfuscated,
+                _obfuscationPercentage,
+                _fileversion ?? string.Empty,
+                _productversion ?? string.Empty,
+                _companyName ?? string.Empty,
+                _fileDescription ?? string.Empty,
+                _internalName ?? string.Empty,
+                _originalFilename ?? string.Empty,
+                _productName ?? string.Empty,
+                _comments ?? string.Empty,
+                _legalCopyright ?? string.Empty,
+                _legalTrademarks ?? string.Empty,
+                _privateBuild ?? string.Empty,
+                _specialBuild ?? string.Empty,
+                _language ?? string.Empty,
+                _fileAlignment,
+                _sectionAlignment,
+                _sizeOfHeaders,
+                _optionalHeaderChecksum,
+                _computedChecksum,
+                IsChecksumValid,
+                _timeDateStamp,
+                TimeDateStampUtc,
+                HasCertificate,
+                _certificate ?? Array.Empty<byte>(),
+                _certificates.ToArray(),
+                _certificateEntries.ToArray(),
+                _resources.ToArray(),
+                _clrMetadata,
+                imports.ToArray(),
+                _importEntries.ToArray(),
+                _delayImportEntries.ToArray(),
+                exports.ToArray(),
+                _exportEntries.ToArray(),
+                _assemblyReferenceInfos.Select(r => r.Name).ToArray(),
+                _assemblyReferenceInfos.ToArray());
+        }
+
         private static bool TryGetIntSize(uint size, out int intSize)
         {
             if (size > int.MaxValue)
@@ -1279,45 +1361,114 @@ namespace PECoff
             return (int)Marshal.OffsetOf(typeof(IMAGE_OPTIONAL_HEADER32), nameof(IMAGE_OPTIONAL_HEADER32.CheckSum));
         }
 
-        private static uint ComputeChecksum(byte[] data, int checksumOffset)
+        private static uint ComputeChecksum(Stream stream, long checksumOffset)
         {
-            if (data == null || data.Length == 0 || checksumOffset < 0)
+            if (stream == null || !stream.CanRead || !stream.CanSeek || checksumOffset < 0)
             {
                 return 0;
             }
 
+            long originalPosition = stream.Position;
+            stream.Position = 0;
+
             ulong sum = 0;
-            int length = data.Length;
-            int index = 0;
-            while (index < length)
+            long length = stream.Length;
+            long offset = 0;
+            bool hasPending = false;
+            byte pending = 0;
+
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(8192);
+            try
             {
-                if (index == checksumOffset)
+                int bytesRead;
+                while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) > 0)
                 {
-                    index += 4;
-                    continue;
+                    int index = 0;
+                    while (index < bytesRead)
+                    {
+                        long globalOffset = offset + index;
+                        if (globalOffset >= checksumOffset && globalOffset < checksumOffset + 4)
+                        {
+                            index++;
+                            continue;
+                        }
+
+                        byte current = buffer[index];
+                        if (!hasPending)
+                        {
+                            pending = current;
+                            hasPending = true;
+                        }
+                        else
+                        {
+                            ushort word = (ushort)(pending | (current << 8));
+                            sum += word;
+                            sum = (sum & 0xFFFF) + (sum >> 16);
+                            hasPending = false;
+                            pending = 0;
+                        }
+
+                        index++;
+                    }
+
+                    offset += bytesRead;
                 }
 
-                ushort word;
-                if (index + 1 < length)
+                if (hasPending)
                 {
-                    word = (ushort)(data[index] | (data[index + 1] << 8));
-                }
-                else
-                {
-                    word = data[index];
+                    sum += pending;
+                    sum = (sum & 0xFFFF) + (sum >> 16);
                 }
 
-                sum += word;
                 sum = (sum & 0xFFFF) + (sum >> 16);
-                index += 2;
+                sum = (sum & 0xFFFF) + (sum >> 16);
+                sum += (uint)length;
+                sum = (sum & 0xFFFF) + (sum >> 16);
+                sum = sum & 0xFFFF;
+                return (uint)sum;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+                stream.Position = originalPosition;
+            }
+        }
+
+        private static string ComputeHash(Stream stream)
+        {
+            if (stream == null || !stream.CanRead || !stream.CanSeek)
+            {
+                return string.Empty;
             }
 
-            sum = (sum & 0xFFFF) + (sum >> 16);
-            sum = (sum & 0xFFFF) + (sum >> 16);
-            sum += (uint)length;
-            sum = (sum & 0xFFFF) + (sum >> 16);
-            sum = sum & 0xFFFF;
-            return (uint)sum;
+            long originalPosition = stream.Position;
+            stream.Position = 0;
+
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(8192);
+            try
+            {
+                using (IncrementalHash hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
+                {
+                    int bytesRead;
+                    while ((bytesRead = stream.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        hasher.AppendData(buffer, 0, bytesRead);
+                    }
+
+                    byte[] hash = hasher.GetHashAndReset();
+                    StringBuilder sbHash = new StringBuilder(hash.Length * 2);
+                    foreach (byte b in hash)
+                    {
+                        sbHash.Append(b.ToString("X2", System.Globalization.CultureInfo.InvariantCulture));
+                    }
+                    return sbHash.ToString();
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+                stream.Position = originalPosition;
+            }
         }
 
         private static ushort ReadUInt16(byte[] buffer, int offset)
@@ -1946,6 +2097,17 @@ namespace PECoff
 
         private void Warn(string message)
         {
+            if (string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            if (_options != null && _options.StrictMode)
+            {
+                _parseResult.AddError(message);
+                throw new PECOFFParseException(message);
+            }
+
             _parseResult.AddWarning(message);
         }
 
@@ -1974,42 +2136,9 @@ namespace PECoff
                 }
 
                 Stream fs = PEFileStream;
-                byte[] rawData = new byte[fs.Length];
-                ReadExactly(fs, rawData, 0, rawData.Length);
-                fs.Position = 0;
-
-                // Compute a Hashvalue for the file
-                using (SHA256 sha256 = SHA256.Create())
+                if (_options.ComputeHash)
                 {
-                    StringBuilder sbHash = new StringBuilder();
-                    foreach (byte b in sha256.ComputeHash(rawData))
-                    {
-                        sbHash.Append(string.Format("{0:X2}", b));
-                    }
-                    _hash = sbHash.ToString();
-                }
-
-                try
-                {
-                    if (rawData.Length > 0)
-                    {
-                        // analyze Assembly
-                        AnalyzeAssembly a = new AnalyzeAssembly(rawData);
-
-                        _obfuscationPercentage = a.ObfuscationPercentage;
-                        _isDotNetFile = a.IsDotNetFile;
-                        _isObfuscated = a.IsObfuscated;
-                        _assemblyReferenceInfos = a.AssemblyReferenceInfos.ToList();
-                    }
-                }
-                catch (Exception ex)
-                {
-                    // Something is wrong
-                    Warn($"AnalyzeAssembly failed: {ex.Message}");
-                    _obfuscationPercentage = 0.0;
-                    _isDotNetFile = false;
-                    _isObfuscated = false;
-                    _assemblyReferenceInfos.Clear();
+                    _hash = ComputeHash(fs);
                 }
                 
                 if (!TrySetPosition(0, Marshal.SizeOf(typeof(IMAGE_DOS_HEADER))))
@@ -2052,25 +2181,56 @@ namespace PECoff
                     _sizeOfHeaders = peHeader.SizeOfHeaders;
                     _optionalHeaderChecksum = peHeader.CheckSum;
 
+                    IMAGE_DATA_DIRECTORY[] dataDirectory = peHeader.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
+
                     int checksumOffset = (int)header.e_lfanew +
                                          sizeof(uint) +
                                          Marshal.SizeOf(typeof(IMAGE_FILE_HEADER)) +
                                          GetOptionalHeaderChecksumOffset(peHeader.Magic);
                     int optionalHeaderSize = peHeader.FileHeader.SizeOfOptionalHeader;
                     int checksumFieldOffset = GetOptionalHeaderChecksumOffset(peHeader.Magic);
-                    if (checksumFieldOffset + 4 <= optionalHeaderSize &&
-                        checksumOffset >= 0 &&
-                        checksumOffset + 4 <= rawData.Length)
+                    if (_options.ComputeChecksum)
                     {
-                        _computedChecksum = ComputeChecksum(rawData, checksumOffset);
+                        if (checksumFieldOffset + 4 <= optionalHeaderSize &&
+                            checksumOffset >= 0 &&
+                            checksumOffset + 4 <= PEFileStream.Length)
+                        {
+                            _computedChecksum = ComputeChecksum(PEFileStream, checksumOffset);
+                        }
+                        else
+                        {
+                            Warn("Checksum field offset is outside file bounds.");
+                        }
+                    }
+
+                    bool hasClrDirectory = dataDirectory.Length > 14 && dataDirectory[14].Size > 0;
+                    if (_options.EnableAssemblyAnalysis && hasClrDirectory && !string.IsNullOrWhiteSpace(_filePath))
+                    {
+                        try
+                        {
+                            AnalyzeAssembly analyzer = new AnalyzeAssembly(_filePath);
+                            _obfuscationPercentage = analyzer.ObfuscationPercentage;
+                            _isDotNetFile = analyzer.IsDotNetFile || hasClrDirectory;
+                            _isObfuscated = analyzer.IsObfuscated;
+                            _assemblyReferenceInfos = analyzer.AssemblyReferenceInfos.ToList();
+                        }
+                        catch (Exception ex)
+                        {
+                            Warn($"AnalyzeAssembly failed: {ex.Message}");
+                            _obfuscationPercentage = 0.0;
+                            _isDotNetFile = hasClrDirectory;
+                            _isObfuscated = false;
+                            _assemblyReferenceInfos.Clear();
+                        }
                     }
                     else
                     {
-                        Warn("Checksum field offset is outside file bounds.");
+                        _isDotNetFile = hasClrDirectory;
+                        _obfuscationPercentage = 0.0;
+                        _isObfuscated = false;
+                        _assemblyReferenceInfos.Clear();
                     }
-                    
-                    IMAGE_DATA_DIRECTORY[] dataDirectory = peHeader.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
-                    
+
                     List<IMAGE_SECTION_HEADER> sections = new List<IMAGE_SECTION_HEADER>();
                     int sectionTableSize = peHeader.FileHeader.NumberOfSections * Marshal.SizeOf(typeof(IMAGE_SECTION_HEADER));
                     if (!TrySetPosition(PEFileStream.Position, sectionTableSize))
@@ -2438,7 +2598,15 @@ namespace PECoff
                                     Array.Copy(buffer, offset + headerSize, certData, 0, certDataLength);
                                     _certificates.Add(certData);
                                     CertificateTypeKind typeKind = (CertificateTypeKind)certHeader.wCertificateType;
-                                    _certificateEntries.Add(new CertificateEntry(typeKind, certData));
+                                    Pkcs7SignerInfo[] pkcs7Signers = Array.Empty<Pkcs7SignerInfo>();
+                                    string pkcs7Error = string.Empty;
+                                    if (_options.ParseCertificateSigners &&
+                                        (typeKind == CertificateTypeKind.PkcsSignedData || typeKind == CertificateTypeKind.TsStackSigned))
+                                    {
+                                        CertificateUtilities.TryGetPkcs7SignerInfos(certData, out pkcs7Signers, out pkcs7Error);
+                                    }
+
+                                    _certificateEntries.Add(new CertificateEntry(typeKind, certData, pkcs7Signers, pkcs7Error));
 
                                     int aligned = Align8(entryLength);
                                     if (aligned <= 0)
@@ -2552,9 +2720,20 @@ namespace PECoff
                     Fail("Invalid DOS signature.");
                 }
             }
+            catch (PECOFFParseException)
+            {
+                if (_options != null && _options.StrictMode)
+                {
+                    throw;
+                }
+            }
             catch (Exception ex)
             {
-               Fail($"Unexpected error while parsing PE: {ex.Message}");
+                Fail($"Unexpected error while parsing PE: {ex.Message}");
+                if (_options != null && _options.StrictMode)
+                {
+                    throw;
+                }
             }
             
 
