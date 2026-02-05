@@ -36,7 +36,7 @@ namespace PE_Inspector
 
             using (TextWriter tw = new StreamWriter(Path.Combine(Directory.GetCurrentDirectory(), filename)))
             {
-                tw.WriteLine("Filename;Extension;Path;Product Version;File Version;IsDotNetFile;IsObfuscated;Obfuscationpercentage;SHA256 HASH;HasCertificate;Comments;CompanyName;FileDescription;InternalName;IsDebug;IsPatched;IsPreRelease;IsPrivateBuild;IsSpecialBuild;Language;Copyright;Trademarks;OriginalFilename;PrivateBuild;ProductName;SpecialBuild");
+                tw.WriteLine("Filename;Extension;Path;Product Version;File Version;IsDotNetFile;IsObfuscated;Obfuscationpercentage;SHA256 HASH;HasCertificate;Comments;CompanyName;FileDescription;InternalName;IsDebug;IsPatched;IsPreRelease;IsPrivateBuild;IsSpecialBuild;Language;Copyright;Trademarks;OriginalFilename;PrivateBuild;ProductName;SpecialBuild;ParseErrors;ParseWarnings");
                 string[] ListOfFiles = Directory.GetFiles(dirname, "*.*", SearchOption.AllDirectories); ;
 
                 ApplyIgnoreList(ignore, ref ListOfFiles);
@@ -46,6 +46,8 @@ namespace PE_Inspector
                     Console.Write("Inspecting {0}...\r", fname);
                     PECOFF f = new PECOFF(fname);
                     System.Diagnostics.FileVersionInfo versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(fname);
+                    string parseErrors = f.ParseResult.Errors.Count > 0 ? string.Join(" | ", f.ParseResult.Errors) : "";
+                    string parseWarnings = f.ParseResult.Warnings.Count > 0 ? string.Join(" | ", f.ParseResult.Warnings) : "";
                     tw.Write("{0};", Path.GetFileName(fname));
                     tw.Write("{0};", Path.GetExtension(fname));
                     tw.Write("{0};", Path.GetDirectoryName(fname));
@@ -71,9 +73,21 @@ namespace PE_Inspector
                     tw.Write("{0};", versionInfo.OriginalFilename != null ? versionInfo.OriginalFilename.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
                     tw.Write("{0};", versionInfo.PrivateBuild != null ? versionInfo.PrivateBuild.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
                     tw.Write("{0};", versionInfo.ProductName != null ? versionInfo.ProductName.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0}\n", versionInfo.SpecialBuild != null ? versionInfo.SpecialBuild.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
+                    tw.Write("{0};", versionInfo.SpecialBuild != null ? versionInfo.SpecialBuild.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
+                    tw.Write("{0};", Sanitize(parseErrors));
+                    tw.Write("{0}\n", Sanitize(parseWarnings));
                 }
             }
+        }
+
+        static string Sanitize(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return "";
+            }
+
+            return value.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim();
         }
 
         static void ApplyIgnoreList(string[] ignorelist, ref string[] Filelist)

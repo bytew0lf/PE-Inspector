@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PE-Inspector", "PE-Inspecto
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PECOFF.Tests", "PECOFF.Tests\PECOFF.Tests.csproj", "{4AFEA190-EC7A-4101-B297-D53E5D597E96}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PE-FileInspector", "PE-FileInspector\PE-FileInspector.csproj", "{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,6 +57,18 @@ Global
 		{4AFEA190-EC7A-4101-B297-D53E5D597E96}.Release|x64.Build.0 = Release|Any CPU
 		{4AFEA190-EC7A-4101-B297-D53E5D597E96}.Release|x86.ActiveCfg = Release|Any CPU
 		{4AFEA190-EC7A-4101-B297-D53E5D597E96}.Release|x86.Build.0 = Release|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Debug|x64.Build.0 = Debug|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Debug|x86.Build.0 = Debug|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Release|x64.ActiveCfg = Release|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Release|x64.Build.0 = Release|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Release|x86.ActiveCfg = Release|Any CPU
+		{EB42A3FE-898D-475A-9008-D1A6A09CEAD3}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

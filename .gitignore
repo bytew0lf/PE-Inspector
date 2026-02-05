@@ -57,7 +57,12 @@ bld/
 [Bb]in/
 [Oo]bj/
 [Ll]og/
+
+# Files that I don't want in my repo
 [Tt]estfiles/
+[Tt]est-output
+test-output.csv
+.DS_Store
 
 # Visual Studio 2015/2017 cache/options directory
 .vs/

@@ -43,6 +43,18 @@ namespace PECoff
         }
     }
 
+    public sealed class AssemblyReferenceInfo
+    {
+        public string Name { get; }
+        public string Version { get; }
+
+        public AssemblyReferenceInfo(string name, string version)
+        {
+            Name = name ?? string.Empty;
+            Version = version ?? string.Empty;
+        }
+    }
+
     // Based on https://docs.microsoft.com/en-us/windows/desktop/debug/pe-format
     // https://en.wikibooks.org/wiki/X86_Disassembly/Windows_Executable_Files#Section_Table
     // https://tech-zealots.com/malware-analysis/understanding-concepts-of-va-rva-and-offset/
@@ -175,6 +187,8 @@ namespace PECoff
             //IMAGE_NT_SIGNATURE = 0x00004550,     //PE00
             IMAGE_UNKNOWN = 0x0000
         }
+
+        private const UInt32 IMAGE_NT_SIGNATURE = 0x00004550;
 
         private enum Subsystem : ushort
         {
@@ -711,16 +725,21 @@ namespace PECoff
             get => _hash;
         }
 
-        private bool _hasCertificate = false;
         public bool HasCertificate
         {
-            get => _hasCertificate;
+            get => _certificates.Count > 0;
         }
 
         private byte[] _certificate;
         public byte[] Certificate
         {
             get => _certificate;
+        }
+
+        private List<byte[]> _certificates = new List<byte[]>();
+        public byte[][] Certificates
+        {
+            get { return _certificates.ToArray(); }
         }
 
         private List<string> imports = new List<string>();
@@ -733,6 +752,17 @@ namespace PECoff
         public string[] Exports
         {
             get { return exports.ToArray(); }
+        }
+
+        private List<AssemblyReferenceInfo> _assemblyReferenceInfos = new List<AssemblyReferenceInfo>();
+        public string[] AssemblyReferences
+        {
+            get { return _assemblyReferenceInfos.Select(r => r.Name).ToArray(); }
+        }
+
+        public AssemblyReferenceInfo[] AssemblyReferenceInfos
+        {
+            get { return _assemblyReferenceInfos.ToArray(); }
         }
 
         public ParseResult ParseResult => _parseResult;
@@ -848,6 +878,11 @@ namespace PECoff
             return true;
         }
 
+        private static int Align8(int value)
+        {
+            return (value + 7) & ~7;
+        }
+
         private void Fail(string message)
         {
             _parseResult.AddError(message);
@@ -899,6 +934,7 @@ namespace PECoff
                             _obfuscationPercentage = a.ObfuscationPercentage;
                             _isDotNetFile = a.IsDotNetFile;
                             _isObfuscated = a.IsObfuscated;
+                            _assemblyReferenceInfos = a.AssemblyReferenceInfos.ToList();
                         }
                     }
                     catch (Exception ex)
@@ -908,6 +944,7 @@ namespace PECoff
                         _obfuscationPercentage = 0.0;
                         _isDotNetFile = false;
                         _isObfuscated = false;
+                        _assemblyReferenceInfos.Clear();
                     }
                 }
                 
@@ -932,7 +969,7 @@ namespace PECoff
 
                     // Set the position to the PE-Header
                     IMAGE_NT_HEADERS peHeader = new IMAGE_NT_HEADERS(PEFile);
-                    if (peHeader.Signature != 0x00004550)
+                    if (peHeader.Signature != IMAGE_NT_SIGNATURE )
                     {
                         Fail("Invalid PE signature.");
                         return;
@@ -1138,6 +1175,8 @@ namespace PECoff
                                 break;
                             case 4:
                                 // Certificate Table -> The attribute certificate table
+                                _certificates.Clear();
+                                _certificate = null;
                                 if (!TryGetIntSize(dataDirectory[i].Size, out int certSize) ||
                                     certSize < (sizeof(UInt32) + sizeof(CertificateRevision) + sizeof(CertificateType)))
                                 {
@@ -1155,22 +1194,56 @@ namespace PECoff
                                 ReadExactly(PEFileStream, buffer, 0, buffer.Length);
 
                                 int headerSize = Marshal.SizeOf(typeof(CertificateTableHeader));
-                                byte[] tmp = new byte[headerSize];
-                                Array.Copy(buffer, tmp, tmp.Length);
-
-                                CertificateTableHeader certHeader = ByteArrayToStructure<CertificateTableHeader>(tmp);
-                                int certDataLength = buffer.Length - headerSize;
-                                if (certDataLength <= 0)
+                                int offset = 0;
+                                while (offset + headerSize <= buffer.Length)
                                 {
-                                    Warn("Certificate table does not contain certificate data.");
-                                    break;
+                                    byte[] tmp = new byte[headerSize];
+                                    Array.Copy(buffer, offset, tmp, 0, headerSize);
+                                    CertificateTableHeader certHeader = ByteArrayToStructure<CertificateTableHeader>(tmp);
+
+                                    if (certHeader.dwLength < headerSize)
+                                    {
+                                        Warn("Certificate entry length is invalid.");
+                                        break;
+                                    }
+
+                                    if (certHeader.dwLength > int.MaxValue)
+                                    {
+                                        Warn("Certificate entry length exceeds supported limits.");
+                                        break;
+                                    }
+
+                                    int entryLength = (int)certHeader.dwLength;
+                                    if (offset + entryLength > buffer.Length)
+                                    {
+                                        Warn("Certificate entry exceeds certificate table size.");
+                                        break;
+                                    }
+
+                                    int certDataLength = entryLength - headerSize;
+                                    if (certDataLength <= 0)
+                                    {
+                                        Warn("Certificate entry does not contain certificate data.");
+                                        break;
+                                    }
+
+                                    byte[] certData = new byte[certDataLength];
+                                    Array.Copy(buffer, offset + headerSize, certData, 0, certDataLength);
+                                    _certificates.Add(certData);
+
+                                    int aligned = Align8(entryLength);
+                                    if (aligned <= 0)
+                                    {
+                                        break;
+                                    }
+
+                                    offset += aligned;
                                 }
 
-                                tmp = new byte[certDataLength];
-                                Array.Copy(buffer, headerSize, tmp, 0, tmp.Length);
-
-                                _hasCertificate = true;
-                                _certificate = tmp;
+                                if (_certificates.Count > 0)
+                                {
+                                    _certificate = _certificates[0];
+                                }
 
                                 break;
                             case 5:

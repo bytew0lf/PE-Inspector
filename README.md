@@ -7,6 +7,15 @@ Just execute the PE-Inspector like this:
 
     PE-Inspector.exe output.csv <Path to inspect>
 
+## PE-FileInspector
+Single-file inspector that writes a human-readable report and extracts certificates.
+
+Usage:
+
+    PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze>
+
+The report contains all analysis details, and any embedded certificates are written to the output directory as `.crt` files.
+
 ## Additional functionality
 The PECOFF Library has also the ability to get all imports and exports of the PE-file as well as the certificate.
 
@@ -38,5 +47,5 @@ The CSV-Output currently contains the following values for each analyzed file.
  - PrivateBuild 
  - ProductName 
  - SpecialBuild
-
-
+ - ParseErrors
+ - ParseWarnings

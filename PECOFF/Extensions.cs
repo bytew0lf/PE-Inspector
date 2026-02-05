@@ -536,6 +536,8 @@ namespace PECoff
                 _isDotNetFile = value.IsDotNetFile;
                 _isObfuscated = value.IsObfuscated;
                 _obfuscationPercentage = value.ObfuscationPercentage;
+                _assemblyReferences = new List<string>(value.AssemblyReferences);
+                _assemblyReferenceInfos = new List<AssemblyReferenceInfo>(value.AssemblyReferenceInfos);
             }
             catch (Exception)
             {
@@ -543,6 +545,8 @@ namespace PECoff
                 _obfuscationPercentage = 0.0;
                 _isDotNetFile = false;
                 _isObfuscated = false;
+                _assemblyReferences = new List<string>();
+                _assemblyReferenceInfos = new List<AssemblyReferenceInfo>();
             }
             finally
             {
@@ -584,6 +588,18 @@ namespace PECoff
                 return _isDotNetFile;
             }
         }
+
+        private List<string> _assemblyReferences = new List<string>();
+        public string[] AssemblyReferences
+        {
+            get { return _assemblyReferences.ToArray(); }
+        }
+
+        private List<AssemblyReferenceInfo> _assemblyReferenceInfos = new List<AssemblyReferenceInfo>();
+        public AssemblyReferenceInfo[] AssemblyReferenceInfos
+        {
+            get { return _assemblyReferenceInfos.ToArray(); }
+        }
         #endregion
     }
 
@@ -603,11 +619,33 @@ namespace PECoff
         private bool _isDotNetFile;
         public bool IsDotNetFile => _isDotNetFile;
 
+        private List<AssemblyReferenceInfo> _assemblyReferenceInfos = new List<AssemblyReferenceInfo>();
+        public string[] AssemblyReferences => _assemblyReferenceInfos.Select(r => r.Name).ToArray();
+        public AssemblyReferenceInfo[] AssemblyReferenceInfos => _assemblyReferenceInfos.ToArray();
+
         public void Load(Assembly asm)
         {
             try
             {
                 _isDotNetFile = true;
+                try
+                {
+                    AssemblyName[] refs = asm.GetReferencedAssemblies();
+                    if (refs != null && refs.Length > 0)
+                    {
+                        foreach (AssemblyName reference in refs)
+                        {
+                            if (!string.IsNullOrWhiteSpace(reference.Name))
+                            {
+                                string version = reference.Version != null ? reference.Version.ToString() : string.Empty;
+                                _assemblyReferenceInfos.Add(new AssemblyReferenceInfo(reference.Name, version));
+                            }
+                        }
+                    }
+                }
+                catch (Exception)
+                {
+                }
 
                 Type[] types = new Type[] { };
                 try
@@ -723,6 +761,7 @@ namespace PECoff
                 _obfuscationPercentage = 0.0;
                 _isDotNetFile = false;
                 _isObfuscated = false;
+                _assemblyReferenceInfos.Clear();
             }
             catch (Exception)
             {
@@ -730,6 +769,7 @@ namespace PECoff
                 _obfuscationPercentage = 0.0;
                 _isDotNetFile = false;
                 _isObfuscated = false;
+                _assemblyReferenceInfos.Clear();
             }
         }   
     }

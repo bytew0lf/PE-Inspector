@@ -23,6 +23,25 @@ public class PECOFFTests
         return null;
     }
 
+    private static bool IsUpperHex(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < value.Length; i++)
+        {
+            char c = value[i];
+            if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     [Fact]
     public void Parses_Current_Assembly_Successfully()
     {
@@ -35,6 +54,8 @@ public class PECOFFTests
         Assert.True(parser.ParseResult.IsSuccess);
         Assert.NotNull(parser.Hash);
         Assert.NotEmpty(parser.Hash);
+        Assert.Equal(64, parser.Hash.Length);
+        Assert.True(IsUpperHex(parser.Hash));
         Assert.NotNull(parser.Imports);
         Assert.NotNull(parser.Exports);
     }
@@ -66,6 +87,13 @@ public class PECOFFTests
             {
                 Assert.True(parser.ParseResult.IsSuccess, $"Parse failed for {Path.GetFileName(file)}: {string.Join(" | ", parser.ParseResult.Errors)}");
                 Assert.False(string.IsNullOrWhiteSpace(parser.Hash));
+                Assert.Equal(64, parser.Hash.Length);
+                Assert.True(IsUpperHex(parser.Hash));
+                if (parser.HasCertificate)
+                {
+                    Assert.NotNull(parser.Certificate);
+                    Assert.NotEmpty(parser.Certificate);
+                }
             }
             else
             {
