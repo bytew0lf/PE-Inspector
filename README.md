@@ -38,6 +38,19 @@ The PECOFF parser supports options and an immutable result snapshot:
 
 You can retrieve a stable snapshot via `pe.Result` or `PECOFF.Parse(path, options)`.
 
+### Snapshot regression tests
+PECOFF.Tests uses a snapshot file for the `testfiles` corpus:
+
+    PECOFF.Tests/Fixtures/testfiles.snap
+
+Regenerate it with the snapshot generator:
+
+    dotnet run --project tools/SnapshotGenerator/SnapshotGenerator.csproj
+
+Optional parameters:
+
+    dotnet run --project tools/SnapshotGenerator/SnapshotGenerator.csproj -- --input <testfiles-dir> --output <snapshot-path>
+
 ## Contents of the output file
 The CSV-Output currently contains the following values for each analyzed file.
  - Filename

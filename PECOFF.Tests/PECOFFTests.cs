@@ -230,13 +230,25 @@ public class PECOFFTests
         }
 
         int peOffset = BitConverter.ToInt32(data, 0x3C);
-        if (peOffset <= 0 || peOffset + 4 + 20 + 0x2C > data.Length)
+        if (peOffset <= 0 || peOffset + 4 + 20 + 2 > data.Length)
         {
             return -1;
         }
 
         int optionalHeaderStart = peOffset + 4 + 20;
-        return optionalHeaderStart + 0x28;
+        ushort magic = BitConverter.ToUInt16(data, optionalHeaderStart);
+        if (magic != 0x10B && magic != 0x20B)
+        {
+            return -1;
+        }
+
+        int fileAlignmentOffset = optionalHeaderStart + 0x24;
+        if (fileAlignmentOffset + 4 > data.Length)
+        {
+            return -1;
+        }
+
+        return fileAlignmentOffset;
     }
 
     private static void WriteUInt32(byte[] data, int offset, uint value)
