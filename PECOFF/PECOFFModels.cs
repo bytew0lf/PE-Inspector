@@ -107,8 +107,18 @@ namespace PECoff
         public string PdbPath { get; }
         public uint PdbSignature { get; }
         public uint PdbTimeDateStamp { get; }
+        public bool HasPdbTimeDateStamp { get; }
+        public bool TimeDateStampMatches { get; }
 
-        public DebugCodeViewInfo(string signature, Guid guid, uint age, string pdbPath, uint pdbSignature, uint pdbTimeDateStamp)
+        public DebugCodeViewInfo(
+            string signature,
+            Guid guid,
+            uint age,
+            string pdbPath,
+            uint pdbSignature,
+            uint pdbTimeDateStamp,
+            bool hasPdbTimeDateStamp,
+            bool timeDateStampMatches)
         {
             Signature = signature ?? string.Empty;
             Guid = guid;
@@ -116,6 +126,8 @@ namespace PECoff
             PdbPath = pdbPath ?? string.Empty;
             PdbSignature = pdbSignature;
             PdbTimeDateStamp = pdbTimeDateStamp;
+            HasPdbTimeDateStamp = hasPdbTimeDateStamp;
+            TimeDateStampMatches = timeDateStampMatches;
         }
     }
 
@@ -130,6 +142,7 @@ namespace PECoff
         public uint AddressOfRawData { get; }
         public uint PointerToRawData { get; }
         public DebugCodeViewInfo CodeView { get; }
+        public string Note { get; }
 
         public DebugDirectoryEntry(
             uint characteristics,
@@ -140,7 +153,8 @@ namespace PECoff
             uint sizeOfData,
             uint addressOfRawData,
             uint pointerToRawData,
-            DebugCodeViewInfo codeView)
+            DebugCodeViewInfo codeView,
+            string note)
         {
             Characteristics = characteristics;
             TimeDateStamp = timeDateStamp;
@@ -151,6 +165,49 @@ namespace PECoff
             AddressOfRawData = addressOfRawData;
             PointerToRawData = pointerToRawData;
             CodeView = codeView;
+            Note = note ?? string.Empty;
+        }
+    }
+
+    public sealed class RichHeaderEntry
+    {
+        public ushort ProductId { get; }
+        public ushort BuildNumber { get; }
+        public uint Count { get; }
+        public uint RawCompId { get; }
+
+        public RichHeaderEntry(ushort productId, ushort buildNumber, uint count, uint rawCompId)
+        {
+            ProductId = productId;
+            BuildNumber = buildNumber;
+            Count = count;
+            RawCompId = rawCompId;
+        }
+    }
+
+    public sealed class RichHeaderInfo
+    {
+        public uint Key { get; }
+        public IReadOnlyList<RichHeaderEntry> Entries { get; }
+
+        public RichHeaderInfo(uint key, RichHeaderEntry[] entries)
+        {
+            Key = key;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<RichHeaderEntry>());
+        }
+    }
+
+    public sealed class ExceptionFunctionInfo
+    {
+        public uint BeginAddress { get; }
+        public uint EndAddress { get; }
+        public uint UnwindInfoAddress { get; }
+
+        public ExceptionFunctionInfo(uint beginAddress, uint endAddress, uint unwindInfoAddress)
+        {
+            BeginAddress = beginAddress;
+            EndAddress = endAddress;
+            UnwindInfoAddress = unwindInfoAddress;
         }
     }
 
@@ -395,6 +452,164 @@ namespace PECoff
         }
     }
 
+    public sealed class SubsystemInfo
+    {
+        public ushort Value { get; }
+        public string Name { get; }
+        public bool IsGui { get; }
+        public bool IsConsole { get; }
+
+        public SubsystemInfo(ushort value, string name, bool isGui, bool isConsole)
+        {
+            Value = value;
+            Name = name ?? string.Empty;
+            IsGui = isGui;
+            IsConsole = isConsole;
+        }
+    }
+
+    public sealed class DllCharacteristicsInfo
+    {
+        public ushort Value { get; }
+        public string[] Flags { get; }
+        public bool NxCompat { get; }
+        public bool AslrEnabled { get; }
+        public bool GuardCf { get; }
+        public bool HighEntropyVa { get; }
+
+        public DllCharacteristicsInfo(
+            ushort value,
+            string[] flags,
+            bool nxCompat,
+            bool aslrEnabled,
+            bool guardCf,
+            bool highEntropyVa)
+        {
+            Value = value;
+            Flags = flags ?? Array.Empty<string>();
+            NxCompat = nxCompat;
+            AslrEnabled = aslrEnabled;
+            GuardCf = guardCf;
+            HighEntropyVa = highEntropyVa;
+        }
+    }
+
+    public sealed class MetadataTableCountInfo
+    {
+        public int TableIndex { get; }
+        public string TableName { get; }
+        public int Count { get; }
+
+        public MetadataTableCountInfo(int tableIndex, string tableName, int count)
+        {
+            TableIndex = tableIndex;
+            TableName = tableName ?? string.Empty;
+            Count = count;
+        }
+    }
+
+    public sealed class ReadyToRunSectionInfo
+    {
+        public uint Type { get; }
+        public uint Rva { get; }
+        public uint Size { get; }
+        public string Name { get; }
+
+        public ReadyToRunSectionInfo(uint type, uint rva, uint size, string name)
+        {
+            Type = type;
+            Rva = rva;
+            Size = size;
+            Name = name ?? string.Empty;
+        }
+    }
+
+    public sealed class ReadyToRunInfo
+    {
+        public uint Signature { get; }
+        public string SignatureText { get; }
+        public ushort MajorVersion { get; }
+        public ushort MinorVersion { get; }
+        public uint Flags { get; }
+        public IReadOnlyList<ReadyToRunSectionInfo> Sections { get; }
+
+        public ReadyToRunInfo(
+            uint signature,
+            string signatureText,
+            ushort majorVersion,
+            ushort minorVersion,
+            uint flags,
+            ReadyToRunSectionInfo[] sections)
+        {
+            Signature = signature;
+            SignatureText = signatureText ?? string.Empty;
+            MajorVersion = majorVersion;
+            MinorVersion = minorVersion;
+            Flags = flags;
+            Sections = Array.AsReadOnly(sections ?? Array.Empty<ReadyToRunSectionInfo>());
+        }
+    }
+
+    public sealed class MessageTableEntryInfo
+    {
+        public uint Id { get; }
+        public string Text { get; }
+        public bool IsUnicode { get; }
+
+        public MessageTableEntryInfo(uint id, string text, bool isUnicode)
+        {
+            Id = id;
+            Text = text ?? string.Empty;
+            IsUnicode = isUnicode;
+        }
+    }
+
+    public sealed class ResourceMessageTableInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public IReadOnlyList<MessageTableEntryInfo> Entries { get; }
+
+        public ResourceMessageTableInfo(uint nameId, ushort languageId, MessageTableEntryInfo[] entries)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<MessageTableEntryInfo>());
+        }
+    }
+
+    public sealed class ManifestSchemaInfo
+    {
+        public string RootElement { get; }
+        public string Namespace { get; }
+        public string ManifestVersion { get; }
+        public string AssemblyIdentityName { get; }
+        public string AssemblyIdentityVersion { get; }
+        public string AssemblyIdentityArchitecture { get; }
+        public string AssemblyIdentityType { get; }
+        public string UiAccess { get; }
+
+        public ManifestSchemaInfo(
+            string rootElement,
+            string schemaNamespace,
+            string manifestVersion,
+            string assemblyIdentityName,
+            string assemblyIdentityVersion,
+            string assemblyIdentityArchitecture,
+            string assemblyIdentityType,
+            string uiAccess)
+        {
+            RootElement = rootElement ?? string.Empty;
+            Namespace = schemaNamespace ?? string.Empty;
+            ManifestVersion = manifestVersion ?? string.Empty;
+            AssemblyIdentityName = assemblyIdentityName ?? string.Empty;
+            AssemblyIdentityVersion = assemblyIdentityVersion ?? string.Empty;
+            AssemblyIdentityArchitecture = assemblyIdentityArchitecture ?? string.Empty;
+            AssemblyIdentityType = assemblyIdentityType ?? string.Empty;
+            UiAccess = uiAccess ?? string.Empty;
+        }
+    }
+
     public sealed class PECOFFResult
     {
         public string FilePath { get; }
@@ -425,16 +640,20 @@ namespace PECoff
         public bool IsChecksumValid { get; }
         public uint TimeDateStamp { get; }
         public DateTimeOffset? TimeDateStampUtc { get; }
+        public SubsystemInfo Subsystem { get; }
+        public DllCharacteristicsInfo DllCharacteristics { get; }
         public bool HasCertificate { get; }
         public byte[] Certificate { get; }
         public IReadOnlyList<byte[]> Certificates { get; }
         public IReadOnlyList<CertificateEntry> CertificateEntries { get; }
         public IReadOnlyList<ResourceEntry> Resources { get; }
         public IReadOnlyList<ResourceStringTableInfo> ResourceStringTables { get; }
+        public IReadOnlyList<ResourceMessageTableInfo> ResourceMessageTables { get; }
         public IReadOnlyList<ResourceManifestInfo> ResourceManifests { get; }
         public IReadOnlyList<IconGroupInfo> IconGroups { get; }
         public ClrMetadataInfo ClrMetadata { get; }
         public StrongNameSignatureInfo StrongNameSignature { get; }
+        public ReadyToRunInfo ReadyToRun { get; }
         public IReadOnlyList<string> Imports { get; }
         public IReadOnlyList<ImportEntry> ImportEntries { get; }
         public IReadOnlyList<ImportEntry> DelayImportEntries { get; }
@@ -444,6 +663,8 @@ namespace PECoff
         public IReadOnlyList<BoundImportEntry> BoundImports { get; }
         public IReadOnlyList<DebugDirectoryEntry> DebugDirectories { get; }
         public IReadOnlyList<BaseRelocationBlockInfo> BaseRelocations { get; }
+        public IReadOnlyList<ExceptionFunctionInfo> ExceptionFunctions { get; }
+        public RichHeaderInfo RichHeader { get; }
         public TlsInfo TlsInfo { get; }
         public LoadConfigInfo LoadConfig { get; }
         public IReadOnlyList<string> AssemblyReferences { get; }
@@ -478,16 +699,20 @@ namespace PECoff
             bool isChecksumValid,
             uint timeDateStamp,
             DateTimeOffset? timeDateStampUtc,
+            SubsystemInfo subsystem,
+            DllCharacteristicsInfo dllCharacteristics,
             bool hasCertificate,
             byte[] certificate,
             byte[][] certificates,
             CertificateEntry[] certificateEntries,
             ResourceEntry[] resources,
             ResourceStringTableInfo[] resourceStringTables,
+            ResourceMessageTableInfo[] resourceMessageTables,
             ResourceManifestInfo[] resourceManifests,
             IconGroupInfo[] iconGroups,
             ClrMetadataInfo clrMetadata,
             StrongNameSignatureInfo strongNameSignature,
+            ReadyToRunInfo readyToRun,
             string[] imports,
             ImportEntry[] importEntries,
             ImportEntry[] delayImportEntries,
@@ -497,6 +722,8 @@ namespace PECoff
             BoundImportEntry[] boundImports,
             DebugDirectoryEntry[] debugDirectories,
             BaseRelocationBlockInfo[] baseRelocations,
+            ExceptionFunctionInfo[] exceptionFunctions,
+            RichHeaderInfo richHeader,
             TlsInfo tlsInfo,
             LoadConfigInfo loadConfig,
             string[] assemblyReferences,
@@ -530,16 +757,20 @@ namespace PECoff
             IsChecksumValid = isChecksumValid;
             TimeDateStamp = timeDateStamp;
             TimeDateStampUtc = timeDateStampUtc;
+            Subsystem = subsystem;
+            DllCharacteristics = dllCharacteristics;
             HasCertificate = hasCertificate;
             Certificate = certificate ?? Array.Empty<byte>();
             Certificates = Array.AsReadOnly(certificates ?? Array.Empty<byte[]>());
             CertificateEntries = Array.AsReadOnly(certificateEntries ?? Array.Empty<CertificateEntry>());
             Resources = Array.AsReadOnly(resources ?? Array.Empty<ResourceEntry>());
             ResourceStringTables = Array.AsReadOnly(resourceStringTables ?? Array.Empty<ResourceStringTableInfo>());
+            ResourceMessageTables = Array.AsReadOnly(resourceMessageTables ?? Array.Empty<ResourceMessageTableInfo>());
             ResourceManifests = Array.AsReadOnly(resourceManifests ?? Array.Empty<ResourceManifestInfo>());
             IconGroups = Array.AsReadOnly(iconGroups ?? Array.Empty<IconGroupInfo>());
             ClrMetadata = clrMetadata;
             StrongNameSignature = strongNameSignature;
+            ReadyToRun = readyToRun;
             Imports = Array.AsReadOnly(imports ?? Array.Empty<string>());
             ImportEntries = Array.AsReadOnly(importEntries ?? Array.Empty<ImportEntry>());
             DelayImportEntries = Array.AsReadOnly(delayImportEntries ?? Array.Empty<ImportEntry>());
@@ -549,6 +780,8 @@ namespace PECoff
             BoundImports = Array.AsReadOnly(boundImports ?? Array.Empty<BoundImportEntry>());
             DebugDirectories = Array.AsReadOnly(debugDirectories ?? Array.Empty<DebugDirectoryEntry>());
             BaseRelocations = Array.AsReadOnly(baseRelocations ?? Array.Empty<BaseRelocationBlockInfo>());
+            ExceptionFunctions = Array.AsReadOnly(exceptionFunctions ?? Array.Empty<ExceptionFunctionInfo>());
+            RichHeader = richHeader;
             TlsInfo = tlsInfo;
             LoadConfig = loadConfig;
             AssemblyReferences = Array.AsReadOnly(assemblyReferences ?? Array.Empty<string>());
@@ -562,13 +795,26 @@ namespace PECoff
         public string Version { get; }
         public string Culture { get; }
         public string PublicKeyOrToken { get; }
+        public int Token { get; }
+        public int RowId { get; }
+        public string FullName { get; }
 
-        public ClrAssemblyReferenceInfo(string name, string version, string culture, string publicKeyOrToken)
+        public ClrAssemblyReferenceInfo(
+            string name,
+            string version,
+            string culture,
+            string publicKeyOrToken,
+            int token,
+            int rowId,
+            string fullName)
         {
             Name = name ?? string.Empty;
             Version = version ?? string.Empty;
             Culture = culture ?? string.Empty;
             PublicKeyOrToken = publicKeyOrToken ?? string.Empty;
+            Token = token;
+            RowId = rowId;
+            FullName = fullName ?? string.Empty;
         }
     }
 
@@ -590,13 +836,28 @@ namespace PECoff
     {
         public uint NameId { get; }
         public ushort LanguageId { get; }
+        public uint TypeId { get; }
+        public string TypeName { get; }
         public string Content { get; }
+        public ManifestSchemaInfo Schema { get; }
+        public bool IsMui { get; }
 
-        public ResourceManifestInfo(uint nameId, ushort languageId, string content)
+        public ResourceManifestInfo(
+            uint nameId,
+            ushort languageId,
+            uint typeId,
+            string typeName,
+            string content,
+            ManifestSchemaInfo schema,
+            bool isMui)
         {
             NameId = nameId;
             LanguageId = languageId;
+            TypeId = typeId;
+            TypeName = typeName ?? string.Empty;
             Content = content ?? string.Empty;
+            Schema = schema;
+            IsMui = isMui;
         }
     }
 }

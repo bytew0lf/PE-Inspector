@@ -24,6 +24,9 @@ namespace PECoff
         public bool ChainValid { get; }
         public string[] ChainStatus { get; }
         public bool IsTimestampSigner { get; }
+        public bool HasCodeSigningEku { get; }
+        public bool HasTimestampEku { get; }
+        public bool IsWithinValidityPeriod { get; }
         public Pkcs7SignerInfo[] CounterSigners { get; }
 
         public Pkcs7SignerInfo(
@@ -40,6 +43,9 @@ namespace PECoff
             bool chainValid,
             string[] chainStatus,
             bool isTimestampSigner,
+            bool hasCodeSigningEku,
+            bool hasTimestampEku,
+            bool isWithinValidityPeriod,
             Pkcs7SignerInfo[] counterSigners)
         {
             Subject = subject ?? string.Empty;
@@ -55,6 +61,9 @@ namespace PECoff
             ChainValid = chainValid;
             ChainStatus = chainStatus ?? Array.Empty<string>();
             IsTimestampSigner = isTimestampSigner;
+            HasCodeSigningEku = hasCodeSigningEku;
+            HasTimestampEku = hasTimestampEku;
+            IsWithinValidityPeriod = isWithinValidityPeriod;
             CounterSigners = counterSigners ?? Array.Empty<Pkcs7SignerInfo>();
         }
     }
@@ -278,6 +287,9 @@ namespace PECoff
             string issuer = string.Empty;
             string serialNumber = string.Empty;
             string thumbprint = string.Empty;
+            bool hasCodeSigningEku = false;
+            bool hasTimestampEku = false;
+            bool isWithinValidity = false;
 
             if (signer.Certificate != null)
             {
@@ -285,6 +297,8 @@ namespace PECoff
                 issuer = signer.Certificate.Issuer ?? string.Empty;
                 serialNumber = signer.Certificate.SerialNumber ?? string.Empty;
                 thumbprint = signer.Certificate.Thumbprint ?? string.Empty;
+                hasCodeSigningEku = HasEku(signer.Certificate, "1.3.6.1.5.5.7.3.3");
+                hasTimestampEku = HasEku(signer.Certificate, "1.3.6.1.5.5.7.3.8");
             }
             else if (signer.SignerIdentifier != null && signer.SignerIdentifier.Type == SubjectIdentifierType.IssuerAndSerialNumber)
             {
@@ -298,6 +312,15 @@ namespace PECoff
             string signatureAlgorithm = signer.SignatureAlgorithm?.FriendlyName ?? signer.SignatureAlgorithm?.Value ?? string.Empty;
             string signerIdType = signer.SignerIdentifier?.Type.ToString() ?? string.Empty;
             DateTimeOffset? signingTime = TryGetSigningTime(signer);
+
+            if (signer.Certificate != null)
+            {
+                DateTimeOffset checkTime = signingTime ?? DateTimeOffset.UtcNow;
+                if (signer.Certificate.NotBefore <= checkTime && checkTime <= signer.Certificate.NotAfter)
+                {
+                    isWithinValidity = true;
+                }
+            }
 
             bool signatureValid = false;
             string signatureError = string.Empty;
@@ -369,7 +392,34 @@ namespace PECoff
                 chainValid,
                 chainStatus,
                 isTimestamp,
+                hasCodeSigningEku,
+                hasTimestampEku,
+                isWithinValidity,
                 countersigners.ToArray());
+        }
+
+        private static bool HasEku(X509Certificate2 certificate, string oid)
+        {
+            if (certificate == null || string.IsNullOrWhiteSpace(oid))
+            {
+                return false;
+            }
+
+            foreach (X509Extension extension in certificate.Extensions)
+            {
+                if (extension is X509EnhancedKeyUsageExtension eku)
+                {
+                    foreach (Oid usage in eku.EnhancedKeyUsages)
+                    {
+                        if (string.Equals(usage.Value, oid, StringComparison.Ordinal))
+                        {
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            return false;
         }
 
         private static DateTimeOffset? TryGetSigningTime(SignerInfo signer)

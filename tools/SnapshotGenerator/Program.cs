@@ -50,6 +50,8 @@ foreach (string file in Directory.GetFiles(testFilesDir, "*.*", SearchOption.Top
         parser.Resources.Length,
         parser.DebugDirectories.Length,
         parser.BaseRelocations.Length,
+        parser.ExceptionFunctions.Length,
+        parser.RichHeader != null ? parser.RichHeader.Entries.Count : 0,
         parser.IconGroups.Length,
         parser.TlsInfo != null,
         parser.LoadConfig != null,
@@ -74,6 +76,8 @@ foreach (SnapshotEntry entry in snapshots.Values.OrderBy(e => e.Name, StringComp
         entry.ResourceCount.ToString(CultureInfo.InvariantCulture),
         entry.DebugCount.ToString(CultureInfo.InvariantCulture),
         entry.RelocationBlockCount.ToString(CultureInfo.InvariantCulture),
+        entry.ExceptionCount.ToString(CultureInfo.InvariantCulture),
+        entry.RichEntryCount.ToString(CultureInfo.InvariantCulture),
         entry.IconGroupCount.ToString(CultureInfo.InvariantCulture),
         entry.HasTls.ToString(),
         entry.HasLoadConfig.ToString(),
@@ -118,6 +122,8 @@ sealed class SnapshotEntry
     public int ResourceCount { get; }
     public int DebugCount { get; }
     public int RelocationBlockCount { get; }
+    public int ExceptionCount { get; }
+    public int RichEntryCount { get; }
     public int IconGroupCount { get; }
     public bool HasTls { get; }
     public bool HasLoadConfig { get; }
@@ -136,6 +142,8 @@ sealed class SnapshotEntry
         int resourceCount,
         int debugCount,
         int relocationBlockCount,
+        int exceptionCount,
+        int richEntryCount,
         int iconGroupCount,
         bool hasTls,
         bool hasLoadConfig,
@@ -153,6 +161,8 @@ sealed class SnapshotEntry
         ResourceCount = resourceCount;
         DebugCount = debugCount;
         RelocationBlockCount = relocationBlockCount;
+        ExceptionCount = exceptionCount;
+        RichEntryCount = richEntryCount;
         IconGroupCount = iconGroupCount;
         HasTls = hasTls;
         HasLoadConfig = hasLoadConfig;

@@ -46,6 +46,8 @@ public class SnapshotTests
             Assert.Equal(expectedEntry.ResourceCount, actualEntry.ResourceCount);
             Assert.Equal(expectedEntry.DebugCount, actualEntry.DebugCount);
             Assert.Equal(expectedEntry.RelocationBlockCount, actualEntry.RelocationBlockCount);
+            Assert.Equal(expectedEntry.ExceptionCount, actualEntry.ExceptionCount);
+            Assert.Equal(expectedEntry.RichEntryCount, actualEntry.RichEntryCount);
             Assert.Equal(expectedEntry.IconGroupCount, actualEntry.IconGroupCount);
             Assert.Equal(expectedEntry.HasTls, actualEntry.HasTls);
             Assert.Equal(expectedEntry.HasLoadConfig, actualEntry.HasLoadConfig);
@@ -100,6 +102,8 @@ public class SnapshotTests
                 parser.Resources.Length,
                 parser.DebugDirectories.Length,
                 parser.BaseRelocations.Length,
+                parser.ExceptionFunctions.Length,
+                parser.RichHeader != null ? parser.RichHeader.Entries.Count : 0,
                 parser.IconGroups.Length,
                 parser.TlsInfo != null,
                 parser.LoadConfig != null,
@@ -142,7 +146,7 @@ public class SnapshotTests
             }
 
             string[] parts = line.Split('|');
-            if (parts.Length != 16)
+            if (parts.Length != 18)
             {
                 continue;
             }
@@ -161,9 +165,11 @@ public class SnapshotTests
                 int.Parse(parts[10], CultureInfo.InvariantCulture),
                 int.Parse(parts[11], CultureInfo.InvariantCulture),
                 int.Parse(parts[12], CultureInfo.InvariantCulture),
-                bool.Parse(parts[13]),
-                bool.Parse(parts[14]),
-                int.Parse(parts[15], CultureInfo.InvariantCulture));
+                int.Parse(parts[13], CultureInfo.InvariantCulture),
+                int.Parse(parts[14], CultureInfo.InvariantCulture),
+                bool.Parse(parts[15]),
+                bool.Parse(parts[16]),
+                int.Parse(parts[17], CultureInfo.InvariantCulture));
 
             snapshots[entry.Name] = entry;
         }
@@ -189,6 +195,8 @@ public class SnapshotTests
                 entry.ResourceCount.ToString(CultureInfo.InvariantCulture),
                 entry.DebugCount.ToString(CultureInfo.InvariantCulture),
                 entry.RelocationBlockCount.ToString(CultureInfo.InvariantCulture),
+                entry.ExceptionCount.ToString(CultureInfo.InvariantCulture),
+                entry.RichEntryCount.ToString(CultureInfo.InvariantCulture),
                 entry.IconGroupCount.ToString(CultureInfo.InvariantCulture),
                 entry.HasTls.ToString(),
                 entry.HasLoadConfig.ToString(),
@@ -254,6 +262,8 @@ public class SnapshotTests
         public int ResourceCount { get; }
         public int DebugCount { get; }
         public int RelocationBlockCount { get; }
+        public int ExceptionCount { get; }
+        public int RichEntryCount { get; }
         public int IconGroupCount { get; }
         public bool HasTls { get; }
         public bool HasLoadConfig { get; }
@@ -272,6 +282,8 @@ public class SnapshotTests
             int resourceCount,
             int debugCount,
             int relocationBlockCount,
+            int exceptionCount,
+            int richEntryCount,
             int iconGroupCount,
             bool hasTls,
             bool hasLoadConfig,
@@ -289,6 +301,8 @@ public class SnapshotTests
             ResourceCount = resourceCount;
             DebugCount = debugCount;
             RelocationBlockCount = relocationBlockCount;
+            ExceptionCount = exceptionCount;
+            RichEntryCount = richEntryCount;
             IconGroupCount = iconGroupCount;
             HasTls = hasTls;
             HasLoadConfig = hasLoadConfig;
