@@ -227,14 +227,7 @@ namespace PE_FileInspector
 
                     foreach (Pkcs7SignerInfo signer in entry.Pkcs7SignerInfos)
                     {
-                        sb.AppendLine("    - Subject: " + Safe(signer.Subject));
-                        sb.AppendLine("      Issuer: " + Safe(signer.Issuer));
-                        sb.AppendLine("      Serial: " + Safe(signer.SerialNumber));
-                        sb.AppendLine("      Thumbprint: " + Safe(signer.Thumbprint));
-                        sb.AppendLine("      Digest: " + Safe(signer.DigestAlgorithm));
-                        sb.AppendLine("      Signature: " + Safe(signer.SignatureAlgorithm));
-                        sb.AppendLine("      Signer ID Type: " + Safe(signer.SignerIdentifierType));
-                        sb.AppendLine("      Signing Time: " + (signer.SigningTime?.ToString("u", CultureInfo.InvariantCulture) ?? string.Empty));
+                        WriteSignerInfo(sb, signer, "    ");
                     }
                 }
             }
@@ -352,13 +345,17 @@ namespace PE_FileInspector
                     sb.AppendLine("  DLL: " + group.Key + " (" + group.Count().ToString(CultureInfo.InvariantCulture) + ")");
                     foreach (ImportEntry entry in group.OrderBy(e => e.IsByOrdinal).ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
                     {
+                        string source = entry.Source == ImportThunkSource.ImportAddressTable ? "IAT" : "INT";
                         if (entry.IsByOrdinal)
                         {
-                            sb.AppendLine("    - Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture));
+                            sb.AppendLine("    - [" + source + "] Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
+                                          " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
                         }
                         else
                         {
-                            sb.AppendLine("    - Hint: " + entry.Hint.ToString(CultureInfo.InvariantCulture) + ", Name: " + Safe(entry.Name));
+                            sb.AppendLine("    - [" + source + "] Hint: " + entry.Hint.ToString(CultureInfo.InvariantCulture) +
+                                          ", Name: " + Safe(entry.Name) +
+                                          " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
                         }
                     }
                 }
@@ -381,13 +378,67 @@ namespace PE_FileInspector
                     sb.AppendLine("  DLL: " + group.Key + " (" + group.Count().ToString(CultureInfo.InvariantCulture) + ")");
                     foreach (ImportEntry entry in group.OrderBy(e => e.IsByOrdinal).ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
                     {
+                        string source = entry.Source == ImportThunkSource.ImportAddressTable ? "IAT" : "INT";
                         if (entry.IsByOrdinal)
                         {
-                            sb.AppendLine("    - Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture));
+                            sb.AppendLine("    - [" + source + "] Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
+                                          " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
                         }
                         else
                         {
-                            sb.AppendLine("    - Hint: " + entry.Hint.ToString(CultureInfo.InvariantCulture) + ", Name: " + Safe(entry.Name));
+                            sb.AppendLine("    - [" + source + "] Hint: " + entry.Hint.ToString(CultureInfo.InvariantCulture) +
+                                          ", Name: " + Safe(entry.Name) +
+                                          " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
+                        }
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Delay Import Descriptors:");
+            if (pe.DelayImportDescriptors.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (DelayImportDescriptorInfo descriptor in pe.DelayImportDescriptors)
+                {
+                    sb.AppendLine("  - Dll: " + Safe(descriptor.DllName) +
+                                  " | Uses RVA: " + descriptor.UsesRva +
+                                  " | Bound: " + descriptor.IsBound +
+                                  " | TimeDateStamp: 0x" + descriptor.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    ModuleHandle RVA: 0x" + descriptor.ModuleHandleRva.ToString("X8", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    IAT RVA: 0x" + descriptor.ImportAddressTableRva.ToString("X8", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    INT RVA: 0x" + descriptor.ImportNameTableRva.ToString("X8", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    Bound IAT RVA: 0x" + descriptor.BoundImportAddressTableRva.ToString("X8", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    Unload Info RVA: 0x" + descriptor.UnloadInformationTableRva.ToString("X8", CultureInfo.InvariantCulture));
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Bound Imports:");
+            if (pe.BoundImports.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (BoundImportEntry bound in pe.BoundImports)
+                {
+                    sb.AppendLine("  - Dll: " + Safe(bound.DllName) +
+                                  " | TimeDateStamp: 0x" + bound.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                    if (bound.Forwarders.Length == 0)
+                    {
+                        sb.AppendLine("    Forwarders: (none)");
+                    }
+                    else
+                    {
+                        sb.AppendLine("    Forwarders:");
+                        foreach (BoundForwarderRef forwarder in bound.Forwarders)
+                        {
+                            sb.AppendLine("      - " + Safe(forwarder.DllName) +
+                                          " | TimeDateStamp: 0x" + forwarder.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
                         }
                     }
                 }
@@ -418,9 +469,14 @@ namespace PE_FileInspector
                 foreach (ExportEntry entry in pe.ExportEntries.OrderBy(e => e.Ordinal))
                 {
                     string name = string.IsNullOrWhiteSpace(entry.Name) ? "(ordinal-only)" : entry.Name;
-                    sb.AppendLine("  - Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
+                    string line = "  - Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
                                   ", Name: " + name +
-                                  ", AddressRVA: 0x" + entry.AddressRva.ToString("X8", CultureInfo.InvariantCulture));
+                                  ", AddressRVA: 0x" + entry.AddressRva.ToString("X8", CultureInfo.InvariantCulture);
+                    if (entry.IsForwarder)
+                    {
+                        line += ", Forwarder: " + Safe(entry.Forwarder);
+                    }
+                    sb.AppendLine(line);
                 }
             }
             sb.AppendLine();
@@ -514,6 +570,45 @@ namespace PE_FileInspector
             }
 
             return sb.ToString();
+        }
+
+        private static void WriteSignerInfo(StringBuilder sb, Pkcs7SignerInfo signer, string indent)
+        {
+            string prefix = indent ?? string.Empty;
+            sb.AppendLine(prefix + "- Subject: " + Safe(signer.Subject));
+            sb.AppendLine(prefix + "  Issuer: " + Safe(signer.Issuer));
+            sb.AppendLine(prefix + "  Serial: " + Safe(signer.SerialNumber));
+            sb.AppendLine(prefix + "  Thumbprint: " + Safe(signer.Thumbprint));
+            sb.AppendLine(prefix + "  Digest: " + Safe(signer.DigestAlgorithm));
+            sb.AppendLine(prefix + "  Signature: " + Safe(signer.SignatureAlgorithm));
+            sb.AppendLine(prefix + "  Signer ID Type: " + Safe(signer.SignerIdentifierType));
+            sb.AppendLine(prefix + "  Signing Time: " + (signer.SigningTime?.ToString("u", CultureInfo.InvariantCulture) ?? string.Empty));
+            sb.AppendLine(prefix + "  Signature Valid: " + signer.SignatureValid);
+            if (!string.IsNullOrWhiteSpace(signer.SignatureError))
+            {
+                sb.AppendLine(prefix + "  Signature Error: " + signer.SignatureError);
+            }
+            sb.AppendLine(prefix + "  Chain Valid: " + signer.ChainValid);
+            if (signer.ChainStatus != null && signer.ChainStatus.Length > 0)
+            {
+                sb.AppendLine(prefix + "  Chain Status:");
+                foreach (string status in signer.ChainStatus)
+                {
+                    sb.AppendLine(prefix + "    - " + status);
+                }
+            }
+            if (signer.IsTimestampSigner)
+            {
+                sb.AppendLine(prefix + "  Timestamp Signer: true");
+            }
+            if (signer.CounterSigners != null && signer.CounterSigners.Length > 0)
+            {
+                sb.AppendLine(prefix + "  Counter Signers:");
+                foreach (Pkcs7SignerInfo counter in signer.CounterSigners)
+                {
+                    WriteSignerInfo(sb, counter, prefix + "    ");
+                }
+            }
         }
 
         private static string Safe(string? value)

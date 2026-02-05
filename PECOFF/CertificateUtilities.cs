@@ -18,6 +18,12 @@ namespace PECoff
         public string SignatureAlgorithm { get; }
         public string SignerIdentifierType { get; }
         public DateTimeOffset? SigningTime { get; }
+        public bool SignatureValid { get; }
+        public string SignatureError { get; }
+        public bool ChainValid { get; }
+        public string[] ChainStatus { get; }
+        public bool IsTimestampSigner { get; }
+        public Pkcs7SignerInfo[] CounterSigners { get; }
 
         public Pkcs7SignerInfo(
             string subject,
@@ -27,7 +33,13 @@ namespace PECoff
             string digestAlgorithm,
             string signatureAlgorithm,
             string signerIdentifierType,
-            DateTimeOffset? signingTime)
+            DateTimeOffset? signingTime,
+            bool signatureValid,
+            string signatureError,
+            bool chainValid,
+            string[] chainStatus,
+            bool isTimestampSigner,
+            Pkcs7SignerInfo[] counterSigners)
         {
             Subject = subject ?? string.Empty;
             Issuer = issuer ?? string.Empty;
@@ -37,6 +49,12 @@ namespace PECoff
             SignatureAlgorithm = signatureAlgorithm ?? string.Empty;
             SignerIdentifierType = signerIdentifierType ?? string.Empty;
             SigningTime = signingTime;
+            SignatureValid = signatureValid;
+            SignatureError = signatureError ?? string.Empty;
+            ChainValid = chainValid;
+            ChainStatus = chainStatus ?? Array.Empty<string>();
+            IsTimestampSigner = isTimestampSigner;
+            CounterSigners = counterSigners ?? Array.Empty<Pkcs7SignerInfo>();
         }
     }
 
@@ -124,40 +142,7 @@ namespace PECoff
                 List<Pkcs7SignerInfo> infos = new List<Pkcs7SignerInfo>();
                 foreach (SignerInfo signer in cms.SignerInfos)
                 {
-                    string subject = string.Empty;
-                    string issuer = string.Empty;
-                    string serialNumber = string.Empty;
-                    string thumbprint = string.Empty;
-
-                    if (signer.Certificate != null)
-                    {
-                        subject = signer.Certificate.Subject ?? string.Empty;
-                        issuer = signer.Certificate.Issuer ?? string.Empty;
-                        serialNumber = signer.Certificate.SerialNumber ?? string.Empty;
-                        thumbprint = signer.Certificate.Thumbprint ?? string.Empty;
-                    }
-                    else if (signer.SignerIdentifier != null && signer.SignerIdentifier.Type == SubjectIdentifierType.IssuerAndSerialNumber)
-                    {
-                        string identifier = signer.SignerIdentifier.Value != null
-                            ? signer.SignerIdentifier.Value.ToString() ?? string.Empty
-                            : string.Empty;
-                        issuer = identifier;
-                    }
-
-                    string digestAlgorithm = signer.DigestAlgorithm?.FriendlyName ?? signer.DigestAlgorithm?.Value ?? string.Empty;
-                    string signatureAlgorithm = signer.SignatureAlgorithm?.FriendlyName ?? signer.SignatureAlgorithm?.Value ?? string.Empty;
-                    string signerIdType = signer.SignerIdentifier?.Type.ToString() ?? string.Empty;
-                    DateTimeOffset? signingTime = TryGetSigningTime(signer);
-
-                    infos.Add(new Pkcs7SignerInfo(
-                        subject,
-                        issuer,
-                        serialNumber,
-                        thumbprint,
-                        digestAlgorithm,
-                        signatureAlgorithm,
-                        signerIdType,
-                        signingTime));
+                    infos.Add(BuildSignerInfo(signer, false));
                 }
 
                 signerInfos = infos.ToArray();
@@ -173,6 +158,106 @@ namespace PECoff
                 error = ex.Message;
                 return false;
             }
+        }
+
+        private static Pkcs7SignerInfo BuildSignerInfo(SignerInfo signer, bool isTimestamp)
+        {
+            string subject = string.Empty;
+            string issuer = string.Empty;
+            string serialNumber = string.Empty;
+            string thumbprint = string.Empty;
+
+            if (signer.Certificate != null)
+            {
+                subject = signer.Certificate.Subject ?? string.Empty;
+                issuer = signer.Certificate.Issuer ?? string.Empty;
+                serialNumber = signer.Certificate.SerialNumber ?? string.Empty;
+                thumbprint = signer.Certificate.Thumbprint ?? string.Empty;
+            }
+            else if (signer.SignerIdentifier != null && signer.SignerIdentifier.Type == SubjectIdentifierType.IssuerAndSerialNumber)
+            {
+                string identifier = signer.SignerIdentifier.Value != null
+                    ? signer.SignerIdentifier.Value.ToString() ?? string.Empty
+                    : string.Empty;
+                issuer = identifier;
+            }
+
+            string digestAlgorithm = signer.DigestAlgorithm?.FriendlyName ?? signer.DigestAlgorithm?.Value ?? string.Empty;
+            string signatureAlgorithm = signer.SignatureAlgorithm?.FriendlyName ?? signer.SignatureAlgorithm?.Value ?? string.Empty;
+            string signerIdType = signer.SignerIdentifier?.Type.ToString() ?? string.Empty;
+            DateTimeOffset? signingTime = TryGetSigningTime(signer);
+
+            bool signatureValid = false;
+            string signatureError = string.Empty;
+            try
+            {
+                signer.CheckSignature(true);
+                signatureValid = true;
+            }
+            catch (CryptographicException ex)
+            {
+                signatureError = ex.Message;
+            }
+            catch (Exception ex)
+            {
+                signatureError = ex.Message;
+            }
+
+            bool chainValid = false;
+            string[] chainStatus = Array.Empty<string>();
+            if (signer.Certificate != null)
+            {
+                try
+                {
+                    using (X509Chain chain = new X509Chain())
+                    {
+                        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                        chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
+                        chain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
+                        chain.ChainPolicy.VerificationTime = DateTime.UtcNow;
+
+                        chainValid = chain.Build(signer.Certificate);
+                        if (chain.ChainStatus != null && chain.ChainStatus.Length > 0)
+                        {
+                            List<string> statuses = new List<string>();
+                            foreach (X509ChainStatus status in chain.ChainStatus)
+                            {
+                                statuses.Add(status.Status + ": " + status.StatusInformation.Trim());
+                            }
+                            chainStatus = statuses.ToArray();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    chainStatus = new[] { ex.Message };
+                }
+            }
+
+            List<Pkcs7SignerInfo> countersigners = new List<Pkcs7SignerInfo>();
+            if (signer.CounterSignerInfos != null && signer.CounterSignerInfos.Count > 0)
+            {
+                foreach (SignerInfo counter in signer.CounterSignerInfos)
+                {
+                    countersigners.Add(BuildSignerInfo(counter, true));
+                }
+            }
+
+            return new Pkcs7SignerInfo(
+                subject,
+                issuer,
+                serialNumber,
+                thumbprint,
+                digestAlgorithm,
+                signatureAlgorithm,
+                signerIdType,
+                signingTime,
+                signatureValid,
+                signatureError,
+                chainValid,
+                chainStatus,
+                isTimestamp,
+                countersigners.ToArray());
         }
 
         private static DateTimeOffset? TryGetSigningTime(SignerInfo signer)

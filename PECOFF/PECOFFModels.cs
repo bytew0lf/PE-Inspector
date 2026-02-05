@@ -4,6 +4,44 @@ using System.Collections.ObjectModel;
 
 namespace PECoff
 {
+    public enum ParseIssueSeverity
+    {
+        Ignore = 0,
+        Warning = 1,
+        Error = 2
+    }
+
+    public enum ParseIssueCategory
+    {
+        General = 0,
+        File = 1,
+        Header = 2,
+        OptionalHeader = 3,
+        Sections = 4,
+        Imports = 5,
+        Exports = 6,
+        Resources = 7,
+        Certificates = 8,
+        CLR = 9,
+        Metadata = 10,
+        Checksum = 11,
+        AssemblyAnalysis = 12
+    }
+
+    public sealed class ParseIssue
+    {
+        public ParseIssueCategory Category { get; }
+        public ParseIssueSeverity Severity { get; }
+        public string Message { get; }
+
+        public ParseIssue(ParseIssueCategory category, ParseIssueSeverity severity, string message)
+        {
+            Category = category;
+            Severity = severity;
+            Message = message ?? string.Empty;
+        }
+    }
+
     public sealed class PECOFFOptions
     {
         public bool StrictMode { get; init; }
@@ -11,6 +49,7 @@ namespace PECoff
         public bool ComputeHash { get; init; } = true;
         public bool ComputeChecksum { get; init; } = true;
         public bool ParseCertificateSigners { get; init; } = true;
+        public Dictionary<ParseIssueCategory, ParseIssueSeverity> IssuePolicy { get; init; } = new Dictionary<ParseIssueCategory, ParseIssueSeverity>();
     }
 
     public sealed class PECOFFParseException : Exception
@@ -25,12 +64,14 @@ namespace PECoff
     {
         public IReadOnlyList<string> Errors { get; }
         public IReadOnlyList<string> Warnings { get; }
+        public IReadOnlyList<ParseIssue> Issues { get; }
         public bool IsSuccess => Errors.Count == 0;
 
-        public ParseResultSnapshot(IReadOnlyList<string> errors, IReadOnlyList<string> warnings)
+        public ParseResultSnapshot(IReadOnlyList<string> errors, IReadOnlyList<string> warnings, IReadOnlyList<ParseIssue> issues)
         {
             Errors = errors ?? Array.Empty<string>();
             Warnings = warnings ?? Array.Empty<string>();
+            Issues = issues ?? Array.Empty<ParseIssue>();
         }
     }
 
@@ -74,8 +115,10 @@ namespace PECoff
         public IReadOnlyList<string> Imports { get; }
         public IReadOnlyList<ImportEntry> ImportEntries { get; }
         public IReadOnlyList<ImportEntry> DelayImportEntries { get; }
+        public IReadOnlyList<DelayImportDescriptorInfo> DelayImportDescriptors { get; }
         public IReadOnlyList<string> Exports { get; }
         public IReadOnlyList<ExportEntry> ExportEntries { get; }
+        public IReadOnlyList<BoundImportEntry> BoundImports { get; }
         public IReadOnlyList<string> AssemblyReferences { get; }
         public IReadOnlyList<AssemblyReferenceInfo> AssemblyReferenceInfos { get; }
 
@@ -118,13 +161,15 @@ namespace PECoff
             string[] imports,
             ImportEntry[] importEntries,
             ImportEntry[] delayImportEntries,
+            DelayImportDescriptorInfo[] delayImportDescriptors,
             string[] exports,
             ExportEntry[] exportEntries,
+            BoundImportEntry[] boundImports,
             string[] assemblyReferences,
             AssemblyReferenceInfo[] assemblyReferenceInfos)
         {
             FilePath = filePath ?? string.Empty;
-            ParseResult = parseResult ?? new ParseResultSnapshot(Array.Empty<string>(), Array.Empty<string>());
+            ParseResult = parseResult ?? new ParseResultSnapshot(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<ParseIssue>());
             Hash = hash ?? string.Empty;
             IsDotNetFile = isDotNetFile;
             IsObfuscated = isObfuscated;
@@ -161,8 +206,10 @@ namespace PECoff
             Imports = Array.AsReadOnly(imports ?? Array.Empty<string>());
             ImportEntries = Array.AsReadOnly(importEntries ?? Array.Empty<ImportEntry>());
             DelayImportEntries = Array.AsReadOnly(delayImportEntries ?? Array.Empty<ImportEntry>());
+            DelayImportDescriptors = Array.AsReadOnly(delayImportDescriptors ?? Array.Empty<DelayImportDescriptorInfo>());
             Exports = Array.AsReadOnly(exports ?? Array.Empty<string>());
             ExportEntries = Array.AsReadOnly(exportEntries ?? Array.Empty<ExportEntry>());
+            BoundImports = Array.AsReadOnly(boundImports ?? Array.Empty<BoundImportEntry>());
             AssemblyReferences = Array.AsReadOnly(assemblyReferences ?? Array.Empty<string>());
             AssemblyReferenceInfos = Array.AsReadOnly(assemblyReferenceInfos ?? Array.Empty<AssemblyReferenceInfo>());
         }

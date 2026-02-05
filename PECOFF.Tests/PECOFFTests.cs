@@ -23,6 +23,30 @@ public class PECOFFTests
         return null;
     }
 
+    private static string? FindFixturesDirectory()
+    {
+        string baseDir = AppContext.BaseDirectory;
+        DirectoryInfo? dir = new DirectoryInfo(baseDir);
+        for (int i = 0; i < 6 && dir != null; i++)
+        {
+            string candidate = Path.Combine(dir.FullName, "PECOFF.Tests", "Fixtures");
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            candidate = Path.Combine(dir.FullName, "Fixtures");
+            if (Directory.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            dir = dir.Parent;
+        }
+
+        return null;
+    }
+
     private static bool IsUpperHex(string value)
     {
         if (string.IsNullOrEmpty(value))
@@ -61,6 +85,74 @@ public class PECOFFTests
         Assert.NotNull(parser.ClrMetadata);
         Assert.False(string.IsNullOrWhiteSpace(parser.ClrMetadata.AssemblyName));
         Assert.False(string.IsNullOrWhiteSpace(parser.ClrMetadata.Mvid));
+    }
+
+    [Fact]
+    public void Parses_Fixture_Valid_Pe()
+    {
+        string? fixtures = FindFixturesDirectory();
+        Assert.False(string.IsNullOrWhiteSpace(fixtures));
+
+        string validPath = Path.Combine(fixtures!, "valid-pe.dll");
+        Assert.True(File.Exists(validPath));
+
+        PECOFF parser = new PECOFF(validPath);
+        Assert.True(parser.ParseResult.IsSuccess);
+        Assert.NotNull(parser.ClrMetadata);
+    }
+
+    [Fact]
+    public void Corrupt_Fixture_Reports_Errors()
+    {
+        string? fixtures = FindFixturesDirectory();
+        Assert.False(string.IsNullOrWhiteSpace(fixtures));
+
+        string corruptPath = Path.Combine(fixtures!, "corrupt.bin");
+        Assert.True(File.Exists(corruptPath));
+
+        PECOFF parser = new PECOFF(corruptPath);
+        Assert.False(parser.ParseResult.IsSuccess);
+        Assert.NotEmpty(parser.ParseResult.Errors);
+    }
+
+    [Fact]
+    public void IssuePolicy_Allows_OptionalHeader_Warnings_In_StrictMode()
+    {
+        string? fixtures = FindFixturesDirectory();
+        Assert.False(string.IsNullOrWhiteSpace(fixtures));
+
+        string validPath = Path.Combine(fixtures!, "valid-pe.dll");
+        Assert.True(File.Exists(validPath));
+
+        byte[] data = File.ReadAllBytes(validPath);
+        int fileAlignmentOffset = FindFileAlignmentOffset(data);
+        Assert.True(fileAlignmentOffset >= 0);
+
+        byte[] mutated = (byte[])data.Clone();
+        WriteUInt32(mutated, fileAlignmentOffset, 0);
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+
+            PECOFFOptions options = new PECOFFOptions
+            {
+                StrictMode = true,
+                IssuePolicy = new System.Collections.Generic.Dictionary<ParseIssueCategory, ParseIssueSeverity>
+                {
+                    [ParseIssueCategory.OptionalHeader] = ParseIssueSeverity.Warning
+                }
+            };
+            PECOFF parser = new PECOFF(tempFile, options);
+            Assert.True(parser.ParseResult.IsSuccess);
+            Assert.NotEmpty(parser.ParseResult.Warnings);
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
     }
 
     [Fact]
@@ -128,5 +220,30 @@ public class PECOFFTests
         {
             File.Delete(tempFile);
         }
+    }
+
+    private static int FindFileAlignmentOffset(byte[] data)
+    {
+        if (data == null || data.Length < 0x40)
+        {
+            return -1;
+        }
+
+        int peOffset = BitConverter.ToInt32(data, 0x3C);
+        if (peOffset <= 0 || peOffset + 4 + 20 + 0x2C > data.Length)
+        {
+            return -1;
+        }
+
+        int optionalHeaderStart = peOffset + 4 + 20;
+        return optionalHeaderStart + 0x28;
+    }
+
+    private static void WriteUInt32(byte[] data, int offset, uint value)
+    {
+        data[offset] = (byte)(value & 0xFF);
+        data[offset + 1] = (byte)((value >> 8) & 0xFF);
+        data[offset + 2] = (byte)((value >> 16) & 0xFF);
+        data[offset + 3] = (byte)((value >> 24) & 0xFF);
     }
 }

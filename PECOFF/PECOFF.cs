@@ -17,15 +17,18 @@ namespace PECoff
     {
         private readonly List<string> _errors = new List<string>();
         private readonly List<string> _warnings = new List<string>();
+        private readonly List<ParseIssue> _issues = new List<ParseIssue>();
 
         public IReadOnlyList<string> Errors => _errors;
         public IReadOnlyList<string> Warnings => _warnings;
+        public IReadOnlyList<ParseIssue> Issues => _issues;
         public bool IsSuccess => _errors.Count == 0;
 
         internal void Clear()
         {
             _errors.Clear();
             _warnings.Clear();
+            _issues.Clear();
         }
 
         internal void AddError(string message)
@@ -44,9 +47,27 @@ namespace PECoff
             }
         }
 
+        internal void AddIssue(ParseIssueCategory category, ParseIssueSeverity severity, string message)
+        {
+            if (string.IsNullOrWhiteSpace(message) || severity == ParseIssueSeverity.Ignore)
+            {
+                return;
+            }
+
+            _issues.Add(new ParseIssue(category, severity, message));
+            if (severity == ParseIssueSeverity.Error)
+            {
+                _errors.Add(message);
+            }
+            else if (severity == ParseIssueSeverity.Warning)
+            {
+                _warnings.Add(message);
+            }
+        }
+
         public ParseResultSnapshot Snapshot()
         {
-            return new ParseResultSnapshot(_errors.ToArray(), _warnings.ToArray());
+            return new ParseResultSnapshot(_errors.ToArray(), _warnings.ToArray(), _issues.ToArray());
         }
     }
 
@@ -132,13 +153,23 @@ namespace PECoff
         public string Name { get; }
         public uint Ordinal { get; }
         public uint AddressRva { get; }
+        public bool IsForwarder { get; }
+        public string Forwarder { get; }
 
-        public ExportEntry(string name, uint ordinal, uint addressRva)
+        public ExportEntry(string name, uint ordinal, uint addressRva, bool isForwarder, string forwarder)
         {
             Name = name ?? string.Empty;
             Ordinal = ordinal;
             AddressRva = addressRva;
+            IsForwarder = isForwarder;
+            Forwarder = forwarder ?? string.Empty;
         }
+    }
+
+    public enum ImportThunkSource
+    {
+        ImportNameTable = 0,
+        ImportAddressTable = 1
     }
 
     public sealed class ImportEntry
@@ -148,14 +179,82 @@ namespace PECoff
         public ushort Hint { get; }
         public ushort Ordinal { get; }
         public bool IsByOrdinal { get; }
+        public ImportThunkSource Source { get; }
+        public uint ThunkRva { get; }
 
-        public ImportEntry(string dllName, string name, ushort hint, ushort ordinal, bool isByOrdinal)
+        public ImportEntry(string dllName, string name, ushort hint, ushort ordinal, bool isByOrdinal, ImportThunkSource source, uint thunkRva)
         {
             DllName = dllName ?? string.Empty;
             Name = name ?? string.Empty;
             Hint = hint;
             Ordinal = ordinal;
             IsByOrdinal = isByOrdinal;
+            Source = source;
+            ThunkRva = thunkRva;
+        }
+    }
+
+    public sealed class DelayImportDescriptorInfo
+    {
+        public string DllName { get; }
+        public uint Attributes { get; }
+        public bool UsesRva { get; }
+        public bool IsBound { get; }
+        public uint TimeDateStamp { get; }
+        public uint ModuleHandleRva { get; }
+        public uint ImportAddressTableRva { get; }
+        public uint ImportNameTableRva { get; }
+        public uint BoundImportAddressTableRva { get; }
+        public uint UnloadInformationTableRva { get; }
+
+        public DelayImportDescriptorInfo(
+            string dllName,
+            uint attributes,
+            bool usesRva,
+            bool isBound,
+            uint timeDateStamp,
+            uint moduleHandleRva,
+            uint importAddressTableRva,
+            uint importNameTableRva,
+            uint boundImportAddressTableRva,
+            uint unloadInformationTableRva)
+        {
+            DllName = dllName ?? string.Empty;
+            Attributes = attributes;
+            UsesRva = usesRva;
+            IsBound = isBound;
+            TimeDateStamp = timeDateStamp;
+            ModuleHandleRva = moduleHandleRva;
+            ImportAddressTableRva = importAddressTableRva;
+            ImportNameTableRva = importNameTableRva;
+            BoundImportAddressTableRva = boundImportAddressTableRva;
+            UnloadInformationTableRva = unloadInformationTableRva;
+        }
+    }
+
+    public sealed class BoundForwarderRef
+    {
+        public string DllName { get; }
+        public uint TimeDateStamp { get; }
+
+        public BoundForwarderRef(string dllName, uint timeDateStamp)
+        {
+            DllName = dllName ?? string.Empty;
+            TimeDateStamp = timeDateStamp;
+        }
+    }
+
+    public sealed class BoundImportEntry
+    {
+        public string DllName { get; }
+        public uint TimeDateStamp { get; }
+        public BoundForwarderRef[] Forwarders { get; }
+
+        public BoundImportEntry(string dllName, uint timeDateStamp, BoundForwarderRef[] forwarders)
+        {
+            DllName = dllName ?? string.Empty;
+            TimeDateStamp = timeDateStamp;
+            Forwarders = forwarders ?? Array.Empty<BoundForwarderRef>();
         }
     }
 
@@ -253,7 +352,7 @@ namespace PECoff
             {
                 PEFile = null;
                 PEFileStream = null;
-                Fail("File does not exist.");
+                Fail(ParseIssueCategory.File, "File does not exist.");
                 if (_options.StrictMode)
                 {
                     throw new PECOFFParseException("File does not exist.");
@@ -536,6 +635,10 @@ namespace PECoff
             public uint FileAlignment;
             public uint SizeOfHeaders;
             public uint CheckSum;
+            public uint SizeOfImage;
+            public uint SizeOfCode;
+            public uint SizeOfInitializedData;
+            public uint NumberOfRvaAndSizes;
             public ulong ImageBase;
 
             public IMAGE_NT_HEADERS(BinaryReader reader)
@@ -547,6 +650,10 @@ namespace PECoff
                     FileAlignment = 0,
                     SizeOfHeaders = 0,
                     CheckSum = 0,
+                    SizeOfImage = 0,
+                    SizeOfCode = 0,
+                    SizeOfInitializedData = 0,
+                    NumberOfRvaAndSizes = 0,
                     ImageBase = 0
                 };
                 this = hdr;
@@ -574,6 +681,10 @@ namespace PECoff
                     hdr.FileAlignment = opt32.FileAlignment;
                     hdr.SizeOfHeaders = opt32.SizeOfHeaders;
                     hdr.CheckSum = opt32.CheckSum;
+                    hdr.SizeOfImage = opt32.SizeOfImage;
+                    hdr.SizeOfCode = opt32.SizeOfCode;
+                    hdr.SizeOfInitializedData = opt32.SizeOfInitializedData;
+                    hdr.NumberOfRvaAndSizes = opt32.NumberOfRvaAndSizes;
                     hdr.ImageBase = opt32.ImageBase;
                 }
                 else if (hdr.Magic == PEFormat.PE32plus &&
@@ -585,6 +696,10 @@ namespace PECoff
                     hdr.FileAlignment = opt64.FileAlignment;
                     hdr.SizeOfHeaders = opt64.SizeOfHeaders;
                     hdr.CheckSum = opt64.CheckSum;
+                    hdr.SizeOfImage = opt64.SizeOfImage;
+                    hdr.SizeOfCode = opt64.SizeOfCode;
+                    hdr.SizeOfInitializedData = opt64.SizeOfInitializedData;
+                    hdr.NumberOfRvaAndSizes = opt64.NumberOfRvaAndSizes;
                     hdr.ImageBase = opt64.ImageBase;
                 }
                 else
@@ -732,6 +847,22 @@ namespace PECoff
             public UInt32 BoundImportAddressTableRVA;
             public UInt32 UnloadInformationTableRVA;
             public UInt32 TimeDateStamp;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct IMAGE_BOUND_IMPORT_DESCRIPTOR
+        {
+            public UInt32 TimeDateStamp;
+            public UInt16 OffsetModuleName;
+            public UInt16 NumberOfModuleForwarderRefs;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct IMAGE_BOUND_FORWARDER_REF
+        {
+            public UInt32 TimeDateStamp;
+            public UInt16 OffsetModuleName;
+            public UInt16 Reserved;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -1017,6 +1148,30 @@ namespace PECoff
             get { return _sectionAlignment; }
         }
 
+        private uint _sizeOfImage;
+        public uint SizeOfImage
+        {
+            get { return _sizeOfImage; }
+        }
+
+        private uint _sizeOfCode;
+        public uint SizeOfCode
+        {
+            get { return _sizeOfCode; }
+        }
+
+        private uint _sizeOfInitializedData;
+        public uint SizeOfInitializedData
+        {
+            get { return _sizeOfInitializedData; }
+        }
+
+        private uint _numberOfRvaAndSizes;
+        public uint NumberOfRvaAndSizes
+        {
+            get { return _numberOfRvaAndSizes; }
+        }
+
         private uint _sizeOfHeaders;
         public uint SizeOfHeaders
         {
@@ -1139,6 +1294,12 @@ namespace PECoff
             get { return _delayImportEntries.ToArray(); }
         }
 
+        private readonly List<DelayImportDescriptorInfo> _delayImportDescriptors = new List<DelayImportDescriptorInfo>();
+        public DelayImportDescriptorInfo[] DelayImportDescriptors
+        {
+            get { return _delayImportDescriptors.ToArray(); }
+        }
+
         private List<string> exports = new List<string>();
         public string[] Exports
         {
@@ -1149,6 +1310,12 @@ namespace PECoff
         public ExportEntry[] ExportEntries
         {
             get { return _exportEntries.ToArray(); }
+        }
+
+        private readonly List<BoundImportEntry> _boundImports = new List<BoundImportEntry>();
+        public BoundImportEntry[] BoundImports
+        {
+            get { return _boundImports.ToArray(); }
         }
 
         private List<AssemblyReferenceInfo> _assemblyReferenceInfos = new List<AssemblyReferenceInfo>();
@@ -1329,8 +1496,10 @@ namespace PECoff
                 imports.ToArray(),
                 _importEntries.ToArray(),
                 _delayImportEntries.ToArray(),
+                _delayImportDescriptors.ToArray(),
                 exports.ToArray(),
                 _exportEntries.ToArray(),
+                _boundImports.ToArray(),
                 _assemblyReferenceInfos.Select(r => r.Name).ToArray(),
                 _assemblyReferenceInfos.ToArray());
         }
@@ -1664,19 +1833,19 @@ namespace PECoff
 
             if (level > 2)
             {
-                Warn("Resource directory depth exceeded expected limits.");
+                Warn(ParseIssueCategory.Resources, "Resource directory depth exceeded expected limits.");
                 return;
             }
 
             if (directoryOffset < 0 || directoryOffset + 16 > buffer.Length)
             {
-                Warn("Resource directory entry offset outside section bounds.");
+                Warn(ParseIssueCategory.Resources, "Resource directory entry offset outside section bounds.");
                 return;
             }
 
             if (!visited.Add(directoryOffset))
             {
-                Warn("Resource directory contains a circular reference.");
+                Warn(ParseIssueCategory.Resources, "Resource directory contains a circular reference.");
                 return;
             }
 
@@ -1688,7 +1857,7 @@ namespace PECoff
             if (entryCount > maxEntries)
             {
                 entryCount = maxEntries;
-                Warn("Resource directory entry count exceeds available data.");
+                Warn(ParseIssueCategory.Resources, "Resource directory entry count exceeds available data.");
             }
 
             for (int i = 0; i < entryCount; i++)
@@ -1696,7 +1865,7 @@ namespace PECoff
                 int entryOffset = entriesOffset + (i * 8);
                 if (entryOffset + 8 > buffer.Length)
                 {
-                    Warn("Resource directory entry outside section bounds.");
+                    Warn(ParseIssueCategory.Resources, "Resource directory entry outside section bounds.");
                     break;
                 }
 
@@ -1711,7 +1880,7 @@ namespace PECoff
                     int nameOffset = (int)(nameOrId & 0x7FFFFFFF);
                     if (!TryReadResourceName(buffer, nameOffset, out entryName))
                     {
-                        Warn("Resource name entry offset outside section bounds.");
+                        Warn(ParseIssueCategory.Resources, "Resource name entry offset outside section bounds.");
                         continue;
                     }
                 }
@@ -1729,7 +1898,7 @@ namespace PECoff
                     }
                     else
                     {
-                        Warn("Resource type entry points directly to data.");
+                        Warn(ParseIssueCategory.Resources, "Resource type entry points directly to data.");
                     }
                 }
                 else if (level == 1)
@@ -1742,7 +1911,7 @@ namespace PECoff
                     }
                     else
                     {
-                        Warn("Resource name entry points directly to data.");
+                        Warn(ParseIssueCategory.Resources, "Resource name entry points directly to data.");
                     }
                 }
                 else
@@ -1750,13 +1919,13 @@ namespace PECoff
                     ushort languageId = isName ? (ushort)0 : (ushort)entryId;
                     if (isDirectory)
                     {
-                        Warn("Resource language entry points to a subdirectory.");
+                        Warn(ParseIssueCategory.Resources, "Resource language entry points to a subdirectory.");
                         continue;
                     }
 
                     if (!TryReadResourceDataEntry(buffer, dataOffset, out uint dataRva, out uint size, out uint codePage))
                     {
-                        Warn("Resource data entry outside section bounds.");
+                        Warn(ParseIssueCategory.Resources, "Resource data entry outside section bounds.");
                         continue;
                     }
 
@@ -1947,38 +2116,41 @@ namespace PECoff
             return Encoding.UTF8.GetString(data).TrimEnd('\0');
         }
 
-        private void ValidateSections(IMAGE_DOS_HEADER dosHeader, IMAGE_NT_HEADERS peHeader, List<IMAGE_SECTION_HEADER> sections)
+        private void ValidateSections(IMAGE_DOS_HEADER dosHeader, IMAGE_NT_HEADERS peHeader, List<IMAGE_SECTION_HEADER> sections, IMAGE_DATA_DIRECTORY[] dataDirectories)
         {
             uint fileAlignment = peHeader.FileAlignment;
             uint sectionAlignment = peHeader.SectionAlignment;
             uint sizeOfHeaders = peHeader.SizeOfHeaders;
+            uint sizeOfImage = peHeader.SizeOfImage;
+            uint sizeOfCode = peHeader.SizeOfCode;
+            uint sizeOfInitializedData = peHeader.SizeOfInitializedData;
 
             if (fileAlignment == 0)
             {
-                Warn("FileAlignment is zero.");
+                Warn(ParseIssueCategory.OptionalHeader, "FileAlignment is zero.");
             }
             else
             {
                 if (!IsPowerOfTwo(fileAlignment) || fileAlignment < 512 || fileAlignment > 65536)
                 {
-                    Warn("FileAlignment is not a valid power of two.");
+                    Warn(ParseIssueCategory.OptionalHeader, "FileAlignment is not a valid power of two.");
                 }
             }
 
             if (sectionAlignment == 0)
             {
-                Warn("SectionAlignment is zero.");
+                Warn(ParseIssueCategory.OptionalHeader, "SectionAlignment is zero.");
             }
             else
             {
                 if (!IsPowerOfTwo(sectionAlignment))
                 {
-                    Warn("SectionAlignment is not a power of two.");
+                    Warn(ParseIssueCategory.OptionalHeader, "SectionAlignment is not a power of two.");
                 }
 
                 if (fileAlignment != 0 && sectionAlignment < fileAlignment)
                 {
-                    Warn("SectionAlignment is smaller than FileAlignment.");
+                    Warn(ParseIssueCategory.OptionalHeader, "SectionAlignment is smaller than FileAlignment.");
                 }
             }
 
@@ -1992,21 +2164,24 @@ namespace PECoff
             {
                 if (sizeOfHeaders < minHeaderSize)
                 {
-                    Warn("SizeOfHeaders is smaller than the minimum header size.");
+                    Warn(ParseIssueCategory.OptionalHeader, "SizeOfHeaders is smaller than the minimum header size.");
                 }
 
                 if (fileAlignment != 0 && sizeOfHeaders % fileAlignment != 0)
                 {
-                    Warn("SizeOfHeaders is not aligned to FileAlignment.");
+                    Warn(ParseIssueCategory.OptionalHeader, "SizeOfHeaders is not aligned to FileAlignment.");
                 }
 
                 if (sizeOfHeaders > PEFileStream.Length)
                 {
-                    Warn("SizeOfHeaders exceeds file size.");
+                    Warn(ParseIssueCategory.OptionalHeader, "SizeOfHeaders exceeds file size.");
                 }
             }
 
             List<(long Start, long End, string Name)> ranges = new List<(long, long, string)>();
+            uint maxVirtualEnd = 0;
+            uint sumCode = 0;
+            uint sumInitData = 0;
             foreach (IMAGE_SECTION_HEADER section in sections)
             {
                 string name = section.Section.TrimEnd('\0');
@@ -2022,23 +2197,40 @@ namespace PECoff
                 {
                     if (section.PointerToRawData % fileAlignment != 0)
                     {
-                        Warn($"Section {name} PointerToRawData is not aligned to FileAlignment.");
+                        Warn(ParseIssueCategory.Sections, $"Section {name} PointerToRawData is not aligned to FileAlignment.");
                     }
 
                     if (section.SizeOfRawData % fileAlignment != 0)
                     {
-                        Warn($"Section {name} SizeOfRawData is not aligned to FileAlignment.");
+                        Warn(ParseIssueCategory.Sections, $"Section {name} SizeOfRawData is not aligned to FileAlignment.");
                     }
                 }
 
                 if (sectionAlignment != 0 && section.VirtualAddress % sectionAlignment != 0)
                 {
-                    Warn($"Section {name} VirtualAddress is not aligned to SectionAlignment.");
+                    Warn(ParseIssueCategory.Sections, $"Section {name} VirtualAddress is not aligned to SectionAlignment.");
                 }
 
                 if (end > PEFileStream.Length)
                 {
-                    Warn($"Section {name} raw data extends beyond end of file.");
+                    Warn(ParseIssueCategory.Sections, $"Section {name} raw data extends beyond end of file.");
+                }
+
+                uint virtualSize = Math.Max(section.VirtualSize, section.SizeOfRawData);
+                uint virtualEnd = section.VirtualAddress + AlignUp(virtualSize, sectionAlignment == 0 ? 1u : sectionAlignment);
+                if (virtualEnd > maxVirtualEnd)
+                {
+                    maxVirtualEnd = virtualEnd;
+                }
+
+                if ((section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0)
+                {
+                    sumCode += section.SizeOfRawData;
+                }
+
+                if ((section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) != 0)
+                {
+                    sumInitData += section.SizeOfRawData;
                 }
 
                 ranges.Add((start, end, name));
@@ -2050,14 +2242,64 @@ namespace PECoff
                 long minStart = ranges[0].Start;
                 if (sizeOfHeaders != 0 && sizeOfHeaders > minStart)
                 {
-                    Warn("SizeOfHeaders exceeds the first section raw data pointer.");
+                    Warn(ParseIssueCategory.OptionalHeader, "SizeOfHeaders exceeds the first section raw data pointer.");
                 }
 
                 for (int i = 1; i < ranges.Count; i++)
                 {
                     if (ranges[i].Start < ranges[i - 1].End)
                     {
-                        Warn($"Section {ranges[i].Name} overlaps section {ranges[i - 1].Name} in the file.");
+                        Warn(ParseIssueCategory.Sections, $"Section {ranges[i].Name} overlaps section {ranges[i - 1].Name} in the file.");
+                    }
+                }
+            }
+
+            if (sectionAlignment != 0 && sizeOfImage != 0)
+            {
+                if (sizeOfImage % sectionAlignment != 0)
+                {
+                    Warn(ParseIssueCategory.OptionalHeader, "SizeOfImage is not aligned to SectionAlignment.");
+                }
+
+                if (maxVirtualEnd != 0 && sizeOfImage < maxVirtualEnd)
+                {
+                    Warn(ParseIssueCategory.OptionalHeader, "SizeOfImage is smaller than the last section end.");
+                }
+
+                if (maxVirtualEnd != 0 && sizeOfImage > maxVirtualEnd + sectionAlignment)
+                {
+                    Warn(ParseIssueCategory.OptionalHeader, "SizeOfImage exceeds expected size by more than one alignment block.");
+                }
+            }
+
+            if (sizeOfCode != 0 && sizeOfImage != 0 && sizeOfCode > sizeOfImage)
+            {
+                Warn(ParseIssueCategory.OptionalHeader, "SizeOfCode exceeds SizeOfImage.");
+            }
+
+            if (sizeOfInitializedData != 0 && sizeOfImage != 0 && sizeOfInitializedData > sizeOfImage)
+            {
+                Warn(ParseIssueCategory.OptionalHeader, "SizeOfInitializedData exceeds SizeOfImage.");
+            }
+
+            if (sumCode > 0 && sizeOfCode == 0)
+            {
+                Warn(ParseIssueCategory.OptionalHeader, "SizeOfCode is zero but code sections are present.");
+            }
+
+            if (sumInitData > 0 && sizeOfInitializedData == 0)
+            {
+                Warn(ParseIssueCategory.OptionalHeader, "SizeOfInitializedData is zero but initialized data sections are present.");
+            }
+
+            if (peHeader.NumberOfRvaAndSizes < dataDirectories.Length)
+            {
+                for (int i = (int)peHeader.NumberOfRvaAndSizes; i < dataDirectories.Length; i++)
+                {
+                    if (dataDirectories[i].Size != 0 || dataDirectories[i].VirtualAddress != 0)
+                    {
+                        Warn(ParseIssueCategory.OptionalHeader, "Data directory entries exceed NumberOfRvaAndSizes.");
+                        break;
                     }
                 }
             }
@@ -2090,19 +2332,20 @@ namespace PECoff
 
         private void ParseImportThunks(
             string dllName,
-            uint thunkRva,
+            uint thunkTableRva,
+            ImportThunkSource source,
             List<IMAGE_SECTION_HEADER> sections,
             bool isPe32Plus,
             List<ImportEntry> targetList)
         {
-            if (thunkRva == 0)
+            if (thunkTableRva == 0)
             {
                 return;
             }
 
-            if (!TryGetFileOffset(sections, thunkRva, out long thunkOffset))
+            if (!TryGetFileOffset(sections, thunkTableRva, out long thunkOffset))
             {
-                Warn("Import thunk RVA not mapped to a section.");
+                Warn(ParseIssueCategory.Imports, "Import thunk RVA not mapped to a section.");
                 return;
             }
 
@@ -2113,13 +2356,20 @@ namespace PECoff
                 long entryOffset = thunkOffset + (index * thunkSize);
                 if (!TrySetPosition(entryOffset, thunkSize))
                 {
-                    Warn("Import thunk entry outside file bounds.");
+                    Warn(ParseIssueCategory.Imports, "Import thunk entry outside file bounds.");
                     break;
                 }
 
                 ulong value = isPe32Plus ? PEFile.ReadUInt64() : PEFile.ReadUInt32();
                 if (value == 0)
                 {
+                    break;
+                }
+
+                ulong entryRva = (ulong)thunkTableRva + (ulong)(index * thunkSize);
+                if (entryRva > uint.MaxValue)
+                {
+                    Warn(ParseIssueCategory.Imports, "Import thunk RVA exceeds supported limits.");
                     break;
                 }
 
@@ -2130,18 +2380,20 @@ namespace PECoff
                 if (isOrdinal)
                 {
                     ushort ordinal = (ushort)(value & 0xFFFF);
-                    targetList.Add(new ImportEntry(dllName, string.Empty, 0, ordinal, true));
+                    uint thunkEntryRva = (uint)entryRva;
+                    targetList.Add(new ImportEntry(dllName, string.Empty, 0, ordinal, true, source, thunkEntryRva));
                     continue;
                 }
 
                 uint nameRva = (uint)value;
                 if (TryReadImportByName(sections, nameRva, out ushort hint, out string importName))
                 {
-                    targetList.Add(new ImportEntry(dllName, importName, hint, 0, false));
+                    uint thunkEntryRva = (uint)entryRva;
+                    targetList.Add(new ImportEntry(dllName, importName, hint, 0, false, source, thunkEntryRva));
                 }
-                else
+                else if (source == ImportThunkSource.ImportNameTable)
                 {
-                    Warn("Import name entry could not be read.");
+                    Warn(ParseIssueCategory.Imports, "Import name entry could not be read.");
                 }
             }
         }
@@ -2154,13 +2406,13 @@ namespace PECoff
         {
             if (!TryGetFileOffset(sections, directory.VirtualAddress, out long tableOffset))
             {
-                Warn("Delay import table RVA not mapped to a section.");
+                Warn(ParseIssueCategory.Imports, "Delay import table RVA not mapped to a section.");
                 return;
             }
 
             if (!TryGetIntSize(directory.Size, out int tableSize))
             {
-                Warn("Delay import table size exceeds supported limits.");
+                Warn(ParseIssueCategory.Imports, "Delay import table size exceeds supported limits.");
                 return;
             }
 
@@ -2171,7 +2423,7 @@ namespace PECoff
                 long entryOffset = tableOffset + (i * descriptorSize);
                 if (!TrySetPosition(entryOffset, descriptorSize))
                 {
-                    Warn("Delay import descriptor outside file bounds.");
+                    Warn(ParseIssueCategory.Imports, "Delay import descriptor outside file bounds.");
                     break;
                 }
 
@@ -2188,20 +2440,14 @@ namespace PECoff
                     break;
                 }
 
-                bool isRva = (descriptor.Attributes & 0x1) != 0;
-                uint nameRva = descriptor.NameRVA;
-                uint importNameTable = descriptor.ImportNameTableRVA;
-                if (!isRva)
-                {
-                    if (imageBase == 0)
-                    {
-                        Warn("Delay import descriptor uses VA addresses without image base.");
-                        continue;
-                    }
-
-                    nameRva = (uint)(descriptor.NameRVA - imageBase);
-                    importNameTable = (uint)(descriptor.ImportNameTableRVA - imageBase);
-                }
+                bool usesRva = (descriptor.Attributes & 0x1) != 0;
+                bool isBound = descriptor.TimeDateStamp != 0;
+                uint nameRva = ConvertDelayImportRva(descriptor.NameRVA, usesRva, imageBase);
+                uint moduleHandleRva = ConvertDelayImportRva(descriptor.ModuleHandleRVA, usesRva, imageBase);
+                uint importAddressTableRva = ConvertDelayImportRva(descriptor.ImportAddressTableRVA, usesRva, imageBase);
+                uint importNameTableRva = ConvertDelayImportRva(descriptor.ImportNameTableRVA, usesRva, imageBase);
+                uint boundImportAddressTableRva = ConvertDelayImportRva(descriptor.BoundImportAddressTableRVA, usesRva, imageBase);
+                uint unloadInformationTableRva = ConvertDelayImportRva(descriptor.UnloadInformationTableRVA, usesRva, imageBase);
 
                 string dllName = string.Empty;
                 if (nameRva != 0 && TryGetFileOffset(sections, nameRva, out long nameOffset))
@@ -2222,8 +2468,154 @@ namespace PECoff
                     imports.Add(dllName);
                 }
 
-                uint thunkRva = importNameTable != 0 ? importNameTable : descriptor.ImportAddressTableRVA;
-                ParseImportThunks(dllName, thunkRva, sections, isPe32Plus, _delayImportEntries);
+                _delayImportDescriptors.Add(new DelayImportDescriptorInfo(
+                    dllName,
+                    descriptor.Attributes,
+                    usesRva,
+                    isBound,
+                    descriptor.TimeDateStamp,
+                    moduleHandleRva,
+                    importAddressTableRva,
+                    importNameTableRva,
+                    boundImportAddressTableRva,
+                    unloadInformationTableRva));
+
+                if (importNameTableRva != 0)
+                {
+                    ParseImportThunks(dllName, importNameTableRva, ImportThunkSource.ImportNameTable, sections, isPe32Plus, _delayImportEntries);
+                }
+
+                if (importAddressTableRva != 0 && importAddressTableRva != importNameTableRva)
+                {
+                    ParseImportThunks(dllName, importAddressTableRva, ImportThunkSource.ImportAddressTable, sections, isPe32Plus, _delayImportEntries);
+                }
+            }
+        }
+
+        private uint ConvertDelayImportRva(uint value, bool usesRva, ulong imageBase)
+        {
+            if (value == 0)
+            {
+                return 0;
+            }
+
+            if (usesRva)
+            {
+                return value;
+            }
+
+            if (imageBase == 0)
+            {
+                Warn(ParseIssueCategory.Imports, "Delay import descriptor uses VA addresses without image base.");
+                return 0;
+            }
+
+            if (value < imageBase)
+            {
+                return 0;
+            }
+
+            return (uint)(value - imageBase);
+        }
+
+        private void ParseBoundImportTable(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (!TryGetFileOffset(sections, directory.VirtualAddress, out long tableOffset))
+            {
+                Warn(ParseIssueCategory.Imports, "Bound import table RVA not mapped to a section.");
+                return;
+            }
+
+            if (!TryGetIntSize(directory.Size, out int tableSize))
+            {
+                Warn(ParseIssueCategory.Imports, "Bound import table size exceeds supported limits.");
+                return;
+            }
+
+            long tableEnd = tableOffset + tableSize;
+            if (tableEnd < tableOffset || tableEnd > PEFileStream.Length)
+            {
+                Warn(ParseIssueCategory.Imports, "Bound import table exceeds file bounds.");
+                return;
+            }
+
+            int descriptorSize = Marshal.SizeOf(typeof(IMAGE_BOUND_IMPORT_DESCRIPTOR));
+            int forwarderSize = Marshal.SizeOf(typeof(IMAGE_BOUND_FORWARDER_REF));
+            int maxEntries = 4096;
+            long cursor = tableOffset;
+
+            for (int i = 0; i < maxEntries && cursor + descriptorSize <= tableEnd; i++)
+            {
+                if (!TrySetPosition(cursor, descriptorSize))
+                {
+                    Warn(ParseIssueCategory.Imports, "Bound import descriptor outside file bounds.");
+                    break;
+                }
+
+                byte[] buffer = new byte[descriptorSize];
+                ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+                IMAGE_BOUND_IMPORT_DESCRIPTOR descriptor = ByteArrayToStructure<IMAGE_BOUND_IMPORT_DESCRIPTOR>(buffer);
+
+                if (descriptor.TimeDateStamp == 0 &&
+                    descriptor.OffsetModuleName == 0 &&
+                    descriptor.NumberOfModuleForwarderRefs == 0)
+                {
+                    break;
+                }
+
+                string dllName = "boundimport";
+                if (descriptor.OffsetModuleName != 0)
+                {
+                    long nameOffset = tableOffset + descriptor.OffsetModuleName;
+                    if (nameOffset >= tableOffset && nameOffset < tableEnd &&
+                        TryReadNullTerminatedString(nameOffset, out string name) &&
+                        !string.IsNullOrWhiteSpace(name))
+                    {
+                        dllName = name;
+                    }
+                }
+
+                cursor += descriptorSize;
+                List<BoundForwarderRef> forwarders = new List<BoundForwarderRef>();
+                for (int j = 0; j < descriptor.NumberOfModuleForwarderRefs; j++)
+                {
+                    if (cursor + forwarderSize > tableEnd)
+                    {
+                        Warn(ParseIssueCategory.Imports, "Bound import forwarder entry exceeds table bounds.");
+                        break;
+                    }
+
+                    if (!TrySetPosition(cursor, forwarderSize))
+                    {
+                        Warn(ParseIssueCategory.Imports, "Bound import forwarder entry outside file bounds.");
+                        break;
+                    }
+
+                    byte[] fwdBuffer = new byte[forwarderSize];
+                    ReadExactly(PEFileStream, fwdBuffer, 0, fwdBuffer.Length);
+                    IMAGE_BOUND_FORWARDER_REF forwarder = ByteArrayToStructure<IMAGE_BOUND_FORWARDER_REF>(fwdBuffer);
+
+                    string forwarderName = "forwarder";
+                    if (forwarder.OffsetModuleName != 0)
+                    {
+                        long forwarderNameOffset = tableOffset + forwarder.OffsetModuleName;
+                        if (forwarderNameOffset >= tableOffset && forwarderNameOffset < tableEnd &&
+                            TryReadNullTerminatedString(forwarderNameOffset, out string name) &&
+                            !string.IsNullOrWhiteSpace(name))
+                        {
+                            forwarderName = name;
+                        }
+                    }
+
+                    forwarders.Add(new BoundForwarderRef(forwarderName, forwarder.TimeDateStamp));
+                    cursor += forwarderSize;
+                }
+
+                _boundImports.Add(new BoundImportEntry(dllName, descriptor.TimeDateStamp, forwarders.ToArray()));
+                if (!imports.Contains(dllName))
+                {
+                    imports.Add(dllName);
+                }
             }
         }
 
@@ -2479,29 +2871,58 @@ namespace PECoff
             return sb.ToString();
         }
 
+        private ParseIssueSeverity ResolveSeverity(ParseIssueCategory category, ParseIssueSeverity defaultSeverity)
+        {
+            if (_options != null)
+            {
+                if (_options.IssuePolicy != null &&
+                    _options.IssuePolicy.TryGetValue(category, out ParseIssueSeverity policySeverity))
+                {
+                    return policySeverity;
+                }
+
+                if (_options.StrictMode && defaultSeverity == ParseIssueSeverity.Warning)
+                {
+                    return ParseIssueSeverity.Error;
+                }
+            }
+
+            return defaultSeverity;
+        }
+
         private void Fail(string message)
         {
-            _parseResult.AddError(message);
-            if (_options != null && _options.StrictMode)
+            Fail(ParseIssueCategory.General, message);
+        }
+
+        private void Warn(string message)
+        {
+            Warn(ParseIssueCategory.General, message);
+        }
+
+        private void Fail(ParseIssueCategory category, string message)
+        {
+            ParseIssueSeverity severity = ResolveSeverity(category, ParseIssueSeverity.Error);
+            _parseResult.AddIssue(category, severity, message);
+            if (severity == ParseIssueSeverity.Error && _options != null && _options.StrictMode)
             {
                 throw new PECOFFParseException(message);
             }
         }
 
-        private void Warn(string message)
+        private void Warn(ParseIssueCategory category, string message)
         {
             if (string.IsNullOrWhiteSpace(message))
             {
                 return;
             }
 
-            if (_options != null && _options.StrictMode)
+            ParseIssueSeverity severity = ResolveSeverity(category, ParseIssueSeverity.Warning);
+            _parseResult.AddIssue(category, severity, message);
+            if (severity == ParseIssueSeverity.Error && _options != null && _options.StrictMode)
             {
-                _parseResult.AddError(message);
                 throw new PECOFFParseException(message);
             }
-
-            _parseResult.AddWarning(message);
         }
 
         private void ReadPE()
@@ -2516,17 +2937,23 @@ namespace PECoff
                 exports.Clear();
                 _importEntries.Clear();
                 _delayImportEntries.Clear();
+                _delayImportDescriptors.Clear();
                 _exportEntries.Clear();
+                _boundImports.Clear();
                 _clrMetadata = null;
                 _fileAlignment = 0;
                 _sectionAlignment = 0;
+                _sizeOfImage = 0;
+                _sizeOfCode = 0;
+                _sizeOfInitializedData = 0;
+                _numberOfRvaAndSizes = 0;
                 _sizeOfHeaders = 0;
                 _optionalHeaderChecksum = 0;
                 _computedChecksum = 0;
                 _timeDateStamp = 0;
                 if (PEFile == null || PEFileStream == null)
                 {
-                    Fail("No PE file stream available.");
+                    Fail(ParseIssueCategory.File, "No PE file stream available.");
                     return;
                 }
 
@@ -2538,7 +2965,7 @@ namespace PECoff
                 
                 if (!TrySetPosition(0, Marshal.SizeOf(typeof(IMAGE_DOS_HEADER))))
                 {
-                    Fail("File too small for DOS header.");
+                    Fail(ParseIssueCategory.File, "File too small for DOS header.");
                     return;
                 }
 
@@ -2551,7 +2978,7 @@ namespace PECoff
                 {
                     if (!TrySetPosition(header.e_lfanew, sizeof(uint) + Marshal.SizeOf(typeof(IMAGE_FILE_HEADER))))
                     {
-                        Fail("PE header offset is outside the file bounds.");
+                        Fail(ParseIssueCategory.Header, "PE header offset is outside the file bounds.");
                         return;
                     }
 
@@ -2559,13 +2986,13 @@ namespace PECoff
                     IMAGE_NT_HEADERS peHeader = new IMAGE_NT_HEADERS(PEFile);
                     if (peHeader.Signature != IMAGE_NT_SIGNATURE )
                     {
-                        Fail("Invalid PE signature.");
+                        Fail(ParseIssueCategory.Header, "Invalid PE signature.");
                         return;
                     }
 
                     if (peHeader.Magic != PEFormat.PE32 && peHeader.Magic != PEFormat.PE32plus)
                     {
-                        Fail("Unknown PE optional header format.");
+                        Fail(ParseIssueCategory.OptionalHeader, "Unknown PE optional header format.");
                         return;
                     }
 
@@ -2573,6 +3000,10 @@ namespace PECoff
                     _timeDateStamp = peHeader.FileHeader.TimeDateStamp;
                     _fileAlignment = peHeader.FileAlignment;
                     _sectionAlignment = peHeader.SectionAlignment;
+                    _sizeOfImage = peHeader.SizeOfImage;
+                    _sizeOfCode = peHeader.SizeOfCode;
+                    _sizeOfInitializedData = peHeader.SizeOfInitializedData;
+                    _numberOfRvaAndSizes = peHeader.NumberOfRvaAndSizes;
                     _sizeOfHeaders = peHeader.SizeOfHeaders;
                     _optionalHeaderChecksum = peHeader.CheckSum;
 
@@ -2594,7 +3025,7 @@ namespace PECoff
                         }
                         else
                         {
-                            Warn("Checksum field offset is outside file bounds.");
+                            Warn(ParseIssueCategory.Checksum, "Checksum field offset is outside file bounds.");
                         }
                     }
 
@@ -2611,7 +3042,7 @@ namespace PECoff
                         }
                         catch (Exception ex)
                         {
-                            Warn($"AnalyzeAssembly failed: {ex.Message}");
+                            Warn(ParseIssueCategory.AssemblyAnalysis, $"AnalyzeAssembly failed: {ex.Message}");
                             _obfuscationPercentage = 0.0;
                             _isDotNetFile = hasClrDirectory;
                             _isObfuscated = false;
@@ -2630,7 +3061,7 @@ namespace PECoff
                     int sectionTableSize = peHeader.FileHeader.NumberOfSections * Marshal.SizeOf(typeof(IMAGE_SECTION_HEADER));
                     if (!TrySetPosition(PEFileStream.Position, sectionTableSize))
                     {
-                        Fail("Section table exceeds file bounds.");
+                        Fail(ParseIssueCategory.Sections, "Section table exceeds file bounds.");
                         return;
                     }
 
@@ -2639,7 +3070,7 @@ namespace PECoff
                         sections.Add(new IMAGE_SECTION_HEADER(PEFile));
                     }
 
-                    ValidateSections(header, peHeader, sections);
+                    ValidateSections(header, peHeader, sections, dataDirectory);
 
                     for (int i = 0; i < dataDirectory.Length; i++)
                     {
@@ -2656,13 +3087,13 @@ namespace PECoff
                                 EXPORT_DIRECTORY_TABLE edt = new EXPORT_DIRECTORY_TABLE();
                                 if (!TryGetFileOffset(sections, dataDirectory[i].VirtualAddress, out long exportTableOffset))
                                 {
-                                    Warn("Export table RVA not mapped to a section.");
+                                    Warn(ParseIssueCategory.Exports, "Export table RVA not mapped to a section.");
                                     break;
                                 }
 
                                 if (!TrySetPosition(exportTableOffset, buffer.Length))
                                 {
-                                    Warn("Export table offset outside file bounds.");
+                                    Warn(ParseIssueCategory.Exports, "Export table offset outside file bounds.");
                                     break;
                                 }
 
@@ -2674,14 +3105,14 @@ namespace PECoff
                                 {
                                     if (!TryGetFileOffset(sections, edt.NamePointerRVA, out long namePtrOffset))
                                     {
-                                        Warn("Export name pointer RVA not mapped to a section.");
+                                        Warn(ParseIssueCategory.Exports, "Export name pointer RVA not mapped to a section.");
                                         break;
                                     }
 
                                     long pointerBytes = edt.NumberOfNamePointers * sizeof(UInt32);
                                     if (pointerBytes > int.MaxValue || !TrySetPosition(namePtrOffset, (int)pointerBytes))
                                     {
-                                        Warn("Export name pointer table outside file bounds.");
+                                        Warn(ParseIssueCategory.Exports, "Export name pointer table outside file bounds.");
                                         break;
                                     }
 
@@ -2693,14 +3124,14 @@ namespace PECoff
 
                                     if (!TryGetFileOffset(sections, edt.OrdinalTableRVA, out long ordinalTableOffset))
                                     {
-                                        Warn("Export ordinal table RVA not mapped to a section.");
+                                        Warn(ParseIssueCategory.Exports, "Export ordinal table RVA not mapped to a section.");
                                         break;
                                     }
 
                                     long ordinalBytes = edt.NumberOfNamePointers * sizeof(ushort);
                                     if (ordinalBytes > int.MaxValue || !TrySetPosition(ordinalTableOffset, (int)ordinalBytes))
                                     {
-                                        Warn("Export ordinal table outside file bounds.");
+                                        Warn(ParseIssueCategory.Exports, "Export ordinal table outside file bounds.");
                                         break;
                                     }
 
@@ -2737,7 +3168,7 @@ namespace PECoff
 
                                     if (exportNameFailure)
                                     {
-                                        Warn("One or more export names could not be read.");
+                                        Warn(ParseIssueCategory.Exports, "One or more export names could not be read.");
                                     }
                                 }
 
@@ -2745,14 +3176,14 @@ namespace PECoff
                                 {
                                     if (!TryGetFileOffset(sections, edt.ExportAddressTableRVA, out long addrTableOffset))
                                     {
-                                        Warn("Export address table RVA not mapped to a section.");
+                                        Warn(ParseIssueCategory.Exports, "Export address table RVA not mapped to a section.");
                                         break;
                                     }
 
                                     long addressBytes = edt.AddressTableEntries * sizeof(UInt32);
                                     if (addressBytes > int.MaxValue || !TrySetPosition(addrTableOffset, (int)addressBytes))
                                     {
-                                        Warn("Export address table outside file bounds.");
+                                        Warn(ParseIssueCategory.Exports, "Export address table outside file bounds.");
                                         break;
                                     }
 
@@ -2766,7 +3197,27 @@ namespace PECoff
                                     {
                                         uint ordinal = edt.OrdinalBase + (uint)j;
                                         exportNamesByIndex.TryGetValue((uint)j, out string exportName);
-                                        _exportEntries.Add(new ExportEntry(exportName ?? string.Empty, ordinal, addressTable[j]));
+                                        uint addressRva = addressTable[j];
+                                        bool isForwarder = false;
+                                        string forwarder = string.Empty;
+                                        if (dataDirectory[i].Size > 0)
+                                        {
+                                            ulong exportStart = dataDirectory[i].VirtualAddress;
+                                            ulong exportEnd = exportStart + dataDirectory[i].Size;
+                                            if (addressRva >= exportStart && addressRva < exportEnd)
+                                            {
+                                                isForwarder = true;
+                                                if (TryGetFileOffset(sections, addressRva, out long forwarderOffset))
+                                                {
+                                                    if (TryReadNullTerminatedString(forwarderOffset, out string forwarderName))
+                                                    {
+                                                        forwarder = forwarderName ?? string.Empty;
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        _exportEntries.Add(new ExportEntry(exportName ?? string.Empty, ordinal, addressRva, isForwarder, forwarder));
                                     }
                                 }
 
@@ -2777,13 +3228,13 @@ namespace PECoff
                                 List<IMPORT_DIRECTORY_TABLE> idt = new List<IMPORT_DIRECTORY_TABLE>();
                                 if (!TryGetFileOffset(sections, dataDirectory[i].VirtualAddress, out long importTableOffset))
                                 {
-                                    Warn("Import table RVA not mapped to a section.");
+                                    Warn(ParseIssueCategory.Imports, "Import table RVA not mapped to a section.");
                                     break;
                                 }
 
                                 if (!TryGetIntSize(dataDirectory[i].Size, out int importTableSize))
                                 {
-                                    Warn("Import table size exceeds supported limits.");
+                                    Warn(ParseIssueCategory.Imports, "Import table size exceeds supported limits.");
                                     break;
                                 }
 
@@ -2795,7 +3246,7 @@ namespace PECoff
                                     long entryOffset = importTableOffset + (j * importEntrySize);
                                     if (!TrySetPosition(entryOffset, importEntrySize))
                                     {
-                                        Warn("Import table entry outside file bounds.");
+                                        Warn(ParseIssueCategory.Imports, "Import table entry outside file bounds.");
                                         break;
                                     }
 
@@ -2818,7 +3269,7 @@ namespace PECoff
                                 {
                                     if (!TryGetFileOffset(sections, table.NameRVA, out long importNameOffset))
                                     {
-                                        Warn("Import name RVA not mapped to a section.");
+                                        Warn(ParseIssueCategory.Imports, "Import name RVA not mapped to a section.");
                                         continue;
                                     }
 
@@ -2826,10 +3277,16 @@ namespace PECoff
                                         !string.IsNullOrWhiteSpace(importName))
                                     {
                                         imports.Add(importName);
-                                        uint thunkRva = table.LookupTableVirtualAddress != 0
-                                            ? table.LookupTableVirtualAddress
-                                            : table.ImportAddressTableRVA;
-                                        ParseImportThunks(importName, thunkRva, sections, isPe32Plus, _importEntries);
+                                        if (table.LookupTableVirtualAddress != 0)
+                                        {
+                                            ParseImportThunks(importName, table.LookupTableVirtualAddress, ImportThunkSource.ImportNameTable, sections, isPe32Plus, _importEntries);
+                                        }
+
+                                        if (table.ImportAddressTableRVA != 0 &&
+                                            table.ImportAddressTableRVA != table.LookupTableVirtualAddress)
+                                        {
+                                            ParseImportThunks(importName, table.ImportAddressTableRVA, ImportThunkSource.ImportAddressTable, sections, isPe32Plus, _importEntries);
+                                        }
                                     }
                                 }
                                 
@@ -2845,13 +3302,13 @@ namespace PECoff
 
                                 if (resourceSection.Name == null || !TryGetIntSize(resourceSection.SizeOfRawData, out int rsrcSize))
                                 {
-                                    Warn("Resource section not found or invalid.");
+                                    Warn(ParseIssueCategory.Resources, "Resource section not found or invalid.");
                                     break;
                                 }
 
                                 if (!TrySetPosition(resourceSection.PointerToRawData, rsrcSize))
                                 {
-                                    Warn("Resource section offset outside file bounds.");
+                                    Warn(ParseIssueCategory.Resources, "Resource section offset outside file bounds.");
                                     break;
                                 }
 
@@ -2872,12 +3329,12 @@ namespace PECoff
                                         }
                                         else
                                         {
-                                            Warn("Resource directory root offset outside section bounds.");
+                                            Warn(ParseIssueCategory.Resources, "Resource directory root offset outside section bounds.");
                                         }
                                     }
                                     else
                                     {
-                                        Warn("Resource directory RVA does not map to resource section.");
+                                        Warn(ParseIssueCategory.Resources, "Resource directory RVA does not map to resource section.");
                                     }
 
                                     ParseResourceDirectory(resourceSpan, rootOffset, 0, 0, string.Empty, 0, string.Empty, sections, new HashSet<int>());
@@ -2953,13 +3410,13 @@ namespace PECoff
                                 if (!TryGetIntSize(dataDirectory[i].Size, out int certSize) ||
                                     certSize < (sizeof(UInt32) + sizeof(CertificateRevision) + sizeof(CertificateType)))
                                 {
-                                    Warn("Certificate table size is invalid.");
+                                    Warn(ParseIssueCategory.Certificates, "Certificate table size is invalid.");
                                     break;
                                 }
 
                                 if (!TrySetPosition(dataDirectory[i].VirtualAddress, certSize))
                                 {
-                                    Warn("Certificate table offset outside file bounds.");
+                                    Warn(ParseIssueCategory.Certificates, "Certificate table offset outside file bounds.");
                                     break;
                                 }
 
@@ -2976,27 +3433,27 @@ namespace PECoff
 
                                     if (certHeader.dwLength < headerSize)
                                     {
-                                        Warn("Certificate entry length is invalid.");
+                                        Warn(ParseIssueCategory.Certificates, "Certificate entry length is invalid.");
                                         break;
                                     }
 
                                     if (certHeader.dwLength > int.MaxValue)
                                     {
-                                        Warn("Certificate entry length exceeds supported limits.");
+                                        Warn(ParseIssueCategory.Certificates, "Certificate entry length exceeds supported limits.");
                                         break;
                                     }
 
                                     int entryLength = (int)certHeader.dwLength;
                                     if (offset + entryLength > buffer.Length)
                                     {
-                                        Warn("Certificate entry exceeds certificate table size.");
+                                        Warn(ParseIssueCategory.Certificates, "Certificate entry exceeds certificate table size.");
                                         break;
                                     }
 
                                     int certDataLength = entryLength - headerSize;
                                     if (certDataLength <= 0)
                                     {
-                                        Warn("Certificate entry does not contain certificate data.");
+                                        Warn(ParseIssueCategory.Certificates, "Certificate entry does not contain certificate data.");
                                         break;
                                     }
 
@@ -3049,6 +3506,7 @@ namespace PECoff
                                 break;
                             case 11:
                                 // Bound Import -> The bound import table address and size
+                                ParseBoundImportTable(dataDirectory[i], sections);
                                 break;
                             case 12:
                                 // IAT -> Import Address Table
@@ -3062,14 +3520,14 @@ namespace PECoff
                                 _clrMetadata = null;
                                 if (!TryGetFileOffset(sections, dataDirectory[i].VirtualAddress, out long clrOffset))
                                 {
-                                    Warn("CLR header RVA not mapped to a section.");
+                                    Warn(ParseIssueCategory.CLR, "CLR header RVA not mapped to a section.");
                                     break;
                                 }
 
                                 buffer = new byte[Marshal.SizeOf(typeof(IMAGE_COR20_HEADER))];
                                 if (!TrySetPosition(clrOffset, buffer.Length))
                                 {
-                                    Warn("CLR header offset outside file bounds.");
+                                    Warn(ParseIssueCategory.CLR, "CLR header offset outside file bounds.");
                                     break;
                                 }
 
@@ -3077,25 +3535,25 @@ namespace PECoff
                                 IMAGE_COR20_HEADER clrHeader = ByteArrayToStructure<IMAGE_COR20_HEADER>(buffer);
                                 if (clrHeader.MetaData.Size == 0)
                                 {
-                                    Warn("CLR header does not reference metadata.");
+                                    Warn(ParseIssueCategory.CLR, "CLR header does not reference metadata.");
                                     break;
                                 }
 
                                 if (!TryGetIntSize(clrHeader.MetaData.Size, out int metadataSize))
                                 {
-                                    Warn("Metadata size exceeds supported limits.");
+                                    Warn(ParseIssueCategory.Metadata, "Metadata size exceeds supported limits.");
                                     break;
                                 }
 
                                 if (!TryGetFileOffset(sections, clrHeader.MetaData.VirtualAddress, out long metadataOffset))
                                 {
-                                    Warn("Metadata RVA not mapped to a section.");
+                                    Warn(ParseIssueCategory.Metadata, "Metadata RVA not mapped to a section.");
                                     break;
                                 }
 
                                 if (!TrySetPosition(metadataOffset, metadataSize))
                                 {
-                                    Warn("Metadata offset outside file bounds.");
+                                    Warn(ParseIssueCategory.Metadata, "Metadata offset outside file bounds.");
                                     break;
                                 }
 
@@ -3105,7 +3563,7 @@ namespace PECoff
                                     ReadExactly(PEFileStream, metadataBuffer, 0, metadataSize);
                                     if (!TryParseClrMetadata(metadataBuffer, metadataSize, clrHeader, out ClrMetadataInfo metadataInfo))
                                     {
-                                        Warn("Failed to parse CLR metadata.");
+                                        Warn(ParseIssueCategory.Metadata, "Failed to parse CLR metadata.");
                                         break;
                                     }
 
@@ -3130,7 +3588,7 @@ namespace PECoff
                 else
                 {
                     // not a DOS-File
-                    Fail("Invalid DOS signature.");
+                    Fail(ParseIssueCategory.Header, "Invalid DOS signature.");
                 }
             }
             catch (PECOFFParseException)
