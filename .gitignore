@@ -107,6 +107,9 @@ StyleCopReport.xml
 *.iobj
 *.pch
 *.pdb
+
+# Allow test fixtures in PECOFF.Tests
+!PECOFF.Tests/Fixtures/**
 *.ipdb
 *.pgc
 *.pgd

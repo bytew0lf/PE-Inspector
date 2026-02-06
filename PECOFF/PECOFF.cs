@@ -421,6 +421,7 @@ namespace PECoff
         private readonly string _filePath;
         private ApiSetSchema _apiSetSchema;
         private bool _apiSetSchemaLoaded;
+        private ApiSetSchemaInfo _apiSetSchemaInfo;
 
         private sealed class ImportDescriptorInternal
         {
@@ -452,6 +453,7 @@ namespace PECoff
             // Constructor
             _options = options ?? new PECOFFOptions();
             _filePath = FileName ?? string.Empty;
+            _apiSetSchemaInfo = new ApiSetSchemaInfo(false, 0, string.Empty, string.Empty);
 
             if (!string.IsNullOrWhiteSpace(FileName) && File.Exists(FileName))
             {
@@ -759,6 +761,7 @@ namespace PECoff
             Accelerator = 9,
             RcData = 10,
             MessageTable = 11,
+            GroupCursor = 12,
             Version = 16,
             GroupIcon = 14,
             DlgInclude = 17,
@@ -1597,6 +1600,18 @@ namespace PECoff
             get { return _resourceToolbars.ToArray(); }
         }
 
+        private readonly List<ResourceBitmapInfo> _resourceBitmaps = new List<ResourceBitmapInfo>();
+        public ResourceBitmapInfo[] ResourceBitmaps
+        {
+            get { return _resourceBitmaps.ToArray(); }
+        }
+
+        private readonly List<ResourceCursorGroupInfo> _resourceCursorGroups = new List<ResourceCursorGroupInfo>();
+        public ResourceCursorGroupInfo[] ResourceCursorGroups
+        {
+            get { return _resourceCursorGroups.ToArray(); }
+        }
+
         private readonly List<IconGroupInfo> _iconGroups = new List<IconGroupInfo>();
         public IconGroupInfo[] IconGroups
         {
@@ -1643,6 +1658,11 @@ namespace PECoff
         public ImportDescriptorInfo[] ImportDescriptors
         {
             get { return _importDescriptors.ToArray(); }
+        }
+
+        public ApiSetSchemaInfo ApiSetSchema
+        {
+            get { return _apiSetSchemaInfo; }
         }
 
         private readonly List<ImportDescriptorInternal> _importDescriptorInternals = new List<ImportDescriptorInternal>();
@@ -1954,10 +1974,14 @@ namespace PECoff
         private sealed class ApiSetSchema
         {
             public Dictionary<string, string[]> Map { get; }
+            public int Version { get; }
+            public string SourcePath { get; }
 
-            public ApiSetSchema(Dictionary<string, string[]> map)
+            public ApiSetSchema(Dictionary<string, string[]> map, int version, string sourcePath)
             {
                 Map = map ?? new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+                Version = version;
+                SourcePath = sourcePath ?? string.Empty;
             }
         }
 
@@ -1969,36 +1993,108 @@ namespace PECoff
             }
 
             _apiSetSchemaLoaded = true;
-            if (_options == null || string.IsNullOrWhiteSpace(_options.ApiSetSchemaPath))
+            string path = ResolveApiSetSchemaPath();
+            if (string.IsNullOrWhiteSpace(path))
             {
+                _apiSetSchemaInfo = new ApiSetSchemaInfo(false, 0, string.Empty, string.Empty);
                 return null;
             }
 
-            string path = _options.ApiSetSchemaPath;
             if (!File.Exists(path))
             {
                 Warn(ParseIssueCategory.Imports, $"API set schema file not found: {path}");
+                _apiSetSchemaInfo = new ApiSetSchemaInfo(false, 0, string.Empty, path);
                 return null;
             }
 
             try
             {
                 byte[] data = File.ReadAllBytes(path);
-                if (TryParseApiSetSchema(data, out ApiSetSchema schema, out string error))
+                if (TryParseApiSetSchema(data, path, out ApiSetSchema schema, out string error))
                 {
                     _apiSetSchema = schema;
+                    _apiSetSchemaInfo = new ApiSetSchemaInfo(true, schema.Version, GetApiSetFlavor(schema.Version), schema.SourcePath);
                 }
                 else if (!string.IsNullOrWhiteSpace(error))
                 {
                     Warn(ParseIssueCategory.Imports, $"API set schema parse failed: {error}");
+                    _apiSetSchemaInfo = new ApiSetSchemaInfo(false, 0, string.Empty, path);
                 }
             }
             catch (Exception ex)
             {
                 Warn(ParseIssueCategory.Imports, $"API set schema load failed: {ex.Message}");
+                _apiSetSchemaInfo = new ApiSetSchemaInfo(false, 0, string.Empty, path);
             }
 
             return _apiSetSchema;
+        }
+
+        private string ResolveApiSetSchemaPath()
+        {
+            if (_options != null && !string.IsNullOrWhiteSpace(_options.ApiSetSchemaPath))
+            {
+                return _options.ApiSetSchemaPath;
+            }
+
+            if (!OperatingSystem.IsWindows())
+            {
+                return null;
+            }
+
+            try
+            {
+                string windowsDir = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+                if (!string.IsNullOrWhiteSpace(windowsDir))
+                {
+                    string candidate = Path.Combine(windowsDir, "System32", "apisetschema.dll");
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+            }
+
+            try
+            {
+                string systemDir = Environment.SystemDirectory;
+                if (!string.IsNullOrWhiteSpace(systemDir))
+                {
+                    string candidate = Path.Combine(systemDir, "apisetschema.dll");
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+            }
+
+            return null;
+        }
+
+        private static string GetApiSetFlavor(int version)
+        {
+            if (version >= 6)
+            {
+                return "Windows 10/11";
+            }
+
+            if (version >= 4)
+            {
+                return "Windows 8/8.1";
+            }
+
+            if (version >= 2)
+            {
+                return "Windows 7";
+            }
+
+            return "Unknown";
         }
 
         private ApiSetResolutionInfo ResolveApiSetResolution(string dllName)
@@ -2096,7 +2192,7 @@ namespace PECoff
             return Array.Empty<string>();
         }
 
-        private static bool TryParseApiSetSchema(byte[] data, out ApiSetSchema schema, out string error)
+        private static bool TryParseApiSetSchema(byte[] data, string sourcePath, out ApiSetSchema schema, out string error)
         {
             schema = null;
             error = string.Empty;
@@ -2218,7 +2314,7 @@ namespace PECoff
                 return false;
             }
 
-            schema = new ApiSetSchema(map);
+            schema = new ApiSetSchema(map, (int)version, sourcePath);
             return true;
         }
 
@@ -2284,6 +2380,19 @@ namespace PECoff
 
         public PECOFFResult ToResult()
         {
+            ApiSetSchemaInfo apiSetInfo = _apiSetSchemaInfo;
+            if (apiSetInfo == null)
+            {
+                if (_apiSetSchema != null)
+                {
+                    apiSetInfo = new ApiSetSchemaInfo(true, _apiSetSchema.Version, GetApiSetFlavor(_apiSetSchema.Version), _apiSetSchema.SourcePath);
+                }
+                else
+                {
+                    apiSetInfo = new ApiSetSchemaInfo(false, 0, string.Empty, string.Empty);
+                }
+            }
+
             return new PECOFFResult(
                 _filePath,
                 _parseResult.Snapshot(),
@@ -2335,6 +2444,8 @@ namespace PECoff
                 _resourceMenus.ToArray(),
                 _resourceToolbars.ToArray(),
                 _resourceManifests.ToArray(),
+                _resourceBitmaps.ToArray(),
+                _resourceCursorGroups.ToArray(),
                 _iconGroups.ToArray(),
                 _clrMetadata,
                 _strongNameSignature,
@@ -2350,6 +2461,7 @@ namespace PECoff
                 _debugDirectories.ToArray(),
                 _baseRelocations.ToArray(),
                 _baseRelocationSections.ToArray(),
+                apiSetInfo,
                 _exceptionFunctions.ToArray(),
                 _exceptionSummary,
                 _unwindInfoDetails.ToArray(),
@@ -3893,6 +4005,70 @@ namespace PECoff
             }
         }
 
+        private void DecodeResourceCursorGroups(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceCursorGroups.Clear();
+            List<ResourceEntry> cursorEntries = _resources
+                .Where(r => r.TypeId == (uint)ResourceType.Cursor)
+                .ToList();
+
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.GroupCursor)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] owned))
+                {
+                    continue;
+                }
+
+                byte[] data = owned.Length > 0 ? owned : dataSpan.ToArray();
+                if (TryParseGroupCursor(entry, data, cursorEntries, resourceBuffer, resourceBaseRva, sections, out ResourceCursorGroupInfo group, out bool hasMissing))
+                {
+                    _resourceCursorGroups.Add(group);
+                    if (hasMissing)
+                    {
+                        Warn(ParseIssueCategory.Resources, "Cursor group references missing cursor resources.");
+                    }
+                }
+            }
+        }
+
+        private void DecodeResourceBitmaps(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceBitmaps.Clear();
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.Bitmap)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] owned))
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> data = owned.Length > 0 ? owned : dataSpan;
+                if (TryParseBitmapInfoHeader(data, out int width, out int height, out ushort bitCount, out uint compression, out uint imageSize))
+                {
+                    _resourceBitmaps.Add(new ResourceBitmapInfo(
+                        entry.NameId,
+                        entry.LanguageId,
+                        width,
+                        height,
+                        bitCount,
+                        compression,
+                        GetBitmapCompressionName(compression),
+                        imageSize));
+                }
+            }
+        }
+
         private void ParseResourceSection(
             ReadOnlySpan<byte> resourceSpan,
             int resourceSize,
@@ -3928,6 +4104,8 @@ namespace PECoff
             DecodeResourceToolbars(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceManifests(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceIconGroups(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceCursorGroups(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceBitmaps(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceVersionInfo(resourceSpan, resourceSection.VirtualAddress, sections);
 
             FileVersionInfo fvi;
@@ -4080,6 +4258,130 @@ namespace PECoff
             return true;
         }
 
+        private bool TryParseGroupCursor(
+            ResourceEntry entry,
+            byte[] groupData,
+            List<ResourceEntry> cursorEntries,
+            ReadOnlySpan<byte> resourceBuffer,
+            uint resourceBaseRva,
+            List<IMAGE_SECTION_HEADER> sections,
+            out ResourceCursorGroupInfo group,
+            out bool hasMissingCursors)
+        {
+            group = null;
+            hasMissingCursors = false;
+            if (groupData == null || groupData.Length < 6)
+            {
+                return false;
+            }
+
+            ushort reserved = ReadUInt16(groupData, 0);
+            ushort type = ReadUInt16(groupData, 2);
+            ushort count = ReadUInt16(groupData, 4);
+            if (reserved != 0 || type != 2 || count == 0)
+            {
+                return false;
+            }
+
+            List<ResourceCursorEntryInfo> entries = new List<ResourceCursorEntryInfo>();
+            for (int i = 0; i < count; i++)
+            {
+                int offset = 6 + (i * 14);
+                if (offset + 14 > groupData.Length)
+                {
+                    break;
+                }
+
+                byte width = groupData[offset];
+                byte height = groupData[offset + 1];
+                ushort hotspotX = ReadUInt16(groupData, offset + 4);
+                ushort hotspotY = ReadUInt16(groupData, offset + 6);
+                uint bytesInRes = ReadUInt32(groupData, offset + 8);
+                ushort resourceId = ReadUInt16(groupData, offset + 12);
+                bool isPng = false;
+                uint pngWidth = 0;
+                uint pngHeight = 0;
+                ResourceEntry cursorEntry = cursorEntries.FirstOrDefault(r => r.NameId == resourceId);
+                if (cursorEntry != null &&
+                    TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, cursorEntry.DataRva, cursorEntry.Size, sections, out ReadOnlySpan<byte> cursorSpan, out byte[] cursorOwned))
+                {
+                    ReadOnlySpan<byte> cursorData = cursorOwned.Length > 0 ? cursorOwned : cursorSpan;
+                    if (TryParsePngIcon(cursorData, out uint parsedWidth, out uint parsedHeight))
+                    {
+                        isPng = true;
+                        pngWidth = parsedWidth;
+                        pngHeight = parsedHeight;
+                    }
+                }
+                else
+                {
+                    hasMissingCursors = true;
+                }
+
+                entries.Add(new ResourceCursorEntryInfo(
+                    width,
+                    height,
+                    hotspotX,
+                    hotspotY,
+                    bytesInRes,
+                    resourceId,
+                    isPng,
+                    pngWidth,
+                    pngHeight));
+            }
+
+            group = new ResourceCursorGroupInfo(entry.NameId, entry.LanguageId, entries.ToArray());
+            return true;
+        }
+
+        private static bool TryParseBitmapInfoHeader(
+            ReadOnlySpan<byte> data,
+            out int width,
+            out int height,
+            out ushort bitCount,
+            out uint compression,
+            out uint imageSize)
+        {
+            width = 0;
+            height = 0;
+            bitCount = 0;
+            compression = 0;
+            imageSize = 0;
+
+            if (data.Length < 40)
+            {
+                return false;
+            }
+
+            uint headerSize = ReadUInt32(data, 0);
+            if (headerSize < 40)
+            {
+                return false;
+            }
+
+            width = unchecked((int)ReadUInt32(data, 4));
+            height = unchecked((int)ReadUInt32(data, 8));
+            bitCount = ReadUInt16(data, 14);
+            compression = ReadUInt32(data, 16);
+            imageSize = ReadUInt32(data, 20);
+            return width != 0 && height != 0;
+        }
+
+        private static string GetBitmapCompressionName(uint compression)
+        {
+            switch (compression)
+            {
+                case 0: return "BI_RGB";
+                case 1: return "BI_RLE8";
+                case 2: return "BI_RLE4";
+                case 3: return "BI_BITFIELDS";
+                case 4: return "BI_JPEG";
+                case 5: return "BI_PNG";
+                case 6: return "BI_ALPHABITFIELDS";
+                default: return string.Format(CultureInfo.InvariantCulture, "0x{0:X}", compression);
+            }
+        }
+
         private static byte[] BuildIconFile(List<IconEntryInfo> entries, List<byte[]> images)
         {
             int count = Math.Min(entries.Count, images.Count);
@@ -4167,6 +4469,64 @@ namespace PECoff
         internal static bool TryParsePngIconForTest(byte[] data, out uint width, out uint height)
         {
             return TryParsePngIcon(data, out width, out height);
+        }
+
+        internal static bool TryParseBitmapInfoHeaderForTest(
+            byte[] data,
+            out int width,
+            out int height,
+            out ushort bitCount,
+            out uint compression,
+            out uint imageSize)
+        {
+            return TryParseBitmapInfoHeader(data, out width, out height, out bitCount, out compression, out imageSize);
+        }
+
+        internal static bool TryParseCursorGroupForTest(byte[] groupData, out ResourceCursorGroupInfo group)
+        {
+            group = null;
+            if (groupData == null || groupData.Length < 6)
+            {
+                return false;
+            }
+
+            ushort reserved = ReadUInt16(groupData, 0);
+            ushort type = ReadUInt16(groupData, 2);
+            ushort count = ReadUInt16(groupData, 4);
+            if (reserved != 0 || type != 2 || count == 0)
+            {
+                return false;
+            }
+
+            List<ResourceCursorEntryInfo> entries = new List<ResourceCursorEntryInfo>();
+            for (int i = 0; i < count; i++)
+            {
+                int offset = 6 + (i * 14);
+                if (offset + 14 > groupData.Length)
+                {
+                    break;
+                }
+
+                byte width = groupData[offset];
+                byte height = groupData[offset + 1];
+                ushort hotspotX = ReadUInt16(groupData, offset + 4);
+                ushort hotspotY = ReadUInt16(groupData, offset + 6);
+                uint bytesInRes = ReadUInt32(groupData, offset + 8);
+                ushort resourceId = ReadUInt16(groupData, offset + 12);
+                entries.Add(new ResourceCursorEntryInfo(
+                    width,
+                    height,
+                    hotspotX,
+                    hotspotY,
+                    bytesInRes,
+                    resourceId,
+                    false,
+                    0,
+                    0));
+            }
+
+            group = new ResourceCursorGroupInfo(1, 0, entries.ToArray());
+            return true;
         }
 
         private static uint ReadUInt32BigEndian(ReadOnlySpan<byte> data, int offset)
@@ -6021,6 +6381,7 @@ namespace PECoff
                 string blockSectionName = blockMapped ? NormalizeSectionName(blockSection.Section) : "(unmapped)";
                 uint blockSectionRva = blockMapped ? blockSection.VirtualAddress : 0;
                 uint blockSectionSize = blockMapped ? Math.Max(blockSection.VirtualSize, blockSection.SizeOfRawData) : 0;
+                BaseRelocationSectionAccumulator accumulator = GetOrCreateRelocationSummary(summaries, blockSectionName, blockSectionRva, blockSectionSize);
 
                 for (int i = 0; i < entryCount; i++)
                 {
@@ -6048,6 +6409,10 @@ namespace PECoff
                         if (entryRva >= _sizeOfImage)
                         {
                             outOfRangeCount++;
+                        }
+                        if (accumulator.Samples.Count < 5)
+                        {
+                            accumulator.Samples.Add(new RelocationSampleInfo(entryRva, type, GetRelocationTypeName(type)));
                         }
                     }
                 }
@@ -6077,7 +6442,6 @@ namespace PECoff
                     unmappedCount,
                     isPageAligned));
 
-                BaseRelocationSectionAccumulator accumulator = GetOrCreateRelocationSummary(summaries, blockSectionName, blockSectionRva, blockSectionSize);
                 accumulator.BlockCount++;
                 accumulator.EntryCount += entryCount;
                 accumulator.ReservedTypeCount += reservedTypeCount;
@@ -6094,6 +6458,7 @@ namespace PECoff
             {
                 foreach (BaseRelocationSectionAccumulator accumulator in summaries.Values)
                 {
+                    RelocationTypeSummary[] topTypes = BuildTopRelocationTypes(accumulator.TypeCounts, 3);
                     _baseRelocationSections.Add(new BaseRelocationSectionSummary(
                         accumulator.SectionName,
                         accumulator.SectionRva,
@@ -6103,7 +6468,9 @@ namespace PECoff
                         accumulator.TypeCounts,
                         accumulator.ReservedTypeCount,
                         accumulator.OutOfRangeCount,
-                        accumulator.UnmappedCount));
+                        accumulator.UnmappedCount,
+                        topTypes,
+                        accumulator.Samples.ToArray()));
                 }
             }
         }
@@ -6119,6 +6486,7 @@ namespace PECoff
             public int ReservedTypeCount { get; set; }
             public int OutOfRangeCount { get; set; }
             public int UnmappedCount { get; set; }
+            public List<RelocationSampleInfo> Samples { get; } = new List<RelocationSampleInfo>();
 
             public BaseRelocationSectionAccumulator(string sectionName, uint sectionRva, uint sectionSize)
             {
@@ -6142,6 +6510,41 @@ namespace PECoff
             }
 
             return accumulator;
+        }
+
+        private static RelocationTypeSummary[] BuildTopRelocationTypes(int[] typeCounts, int maxItems)
+        {
+            if (typeCounts == null || typeCounts.Length == 0 || maxItems <= 0)
+            {
+                return Array.Empty<RelocationTypeSummary>();
+            }
+
+            return typeCounts
+                .Select((count, index) => new { index, count })
+                .Where(item => item.count > 0)
+                .OrderByDescending(item => item.count)
+                .ThenBy(item => item.index)
+                .Take(maxItems)
+                .Select(item => new RelocationTypeSummary(item.index, GetRelocationTypeName(item.index), item.count))
+                .ToArray();
+        }
+
+        private static string GetRelocationTypeName(int type)
+        {
+            switch (type)
+            {
+                case 0: return "ABSOLUTE";
+                case 1: return "HIGH";
+                case 2: return "LOW";
+                case 3: return "HIGHLOW";
+                case 4: return "HIGHADJ";
+                case 5: return "MIPS_JMPADDR";
+                case 6: return "SECTION";
+                case 7: return "REL32";
+                case 9: return "MIPS_JMPADDR16";
+                case 10: return "DIR64";
+                default: return string.Format(CultureInfo.InvariantCulture, "TYPE_{0}", type);
+            }
         }
 
         private static string NormalizeSectionName(string name)
@@ -6610,17 +7013,23 @@ namespace PECoff
                 uint age = ReadUInt32(span, 20);
                 string path = ReadNullTerminatedAscii(span, 24, out int _);
                 string fileName = GetFileNameFromPath(path);
+                string sanitized = !string.IsNullOrWhiteSpace(fileName) ? fileName : path;
                 bool hasGuid = guid != Guid.Empty;
                 bool hasAge = age > 0;
                 bool hasPath = !string.IsNullOrWhiteSpace(path);
+                bool hasDirectory = hasPath && (path.Contains("\\", StringComparison.Ordinal) || path.Contains("/", StringComparison.Ordinal));
                 bool pathEndsWithPdb = path.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase);
-                string pdbId = hasGuid ? string.Concat(guid.ToString("N"), age.ToString(CultureInfo.InvariantCulture)) : string.Empty;
+                string pdbId = hasGuid
+                    ? string.Format(CultureInfo.InvariantCulture, "{0:N}{1:X}", guid, age)
+                    : string.Empty;
+                bool identityLooksValid = hasGuid && hasAge && pathEndsWithPdb;
                 info = new DebugCodeViewInfo(
                     signature,
                     guid,
                     age,
                     path,
                     fileName,
+                    sanitized,
                     pdbId,
                     0,
                     0,
@@ -6631,7 +7040,9 @@ namespace PECoff
                     hasGuid,
                     hasAge,
                     hasPath,
-                    pathEndsWithPdb);
+                    pathEndsWithPdb,
+                    hasDirectory,
+                    identityLooksValid);
                 return true;
             }
 
@@ -6643,16 +7054,22 @@ namespace PECoff
                 string path = ReadNullTerminatedAscii(span, 16, out int _);
                 bool matches = timeDateStamp != 0 && timeDateStamp == debugTimeDateStamp;
                 string fileName = GetFileNameFromPath(path);
+                string sanitized = !string.IsNullOrWhiteSpace(fileName) ? fileName : path;
                 bool hasAge = age > 0;
                 bool hasPath = !string.IsNullOrWhiteSpace(path);
+                bool hasDirectory = hasPath && (path.Contains("\\", StringComparison.Ordinal) || path.Contains("/", StringComparison.Ordinal));
                 bool pathEndsWithPdb = path.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase);
-                string pdbId = pdbSignature != 0 ? string.Concat(pdbSignature.ToString("X8", CultureInfo.InvariantCulture), age.ToString(CultureInfo.InvariantCulture)) : string.Empty;
+                string pdbId = (pdbSignature != 0 || timeDateStamp != 0)
+                    ? string.Format(CultureInfo.InvariantCulture, "{0:X8}{1:X8}{2:X}", pdbSignature, timeDateStamp, age)
+                    : string.Empty;
+                bool identityLooksValid = (pdbSignature != 0 || timeDateStamp != 0) && hasAge && pathEndsWithPdb;
                 info = new DebugCodeViewInfo(
                     signature,
                     Guid.Empty,
                     age,
                     path,
                     fileName,
+                    sanitized,
                     pdbId,
                     pdbSignature,
                     timeDateStamp,
@@ -6663,7 +7080,9 @@ namespace PECoff
                     false,
                     hasAge,
                     hasPath,
-                    pathEndsWithPdb);
+                    pathEndsWithPdb,
+                    hasDirectory,
+                    identityLooksValid);
                 return true;
             }
 

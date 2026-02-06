@@ -201,6 +201,18 @@ namespace PE_FileInspector
             sb.AppendLine("  Is Obfuscated: " + pe.IsObfuscated);
             sb.AppendLine("  Obfuscation Percentage: " + pe.ObfuscationPercentage.ToString(CultureInfo.InvariantCulture));
             sb.AppendLine("  Import Hash: " + Safe(pe.ImportHash));
+            if (pe.ApiSetSchema != null)
+            {
+                if (pe.ApiSetSchema.Loaded)
+                {
+                    sb.AppendLine("  API Set Schema: v" + pe.ApiSetSchema.Version.ToString(CultureInfo.InvariantCulture) +
+                                  " (" + Safe(pe.ApiSetSchema.Flavor) + ") " + Safe(pe.ApiSetSchema.SourcePath));
+                }
+                else if (!string.IsNullOrWhiteSpace(pe.ApiSetSchema.SourcePath))
+                {
+                    sb.AppendLine("  API Set Schema: not loaded (" + Safe(pe.ApiSetSchema.SourcePath) + ")");
+                }
+            }
             sb.AppendLine("  File Alignment: " + pe.FileAlignment.ToString(CultureInfo.InvariantCulture));
             sb.AppendLine("  Section Alignment: " + pe.SectionAlignment.ToString(CultureInfo.InvariantCulture));
             sb.AppendLine("  Size Of Headers: " + pe.SizeOfHeaders.ToString(CultureInfo.InvariantCulture));
@@ -913,6 +925,12 @@ namespace PE_FileInspector
                                       " | Valid GUID: " + entry.CodeView.HasValidGuid +
                                       " | Valid Age: " + entry.CodeView.HasValidAge);
                         sb.AppendLine("    PDB Path OK: " + entry.CodeView.PdbPathEndsWithPdb);
+                        if (!string.IsNullOrWhiteSpace(entry.CodeView.PdbPathSanitized))
+                        {
+                            sb.AppendLine("    PDB Path Sanitized: " + entry.CodeView.PdbPathSanitized);
+                        }
+                        sb.AppendLine("    PDB Path Has Dir: " + entry.CodeView.PdbPathHasDirectory);
+                        sb.AppendLine("    Identity Valid: " + entry.CodeView.IdentityLooksValid);
                     }
                 }
             }
@@ -949,6 +967,16 @@ namespace PE_FileInspector
                                       " | Reserved: " + summary.ReservedTypeCount.ToString(CultureInfo.InvariantCulture) +
                                       " | OutOfRange: " + summary.OutOfRangeCount.ToString(CultureInfo.InvariantCulture) +
                                       " | Unmapped: " + summary.UnmappedCount.ToString(CultureInfo.InvariantCulture));
+                        if (summary.TopTypes.Count > 0)
+                        {
+                            string topTypes = string.Join(", ", summary.TopTypes.Select(t => t.Name + "=" + t.Count.ToString(CultureInfo.InvariantCulture)));
+                            sb.AppendLine("      Top Types: " + topTypes);
+                        }
+                        if (summary.Samples.Count > 0)
+                        {
+                            string samples = string.Join(", ", summary.Samples.Select(s => "0x" + s.Rva.ToString("X8", CultureInfo.InvariantCulture) + ":" + s.TypeName));
+                            sb.AppendLine("      Samples: " + samples);
+                        }
                     }
                 }
             }
@@ -1087,8 +1115,24 @@ namespace PE_FileInspector
                     sb.AppendLine("    FileVersion: " + Safe(pe.VersionInfoDetails.FixedFileInfo.FileVersion));
                     sb.AppendLine("    ProductVersion: " + Safe(pe.VersionInfoDetails.FixedFileInfo.ProductVersion));
                     sb.AppendLine("    FileFlags: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileFlags.ToString("X8", CultureInfo.InvariantCulture));
+                    if (pe.VersionInfoDetails.FixedFileInfo.FileFlagNames.Count > 0)
+                    {
+                        sb.AppendLine("    FileFlags Names: " + string.Join(", ", pe.VersionInfoDetails.FixedFileInfo.FileFlagNames));
+                    }
                     sb.AppendLine("    FileOS: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileOs.ToString("X8", CultureInfo.InvariantCulture));
+                    if (!string.IsNullOrWhiteSpace(pe.VersionInfoDetails.FixedFileInfo.FileOsName))
+                    {
+                        sb.AppendLine("    FileOS Name: " + pe.VersionInfoDetails.FixedFileInfo.FileOsName);
+                    }
                     sb.AppendLine("    FileType: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileType.ToString("X8", CultureInfo.InvariantCulture));
+                    if (!string.IsNullOrWhiteSpace(pe.VersionInfoDetails.FixedFileInfo.FileTypeName))
+                    {
+                        sb.AppendLine("    FileType Name: " + pe.VersionInfoDetails.FixedFileInfo.FileTypeName);
+                    }
+                    if (!string.IsNullOrWhiteSpace(pe.VersionInfoDetails.FixedFileInfo.FileSubtypeName))
+                    {
+                        sb.AppendLine("    FileSubtype Name: " + pe.VersionInfoDetails.FixedFileInfo.FileSubtypeName);
+                    }
                 }
                 sb.AppendLine("  Translation: " + Safe(pe.VersionInfoDetails.TranslationText));
                 if (pe.VersionInfoDetails.StringValues.Count > 0)
@@ -1137,6 +1181,59 @@ namespace PE_FileInspector
                             sb.AppendLine("    (truncated)");
                         }
                     }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Cursor Groups:");
+            if (pe.ResourceCursorGroups.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceCursorGroupInfo group in pe.ResourceCursorGroups.OrderBy(g => g.NameId).ThenBy(g => g.LanguageId))
+                {
+                    sb.AppendLine("  Group: Id#" + group.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + group.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Entries: " + group.Entries.Count.ToString(CultureInfo.InvariantCulture));
+                    foreach (ResourceCursorEntryInfo entry in group.Entries.Take(10))
+                    {
+                        string line = "    - " + entry.Width.ToString(CultureInfo.InvariantCulture) +
+                                      "x" + entry.Height.ToString(CultureInfo.InvariantCulture) +
+                                      " | Hotspot: " + entry.HotspotX.ToString(CultureInfo.InvariantCulture) +
+                                      "," + entry.HotspotY.ToString(CultureInfo.InvariantCulture) +
+                                      " | ResId: " + entry.ResourceId.ToString(CultureInfo.InvariantCulture);
+                        if (entry.IsPng)
+                        {
+                            line += " | PNG: " + entry.PngWidth.ToString(CultureInfo.InvariantCulture) +
+                                    "x" + entry.PngHeight.ToString(CultureInfo.InvariantCulture);
+                        }
+                        sb.AppendLine(line);
+                    }
+                    if (group.Entries.Count > 10)
+                    {
+                        sb.AppendLine("    (truncated)");
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Bitmaps:");
+            if (pe.ResourceBitmaps.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceBitmapInfo bitmap in pe.ResourceBitmaps.OrderBy(b => b.NameId).ThenBy(b => b.LanguageId))
+                {
+                    sb.AppendLine("  - Id#" + bitmap.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + bitmap.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Size: " + bitmap.Width.ToString(CultureInfo.InvariantCulture) +
+                                  "x" + bitmap.Height.ToString(CultureInfo.InvariantCulture) +
+                                  " | Bits: " + bitmap.BitCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Compression: " + bitmap.CompressionName);
                 }
             }
             sb.AppendLine();

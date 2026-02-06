@@ -179,6 +179,7 @@ namespace PECoff
         public uint Age { get; }
         public string PdbPath { get; }
         public string PdbFileName { get; }
+        public string PdbPathSanitized { get; }
         public string PdbId { get; }
         public uint PdbSignature { get; }
         public uint PdbTimeDateStamp { get; }
@@ -190,6 +191,8 @@ namespace PECoff
         public bool HasValidAge { get; }
         public bool HasPdbPath { get; }
         public bool PdbPathEndsWithPdb { get; }
+        public bool PdbPathHasDirectory { get; }
+        public bool IdentityLooksValid { get; }
 
         public DebugCodeViewInfo(
             string signature,
@@ -197,6 +200,7 @@ namespace PECoff
             uint age,
             string pdbPath,
             string pdbFileName,
+            string pdbPathSanitized,
             string pdbId,
             uint pdbSignature,
             uint pdbTimeDateStamp,
@@ -207,13 +211,16 @@ namespace PECoff
             bool hasValidGuid,
             bool hasValidAge,
             bool hasPdbPath,
-            bool pdbPathEndsWithPdb)
+            bool pdbPathEndsWithPdb,
+            bool pdbPathHasDirectory,
+            bool identityLooksValid)
         {
             Signature = signature ?? string.Empty;
             Guid = guid;
             Age = age;
             PdbPath = pdbPath ?? string.Empty;
             PdbFileName = pdbFileName ?? string.Empty;
+            PdbPathSanitized = pdbPathSanitized ?? string.Empty;
             PdbId = pdbId ?? string.Empty;
             PdbSignature = pdbSignature;
             PdbTimeDateStamp = pdbTimeDateStamp;
@@ -225,6 +232,8 @@ namespace PECoff
             HasValidAge = hasValidAge;
             HasPdbPath = hasPdbPath;
             PdbPathEndsWithPdb = pdbPathEndsWithPdb;
+            PdbPathHasDirectory = pdbPathHasDirectory;
+            IdentityLooksValid = identityLooksValid;
         }
     }
 
@@ -436,6 +445,34 @@ namespace PECoff
         }
     }
 
+    public sealed class RelocationTypeSummary
+    {
+        public int Type { get; }
+        public string Name { get; }
+        public int Count { get; }
+
+        public RelocationTypeSummary(int type, string name, int count)
+        {
+            Type = type;
+            Name = name ?? string.Empty;
+            Count = count;
+        }
+    }
+
+    public sealed class RelocationSampleInfo
+    {
+        public uint Rva { get; }
+        public int Type { get; }
+        public string TypeName { get; }
+
+        public RelocationSampleInfo(uint rva, int type, string typeName)
+        {
+            Rva = rva;
+            Type = type;
+            TypeName = typeName ?? string.Empty;
+        }
+    }
+
     public sealed class BaseRelocationSectionSummary
     {
         public string SectionName { get; }
@@ -447,6 +484,8 @@ namespace PECoff
         public int ReservedTypeCount { get; }
         public int OutOfRangeCount { get; }
         public int UnmappedCount { get; }
+        public IReadOnlyList<RelocationTypeSummary> TopTypes { get; }
+        public IReadOnlyList<RelocationSampleInfo> Samples { get; }
 
         public BaseRelocationSectionSummary(
             string sectionName,
@@ -457,7 +496,9 @@ namespace PECoff
             int[] typeCounts,
             int reservedTypeCount,
             int outOfRangeCount,
-            int unmappedCount)
+            int unmappedCount,
+            RelocationTypeSummary[] topTypes,
+            RelocationSampleInfo[] samples)
         {
             SectionName = sectionName ?? string.Empty;
             SectionRva = sectionRva;
@@ -468,6 +509,8 @@ namespace PECoff
             ReservedTypeCount = reservedTypeCount;
             OutOfRangeCount = outOfRangeCount;
             UnmappedCount = unmappedCount;
+            TopTypes = Array.AsReadOnly(topTypes ?? Array.Empty<RelocationTypeSummary>());
+            Samples = Array.AsReadOnly(samples ?? Array.Empty<RelocationSampleInfo>());
         }
     }
 
@@ -680,9 +723,13 @@ namespace PECoff
         public string ProductVersion { get; }
         public uint FileFlagsMask { get; }
         public uint FileFlags { get; }
+        public IReadOnlyList<string> FileFlagNames { get; }
         public uint FileOs { get; }
+        public string FileOsName { get; }
         public uint FileType { get; }
+        public string FileTypeName { get; }
         public uint FileSubtype { get; }
+        public string FileSubtypeName { get; }
         public uint FileDateMs { get; }
         public uint FileDateLs { get; }
 
@@ -691,9 +738,13 @@ namespace PECoff
             string productVersion,
             uint fileFlagsMask,
             uint fileFlags,
+            string[] fileFlagNames,
             uint fileOs,
+            string fileOsName,
             uint fileType,
+            string fileTypeName,
             uint fileSubtype,
+            string fileSubtypeName,
             uint fileDateMs,
             uint fileDateLs)
         {
@@ -701,9 +752,13 @@ namespace PECoff
             ProductVersion = productVersion ?? string.Empty;
             FileFlagsMask = fileFlagsMask;
             FileFlags = fileFlags;
+            FileFlagNames = Array.AsReadOnly(fileFlagNames ?? Array.Empty<string>());
             FileOs = fileOs;
+            FileOsName = fileOsName ?? string.Empty;
             FileType = fileType;
+            FileTypeName = fileTypeName ?? string.Empty;
             FileSubtype = fileSubtype;
+            FileSubtypeName = fileSubtypeName ?? string.Empty;
             FileDateMs = fileDateMs;
             FileDateLs = fileDateLs;
         }
@@ -1082,6 +1137,22 @@ namespace PECoff
         }
     }
 
+    public sealed class ApiSetSchemaInfo
+    {
+        public bool Loaded { get; }
+        public int Version { get; }
+        public string Flavor { get; }
+        public string SourcePath { get; }
+
+        public ApiSetSchemaInfo(bool loaded, int version, string flavor, string sourcePath)
+        {
+            Loaded = loaded;
+            Version = version;
+            Flavor = flavor ?? string.Empty;
+            SourcePath = sourcePath ?? string.Empty;
+        }
+    }
+
     public sealed class ImportDescriptorInfo
     {
         public string DllName { get; }
@@ -1400,7 +1471,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 2;
+        public const int CurrentSchemaVersion = 3;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -1453,6 +1524,8 @@ namespace PECoff
         public IReadOnlyList<ResourceMenuInfo> ResourceMenus { get; }
         public IReadOnlyList<ResourceToolbarInfo> ResourceToolbars { get; }
         public IReadOnlyList<ResourceManifestInfo> ResourceManifests { get; }
+        public IReadOnlyList<ResourceBitmapInfo> ResourceBitmaps { get; }
+        public IReadOnlyList<ResourceCursorGroupInfo> ResourceCursorGroups { get; }
         public IReadOnlyList<IconGroupInfo> IconGroups { get; }
         public ClrMetadataInfo ClrMetadata { get; }
         public StrongNameSignatureInfo StrongNameSignature { get; }
@@ -1468,6 +1541,7 @@ namespace PECoff
         public IReadOnlyList<DebugDirectoryEntry> DebugDirectories { get; }
         public IReadOnlyList<BaseRelocationBlockInfo> BaseRelocations { get; }
         public IReadOnlyList<BaseRelocationSectionSummary> BaseRelocationSections { get; }
+        public ApiSetSchemaInfo ApiSetSchema { get; }
         public IReadOnlyList<ExceptionFunctionInfo> ExceptionFunctions { get; }
         public ExceptionDirectorySummary ExceptionSummary { get; }
         public IReadOnlyList<UnwindInfoDetail> UnwindInfoDetails { get; }
@@ -1528,6 +1602,8 @@ namespace PECoff
             ResourceMenuInfo[] resourceMenus,
             ResourceToolbarInfo[] resourceToolbars,
             ResourceManifestInfo[] resourceManifests,
+            ResourceBitmapInfo[] resourceBitmaps,
+            ResourceCursorGroupInfo[] resourceCursorGroups,
             IconGroupInfo[] iconGroups,
             ClrMetadataInfo clrMetadata,
             StrongNameSignatureInfo strongNameSignature,
@@ -1543,6 +1619,7 @@ namespace PECoff
             DebugDirectoryEntry[] debugDirectories,
             BaseRelocationBlockInfo[] baseRelocations,
             BaseRelocationSectionSummary[] baseRelocationSections,
+            ApiSetSchemaInfo apiSetSchema,
             ExceptionFunctionInfo[] exceptionFunctions,
             ExceptionDirectorySummary exceptionSummary,
             UnwindInfoDetail[] unwindInfoDetails,
@@ -1603,6 +1680,8 @@ namespace PECoff
             ResourceMenus = Array.AsReadOnly(resourceMenus ?? Array.Empty<ResourceMenuInfo>());
             ResourceToolbars = Array.AsReadOnly(resourceToolbars ?? Array.Empty<ResourceToolbarInfo>());
             ResourceManifests = Array.AsReadOnly(resourceManifests ?? Array.Empty<ResourceManifestInfo>());
+            ResourceBitmaps = Array.AsReadOnly(resourceBitmaps ?? Array.Empty<ResourceBitmapInfo>());
+            ResourceCursorGroups = Array.AsReadOnly(resourceCursorGroups ?? Array.Empty<ResourceCursorGroupInfo>());
             IconGroups = Array.AsReadOnly(iconGroups ?? Array.Empty<IconGroupInfo>());
             ClrMetadata = clrMetadata;
             StrongNameSignature = strongNameSignature;
@@ -1618,6 +1697,7 @@ namespace PECoff
             DebugDirectories = Array.AsReadOnly(debugDirectories ?? Array.Empty<DebugDirectoryEntry>());
             BaseRelocations = Array.AsReadOnly(baseRelocations ?? Array.Empty<BaseRelocationBlockInfo>());
             BaseRelocationSections = Array.AsReadOnly(baseRelocationSections ?? Array.Empty<BaseRelocationSectionSummary>());
+            ApiSetSchema = apiSetSchema ?? new ApiSetSchemaInfo(false, 0, string.Empty, string.Empty);
             ExceptionFunctions = Array.AsReadOnly(exceptionFunctions ?? Array.Empty<ExceptionFunctionInfo>());
             ExceptionSummary = exceptionSummary;
             UnwindInfoDetails = Array.AsReadOnly(unwindInfoDetails ?? Array.Empty<UnwindInfoDetail>());
@@ -1714,6 +1794,8 @@ namespace PECoff
                 ResourceMenus,
                 ResourceToolbars,
                 ResourceManifests,
+                ResourceBitmaps,
+                ResourceCursorGroups,
                 IconGroups = iconGroups,
                 ClrMetadata,
                 StrongNameSignature = strongNameSignature,
@@ -1729,6 +1811,7 @@ namespace PECoff
                 DebugDirectories,
                 BaseRelocations,
                 BaseRelocationSections,
+                ApiSetSchema,
                 ExceptionFunctions,
                 ExceptionSummary,
                 UnwindInfoDetails,
@@ -1812,6 +1895,87 @@ namespace PECoff
             Content = content ?? string.Empty;
             Schema = schema;
             IsMui = isMui;
+        }
+    }
+
+    public sealed class ResourceBitmapInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public int Width { get; }
+        public int Height { get; }
+        public ushort BitCount { get; }
+        public uint Compression { get; }
+        public string CompressionName { get; }
+        public uint ImageSize { get; }
+
+        public ResourceBitmapInfo(
+            uint nameId,
+            ushort languageId,
+            int width,
+            int height,
+            ushort bitCount,
+            uint compression,
+            string compressionName,
+            uint imageSize)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Width = width;
+            Height = height;
+            BitCount = bitCount;
+            Compression = compression;
+            CompressionName = compressionName ?? string.Empty;
+            ImageSize = imageSize;
+        }
+    }
+
+    public sealed class ResourceCursorEntryInfo
+    {
+        public byte Width { get; }
+        public byte Height { get; }
+        public ushort HotspotX { get; }
+        public ushort HotspotY { get; }
+        public uint BytesInRes { get; }
+        public ushort ResourceId { get; }
+        public bool IsPng { get; }
+        public uint PngWidth { get; }
+        public uint PngHeight { get; }
+
+        public ResourceCursorEntryInfo(
+            byte width,
+            byte height,
+            ushort hotspotX,
+            ushort hotspotY,
+            uint bytesInRes,
+            ushort resourceId,
+            bool isPng,
+            uint pngWidth,
+            uint pngHeight)
+        {
+            Width = width;
+            Height = height;
+            HotspotX = hotspotX;
+            HotspotY = hotspotY;
+            BytesInRes = bytesInRes;
+            ResourceId = resourceId;
+            IsPng = isPng;
+            PngWidth = pngWidth;
+            PngHeight = pngHeight;
+        }
+    }
+
+    public sealed class ResourceCursorGroupInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public IReadOnlyList<ResourceCursorEntryInfo> Entries { get; }
+
+        public ResourceCursorGroupInfo(uint nameId, ushort languageId, ResourceCursorEntryInfo[] entries)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<ResourceCursorEntryInfo>());
         }
     }
 }

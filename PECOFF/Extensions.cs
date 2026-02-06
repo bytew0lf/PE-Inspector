@@ -578,9 +578,13 @@ namespace PECoff
                     ProductVersion,
                     vi.Value.dwFileFlagsMask,
                     (uint)vi.Value.dwFileFlags,
+                    DecodeFileFlags((uint)vi.Value.dwFileFlags, vi.Value.dwFileFlagsMask),
                     (uint)vi.Value.dwFileOS,
+                    DecodeFileOs((uint)vi.Value.dwFileOS),
                     (uint)vi.Value.dwFileType,
+                    DecodeFileType((uint)vi.Value.dwFileType),
                     (uint)vi.Value.VXDFileSubtype,
+                    DecodeFileSubtype((uint)vi.Value.dwFileType, (uint)vi.Value.VXDFileSubtype),
                     vi.Value.dwFileDateMS,
                     vi.Value.dwFileDateLS);
             }
@@ -699,6 +703,71 @@ namespace PECoff
             }
 
             return ResolveCultureNameFromLangId(langId);
+        }
+
+        private static string[] DecodeFileFlags(uint flags, uint mask)
+        {
+            uint effective = mask != 0 ? (flags & mask) : flags;
+            if (effective == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> names = new List<string>();
+            foreach (FileFlags flag in Enum.GetValues(typeof(FileFlags)))
+            {
+                if (((uint)flag & effective) != 0)
+                {
+                    string name = flag.ToString();
+                    if (name.StartsWith("VS_FF_", StringComparison.Ordinal))
+                    {
+                        name = name.Substring(6);
+                    }
+                    names.Add(name);
+                }
+            }
+
+            return names.Count == 0 ? Array.Empty<string>() : names.ToArray();
+        }
+
+        private static string DecodeFileOs(uint value)
+        {
+            if (Enum.IsDefined(typeof(FileOS), value))
+            {
+                return ((FileOS)value).ToString();
+            }
+
+            return string.Format("0x{0:X8}", value);
+        }
+
+        private static string DecodeFileType(uint value)
+        {
+            if (Enum.IsDefined(typeof(FileType), value))
+            {
+                return ((FileType)value).ToString();
+            }
+
+            return string.Format("0x{0:X8}", value);
+        }
+
+        private static string DecodeFileSubtype(uint fileType, uint subtype)
+        {
+            if (subtype == 0)
+            {
+                return string.Empty;
+            }
+
+            if (fileType == (uint)FileType.VFT_DRV && Enum.IsDefined(typeof(FileDRVSubtype), subtype))
+            {
+                return ((FileDRVSubtype)subtype).ToString();
+            }
+
+            if (fileType == (uint)FileType.VFT_FONT && Enum.IsDefined(typeof(FileFNTSubtype), subtype))
+            {
+                return ((FileFNTSubtype)subtype).ToString();
+            }
+
+            return string.Format("0x{0:X8}", subtype);
         }
 
         private static string ResolveCultureNameFromLangId(ushort langId)

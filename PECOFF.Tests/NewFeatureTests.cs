@@ -58,6 +58,7 @@ public class NewFeatureTests
         int totalBlockEntries = pe.BaseRelocations.Sum(b => b.EntryCount);
         int totalSectionEntries = pe.BaseRelocationSections.Sum(s => s.EntryCount);
         Assert.Equal(totalBlockEntries, totalSectionEntries);
+        Assert.All(pe.BaseRelocationSections, summary => Assert.True(summary.Samples.Count <= 5));
     }
 
     [Fact]
