@@ -280,7 +280,16 @@ namespace PECoff
             ImportNameTableRva = importNameTableRva;
             BoundImportAddressTableRva = boundImportAddressTableRva;
             UnloadInformationTableRva = unloadInformationTableRva;
-            ApiSetResolution = apiSetResolution ?? new ApiSetResolutionInfo(false, false, false, string.Empty, Array.Empty<string>());
+            ApiSetResolution = apiSetResolution
+                ?? new ApiSetResolutionInfo(
+                    false,
+                    false,
+                    false,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    Array.Empty<string>(),
+                    Array.Empty<string>());
         }
     }
 
@@ -375,6 +384,8 @@ namespace PECoff
         public int EventDefinitionCount { get; }
         public bool HasDebuggableAttribute { get; }
         public string DebuggableModes { get; }
+        public bool IsValid { get; }
+        public string[] ValidationMessages { get; }
 
         public ClrMetadataInfo(
             ushort majorRuntimeVersion,
@@ -405,7 +416,9 @@ namespace PECoff
             int propertyDefinitionCount,
             int eventDefinitionCount,
             bool hasDebuggableAttribute,
-            string debuggableModes)
+            string debuggableModes,
+            bool isValid,
+            string[] validationMessages)
         {
             MajorRuntimeVersion = majorRuntimeVersion;
             MinorRuntimeVersion = minorRuntimeVersion;
@@ -436,6 +449,8 @@ namespace PECoff
             EventDefinitionCount = eventDefinitionCount;
             HasDebuggableAttribute = hasDebuggableAttribute;
             DebuggableModes = debuggableModes ?? string.Empty;
+            IsValid = isValid;
+            ValidationMessages = validationMessages ?? Array.Empty<string>();
         }
     }
 
@@ -472,6 +487,51 @@ namespace PECoff
         private bool _loadConfigParsed;
         private bool _clrParsed;
         private bool _peHeaderIsPe32Plus;
+
+        private static readonly Dictionary<ushort, string> RichProductNameMap = new Dictionary<ushort, string>
+        {
+            { 0x00C1, "Import (5.10)" },
+            { 0x00C2, "Linker (5.10)" },
+            { 0x00C3, "Cvtomf (5.10)" },
+            { 0x00C4, "Cvtres (5.10)" },
+            { 0x00C5, "Cvtpgd (5.10)" },
+            { 0x00C6, "Linker (5.20)" },
+            { 0x00C7, "Cvtomf (5.20)" },
+            { 0x00C8, "Cvtres (5.20)" },
+            { 0x00C9, "Cvtpgd (5.20)" },
+            { 0x00CA, "Linker (6.00)" },
+            { 0x00CB, "Cvtomf (6.00)" },
+            { 0x00CC, "Cvtres (6.00)" },
+            { 0x00CD, "Cvtpgd (6.00)" },
+            { 0x00CE, "Linker (6.10)" },
+            { 0x00CF, "Cvtomf (6.10)" },
+            { 0x00D0, "Cvtres (6.10)" },
+            { 0x00D1, "Cvtpgd (6.10)" },
+            { 0x00D2, "Linker (7.00)" },
+            { 0x00D3, "Cvtomf (7.00)" },
+            { 0x00D4, "Cvtres (7.00)" },
+            { 0x00D5, "Cvtpgd (7.00)" },
+            { 0x00D6, "Linker (7.01)" },
+            { 0x00D7, "Cvtomf (7.01)" },
+            { 0x00D8, "Cvtres (7.01)" },
+            { 0x00D9, "Cvtpgd (7.01)" },
+            { 0x00DA, "Linker (7.10)" },
+            { 0x00DB, "Cvtomf (7.10)" },
+            { 0x00DC, "Cvtres (7.10)" },
+            { 0x00DD, "Cvtpgd (7.10)" },
+            { 0x00DE, "Linker (8.00)" },
+            { 0x00DF, "Cvtomf (8.00)" },
+            { 0x00E0, "Cvtres (8.00)" },
+            { 0x00E1, "Cvtpgd (8.00)" },
+            { 0x00E2, "Linker (9.00)" },
+            { 0x00E3, "Cvtomf (9.00)" },
+            { 0x00E4, "Cvtres (9.00)" },
+            { 0x00E5, "Cvtpgd (9.00)" },
+            { 0x00E6, "Linker (10.00)" },
+            { 0x00E7, "Cvtomf (10.00)" },
+            { 0x00E8, "Cvtres (10.00)" },
+            { 0x00E9, "Cvtpgd (10.00)" }
+        };
 
         private sealed class ImportDescriptorInternal
         {
@@ -1540,6 +1600,12 @@ namespace PECoff
             get { return _sectionGaps.ToArray(); }
         }
 
+        private readonly List<SectionPermissionInfo> _sectionPermissions = new List<SectionPermissionInfo>();
+        public SectionPermissionInfo[] SectionPermissions
+        {
+            get { return _sectionPermissions.ToArray(); }
+        }
+
         private SubsystemInfo _subsystemInfo;
         public SubsystemInfo SubsystemInfo
         {
@@ -1683,6 +1749,16 @@ namespace PECoff
             {
                 EnsureResourcesParsed();
                 return _resourceManifests.ToArray();
+            }
+        }
+
+        private readonly List<ResourceLocaleCoverageInfo> _resourceLocaleCoverage = new List<ResourceLocaleCoverageInfo>();
+        public ResourceLocaleCoverageInfo[] ResourceLocaleCoverage
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceLocaleCoverage.ToArray();
             }
         }
 
@@ -1956,9 +2032,16 @@ namespace PECoff
         }
 
         private readonly List<ExportEntry> _exportEntries = new List<ExportEntry>();
+        private int _exportOrdinalOutOfRangeCount;
         public ExportEntry[] ExportEntries
         {
             get { return _exportEntries.ToArray(); }
+        }
+
+        private ExportAnomalySummary _exportAnomalies = new ExportAnomalySummary(0, 0, 0);
+        public ExportAnomalySummary ExportAnomalies
+        {
+            get { return _exportAnomalies; }
         }
 
         private readonly List<BoundImportEntry> _boundImports = new List<BoundImportEntry>();
@@ -1994,6 +2077,16 @@ namespace PECoff
             {
                 EnsureRelocationsParsed();
                 return _baseRelocationSections.ToArray();
+            }
+        }
+
+        private RelocationAnomalySummary _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0);
+        public RelocationAnomalySummary RelocationAnomalies
+        {
+            get
+            {
+                EnsureRelocationsParsed();
+                return _relocationAnomalies;
             }
         }
 
@@ -2444,19 +2537,45 @@ namespace PECoff
         {
             if (!IsApiSetName(dllName))
             {
-                return new ApiSetResolutionInfo(false, false, false, string.Empty, Array.Empty<string>());
+                return new ApiSetResolutionInfo(
+                    false,
+                    false,
+                    false,
+                    string.Empty,
+                    "None",
+                    "None",
+                    Array.Empty<string>(),
+                    Array.Empty<string>());
             }
 
             string normalized = NormalizeApiSetName(dllName);
             ApiSetSchemaData schema = EnsureApiSetSchema();
             if (schema != null && schema.Map.TryGetValue(normalized, out string[] targets) && targets.Length > 0)
             {
-                return new ApiSetResolutionInfo(true, true, false, normalized, targets);
+                string[] canonicalTargets = NormalizeApiSetTargets(targets);
+                return new ApiSetResolutionInfo(
+                    true,
+                    true,
+                    false,
+                    normalized,
+                    "Schema",
+                    "High",
+                    targets,
+                    canonicalTargets);
             }
 
             string[] fallbackTargets = GuessApiSetTargets(normalized);
             bool resolved = fallbackTargets.Length > 0;
-            return new ApiSetResolutionInfo(true, resolved, true, normalized, fallbackTargets);
+            string[] canonicalFallback = NormalizeApiSetTargets(fallbackTargets);
+            return new ApiSetResolutionInfo(
+                true,
+                resolved,
+                true,
+                normalized,
+                "Heuristic",
+                resolved ? "Low" : "None",
+                fallbackTargets,
+                canonicalFallback);
         }
 
         private static bool IsApiSetName(string dllName)
@@ -2485,6 +2604,33 @@ namespace PECoff
             }
 
             return name;
+        }
+
+        private static string[] NormalizeApiSetTargets(string[] targets)
+        {
+            if (targets == null || targets.Length == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            HashSet<string> normalized = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string target in targets)
+            {
+                if (string.IsNullOrWhiteSpace(target))
+                {
+                    continue;
+                }
+
+                string trimmed = target.Trim().ToLowerInvariant();
+                if (!trimmed.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                {
+                    trimmed += ".dll";
+                }
+
+                normalized.Add(trimmed);
+            }
+
+            return normalized.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray();
         }
 
         private static string[] GuessApiSetTargets(string apiSetName)
@@ -2774,6 +2920,7 @@ namespace PECoff
                 _sectionEntropies.ToArray(),
                 _sectionSlacks.ToArray(),
                 _sectionGaps.ToArray(),
+                _sectionPermissions.ToArray(),
                 _optionalHeaderChecksum,
                 _computedChecksum,
                 IsChecksumValid,
@@ -2794,6 +2941,7 @@ namespace PECoff
                 _resourceMenus.ToArray(),
                 _resourceToolbars.ToArray(),
                 _resourceManifests.ToArray(),
+                _resourceLocaleCoverage.ToArray(),
                 _resourceBitmaps.ToArray(),
                 _resourceCursorGroups.ToArray(),
                 _iconGroups.ToArray(),
@@ -2807,10 +2955,12 @@ namespace PECoff
                 _delayImportDescriptors.ToArray(),
                 exports.ToArray(),
                 _exportEntries.ToArray(),
+                _exportAnomalies,
                 _boundImports.ToArray(),
                 _debugDirectories.ToArray(),
                 _baseRelocations.ToArray(),
                 _baseRelocationSections.ToArray(),
+                _relocationAnomalies,
                 apiSetInfo,
                 _exceptionFunctions.ToArray(),
                 _exceptionSummary,
@@ -3463,6 +3613,11 @@ namespace PECoff
                 hints.Add(new PackingHintInfo("Overlay", "LZMA", "LZMA header detected."));
             }
 
+            if (ContainsAscii(data, "Nullsoft", 4096) || ContainsAscii(data, "NSIS", 4096))
+            {
+                hints.Add(new PackingHintInfo("Overlay", "NSIS", "NSIS installer signature detected."));
+            }
+
             return hints.ToArray();
         }
 
@@ -3492,6 +3647,41 @@ namespace PECoff
             }
 
             return true;
+        }
+
+        private static bool ContainsAscii(ReadOnlySpan<byte> data, string text, int maxScan)
+        {
+            if (string.IsNullOrEmpty(text) || data.Length == 0)
+            {
+                return false;
+            }
+
+            int limit = Math.Min(data.Length, Math.Max(0, maxScan));
+            byte[] needle = Encoding.ASCII.GetBytes(text);
+            if (needle.Length == 0 || limit < needle.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i <= limit - needle.Length; i++)
+            {
+                bool match = true;
+                for (int j = 0; j < needle.Length; j++)
+                {
+                    if (data[i + j] != needle[j])
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static double ComputeShannonEntropy(ReadOnlySpan<byte> data)
@@ -4533,6 +4723,61 @@ namespace PECoff
                 SetIfEmpty(ref _specialBuild, versionInfo.SpecialBuild);
                 SetIfEmpty(ref _language, versionInfo.Language);
             }
+
+            BuildResourceLocaleCoverage();
+        }
+
+        private void BuildResourceLocaleCoverage()
+        {
+            _resourceLocaleCoverage.Clear();
+            AddResourceLocaleCoverage("StringTable", _resourceStringTables.Select(t => t.LanguageId));
+            AddResourceLocaleCoverage("Manifest", _resourceManifests.Select(m => m.LanguageId));
+        }
+
+        private void AddResourceLocaleCoverage(string kind, IEnumerable<ushort> languageIds)
+        {
+            if (languageIds == null)
+            {
+                return;
+            }
+
+            ushort[] unique = languageIds
+                .Distinct()
+                .OrderBy(id => id)
+                .ToArray();
+
+            if (unique.Length == 0)
+            {
+                return;
+            }
+
+            bool hasNeutral = unique.Contains((ushort)0);
+            bool hasLocalized = unique.Any(id => id != 0);
+            bool missingNeutral = hasLocalized && !hasNeutral;
+            if (missingNeutral)
+            {
+                Warn(ParseIssueCategory.Resources, $"{kind} resources are localized but no neutral language fallback was found.");
+            }
+
+            _resourceLocaleCoverage.Add(new ResourceLocaleCoverageInfo(
+                kind,
+                unique,
+                hasNeutral,
+                hasLocalized,
+                missingNeutral));
+        }
+
+        internal static ResourceLocaleCoverageInfo BuildResourceLocaleCoverageForTest(string kind, params ushort[] languageIds)
+        {
+            ushort[] unique = languageIds
+                .Where(id => id >= 0)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToArray();
+            bool hasNeutral = unique.Contains((ushort)0);
+            bool hasLocalized = unique.Any(id => id != 0);
+            bool missingNeutral = hasLocalized && !hasNeutral;
+            return new ResourceLocaleCoverageInfo(kind, unique, hasNeutral, hasLocalized, missingNeutral);
         }
 
         private void ParseResourceDirectoryTable(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
@@ -5835,11 +6080,28 @@ namespace PECoff
 
                 ushort build = (ushort)(compid & 0xFFFF);
                 ushort product = (ushort)((compid >> 16) & 0xFFFF);
-                entries.Add(new RichHeaderEntry(product, build, count, compid));
+                string productName = DecodeRichProductName(product);
+                string toolchainVersion = build.ToString(CultureInfo.InvariantCulture);
+                entries.Add(new RichHeaderEntry(product, build, count, compid, productName, toolchainVersion));
             }
 
             info = new RichHeaderInfo(key, entries.ToArray());
             return true;
+        }
+
+        private static string DecodeRichProductName(ushort productId)
+        {
+            if (RichProductNameMap.TryGetValue(productId, out string name))
+            {
+                return name;
+            }
+
+            return $"ToolId 0x{productId:X4}";
+        }
+
+        internal static string DecodeRichProductNameForTest(ushort productId)
+        {
+            return DecodeRichProductName(productId);
         }
 
         private static int FindPattern(byte[] buffer, int length, byte[] pattern)
@@ -6140,6 +6402,111 @@ namespace PECoff
                     Warn(ParseIssueCategory.Sections, $"Gap between {gap.PreviousSection} and {gap.NextSection} contains non-zero padding.");
                 }
             }
+        }
+
+        private void BuildSectionPermissionInfos(List<IMAGE_SECTION_HEADER> sections)
+        {
+            _sectionPermissions.Clear();
+            foreach (IMAGE_SECTION_HEADER section in sections)
+            {
+                string name = NormalizeSectionName(section.Section);
+                uint characteristics = (uint)section.Characteristics;
+                bool isReadable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_READ) != 0;
+                bool isWritable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_WRITE) != 0;
+                bool isExecutable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_EXECUTE) != 0;
+                bool isCode = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0;
+                bool isInitData = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) != 0;
+                bool isUninitData = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0;
+                bool isDiscardable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_DISCARDABLE) != 0;
+                bool isShared = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_SHARED) != 0;
+                bool hasSuspicious = isExecutable && isWritable;
+                bool hasMismatch = (isCode && !isExecutable) || (isInitData && isExecutable);
+
+                string[] flags = DecodeSectionFlags(characteristics);
+                _sectionPermissions.Add(new SectionPermissionInfo(
+                    name,
+                    characteristics,
+                    flags,
+                    isReadable,
+                    isWritable,
+                    isExecutable,
+                    isCode,
+                    isInitData,
+                    isUninitData,
+                    isDiscardable,
+                    isShared,
+                    hasSuspicious,
+                    hasMismatch));
+            }
+        }
+
+        private static string[] DecodeSectionFlags(uint characteristics)
+        {
+            List<string> flags = new List<string>();
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0)
+            {
+                flags.Add("CNT_CODE");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) != 0)
+            {
+                flags.Add("CNT_INITIALIZED_DATA");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0)
+            {
+                flags.Add("CNT_UNINITIALIZED_DATA");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_READ) != 0)
+            {
+                flags.Add("MEM_READ");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_WRITE) != 0)
+            {
+                flags.Add("MEM_WRITE");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_EXECUTE) != 0)
+            {
+                flags.Add("MEM_EXECUTE");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_DISCARDABLE) != 0)
+            {
+                flags.Add("MEM_DISCARDABLE");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_SHARED) != 0)
+            {
+                flags.Add("MEM_SHARED");
+            }
+
+            return flags.ToArray();
+        }
+
+        internal static SectionPermissionInfo DecodeSectionPermissionsForTest(uint characteristics)
+        {
+            string[] flags = DecodeSectionFlags(characteristics);
+            bool isReadable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_READ) != 0;
+            bool isWritable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_WRITE) != 0;
+            bool isExecutable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_EXECUTE) != 0;
+            bool isCode = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0;
+            bool isInitData = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) != 0;
+            bool isUninitData = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0;
+            bool isDiscardable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_DISCARDABLE) != 0;
+            bool isShared = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_SHARED) != 0;
+            bool hasSuspicious = isExecutable && isWritable;
+            bool hasMismatch = (isCode && !isExecutable) || (isInitData && isExecutable);
+
+            return new SectionPermissionInfo(
+                "test",
+                characteristics,
+                flags,
+                isReadable,
+                isWritable,
+                isExecutable,
+                isCode,
+                isInitData,
+                isUninitData,
+                isDiscardable,
+                isShared,
+                hasSuspicious,
+                hasMismatch);
         }
 
         private static SectionRange[] BuildSectionRanges(List<IMAGE_SECTION_HEADER> sections)
@@ -6759,6 +7126,7 @@ namespace PECoff
 
         private void ParseBaseRelocationTable(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
         {
+            _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0);
             if (!TryGetFileOffset(sections, directory.VirtualAddress, out long tableOffset))
             {
                 Warn(ParseIssueCategory.Relocations, "Base relocation table RVA not mapped to a section.");
@@ -6780,6 +7148,10 @@ namespace PECoff
 
             _baseRelocationSections.Clear();
             Dictionary<string, BaseRelocationSectionAccumulator> summaries = new Dictionary<string, BaseRelocationSectionAccumulator>(StringComparer.OrdinalIgnoreCase);
+            int zeroSizedBlocks = 0;
+            int emptyBlocks = 0;
+            int invalidBlocks = 0;
+            int orphanedBlocks = 0;
 
             int headerSize = Marshal.SizeOf(typeof(IMAGE_BASE_RELOCATION));
             long cursor = tableOffset;
@@ -6798,6 +7170,11 @@ namespace PECoff
                 if (header.SizeOfBlock < headerSize)
                 {
                     Warn(ParseIssueCategory.Relocations, "Base relocation block size is invalid.");
+                    invalidBlocks++;
+                    if (header.SizeOfBlock == 0)
+                    {
+                        zeroSizedBlocks++;
+                    }
                     break;
                 }
 
@@ -6810,10 +7187,16 @@ namespace PECoff
                 if (blockEnd > end)
                 {
                     Warn(ParseIssueCategory.Relocations, "Base relocation block exceeds table size.");
+                    invalidBlocks++;
                     break;
                 }
 
                 int entryCount = (int)((header.SizeOfBlock - headerSize) / 2);
+                if (entryCount == 0)
+                {
+                    emptyBlocks++;
+                    Warn(ParseIssueCategory.Relocations, $"Base relocation block at 0x{header.VirtualAddress:X} contains no entries.");
+                }
                 int[] typeCounts = new int[16];
                 int reservedTypeCount = 0;
                 int outOfRangeCount = 0;
@@ -6830,6 +7213,10 @@ namespace PECoff
                 string blockSectionName = blockMapped ? NormalizeSectionName(blockSection.Section) : "(unmapped)";
                 uint blockSectionRva = blockMapped ? blockSection.VirtualAddress : 0;
                 uint blockSectionSize = blockMapped ? Math.Max(blockSection.VirtualSize, blockSection.SizeOfRawData) : 0;
+                if (!blockMapped)
+                {
+                    orphanedBlocks++;
+                }
                 BaseRelocationSectionAccumulator accumulator = GetOrCreateRelocationSummary(summaries, blockSectionName, blockSectionRva, blockSectionSize);
 
                 for (int i = 0; i < entryCount; i++)
@@ -6923,6 +7310,8 @@ namespace PECoff
                         accumulator.Samples.ToArray()));
                 }
             }
+
+            _relocationAnomalies = new RelocationAnomalySummary(zeroSizedBlocks, emptyBlocks, invalidBlocks, orphanedBlocks);
         }
 
         private sealed class BaseRelocationSectionAccumulator
@@ -7632,20 +8021,48 @@ namespace PECoff
 
             if (callbacks.Length > 0)
             {
+                bool warnedUnmapped = false;
                 foreach (ulong callback in callbacks)
                 {
                     uint callbackRva = 0;
                     string symbol = string.Empty;
+                    string sectionName = string.Empty;
+                    uint sectionRva = 0;
+                    uint sectionOffset = 0;
+                    string resolutionSource = "None";
                     if (TryVaToRva(callback, imageBase, out uint resolvedRva))
                     {
                         callbackRva = resolvedRva;
                         if (TryResolveExportName(callbackRva, out string resolved))
                         {
                             symbol = resolved;
+                            resolutionSource = "Export";
+                        }
+
+                        if (TryGetSectionByRva(sections, callbackRva, out IMAGE_SECTION_HEADER section))
+                        {
+                            sectionName = NormalizeSectionName(section.Section);
+                            sectionRva = section.VirtualAddress;
+                            if (callbackRva >= section.VirtualAddress)
+                            {
+                                sectionOffset = callbackRva - section.VirtualAddress;
+                            }
+                        }
+                        else if (!warnedUnmapped)
+                        {
+                            Warn(ParseIssueCategory.Tls, "TLS callback RVA not mapped to a section.");
+                            warnedUnmapped = true;
                         }
                     }
 
-                    callbackInfos.Add(new TlsCallbackInfo(callback, callbackRva, symbol));
+                    callbackInfos.Add(new TlsCallbackInfo(
+                        callback,
+                        callbackRva,
+                        symbol,
+                        sectionName,
+                        sectionRva,
+                        sectionOffset,
+                        resolutionSource));
                 }
             }
 
@@ -7800,6 +8217,59 @@ namespace PECoff
                 }
             }
 
+            if (guardFlagsInfo.CfFunctionTablePresent && (guardCfTable == 0 || guardCfCount == 0))
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Guard CF table present flag is set but table pointer/count is missing.");
+            }
+
+            if (guardFlagsInfo.EhContinuationTablePresent && (guardEhContinuationTable == 0 || guardEhContinuationCount == 0))
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Guard EH continuation table present flag is set but table pointer/count is missing.");
+            }
+
+            if (guardFlagsInfo.XfgTablePresent && guardXfgTableDispatchFunctionPointer == 0)
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Guard XFG table present flag is set but table dispatch pointer is missing.");
+            }
+
+            if (guardFlagsInfo.XfgEnabled && (guardXfgCheckFunctionPointer == 0 || guardXfgDispatchFunctionPointer == 0))
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Guard XFG enabled flag is set but check/dispatch pointers are missing.");
+            }
+
+            if ((guardFlagsInfo.CfInstrumented || guardFlagsInfo.CfwInstrumented) && guardCfCheck == 0 && guardCfDispatch == 0)
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Guard CF instrumentation is enabled but CF check/dispatch pointers are missing.");
+            }
+
+            List<GuardFeatureInfo> guardFeatures = new List<GuardFeatureInfo>
+            {
+                new GuardFeatureInfo(
+                    "ControlFlowGuard",
+                    guardFlagsInfo.CfInstrumented || guardFlagsInfo.CfwInstrumented,
+                    guardFlagsInfo.CfFunctionTablePresent && guardCfTable != 0 && guardCfCount > 0,
+                    guardCfCheck != 0 || guardCfDispatch != 0,
+                    guardFlagsInfo.CfFunctionTablePresent ? "CF table present" : string.Empty),
+                new GuardFeatureInfo(
+                    "EHContinuation",
+                    guardFlagsInfo.EhContinuationTablePresent,
+                    guardEhContinuationTable != 0 && guardEhContinuationCount > 0,
+                    guardEhContinuationTable != 0,
+                    guardFlagsInfo.EhContinuationTablePresent ? "EH continuation table present" : string.Empty),
+                new GuardFeatureInfo(
+                    "XFG",
+                    guardFlagsInfo.XfgEnabled || guardFlagsInfo.XfgTablePresent,
+                    guardXfgTableDispatchFunctionPointer != 0,
+                    guardXfgCheckFunctionPointer != 0 || guardXfgDispatchFunctionPointer != 0,
+                    guardFlagsInfo.XfgTablePresent ? "XFG table present" : string.Empty),
+                new GuardFeatureInfo(
+                    "CHPE",
+                    chpeMetadataPointer != 0,
+                    chpeMetadataPointer != 0,
+                    chpeMetadataPointer != 0,
+                    chpeMetadataPointer != 0 ? "CHPE metadata present" : string.Empty)
+            };
+
             _loadConfig = new LoadConfigInfo(
                 size,
                 timeDateStamp,
@@ -7825,7 +8295,8 @@ namespace PECoff
                 guardEhContinuationCount,
                 guardXfgCheckFunctionPointer,
                 guardXfgDispatchFunctionPointer,
-                guardXfgTableDispatchFunctionPointer);
+                guardXfgTableDispatchFunctionPointer,
+                guardFeatures.ToArray());
         }
 
         private static ulong ReadPointer(ReadOnlySpan<byte> span, ref int offset, bool isPe32Plus)
@@ -8004,6 +8475,25 @@ namespace PECoff
                 streamInfos.Add(new ClrStreamInfo(name, offset, size));
             }
 
+            List<string> validationMessages = new List<string>();
+            HashSet<string> streamNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            bool isValid = true;
+            foreach (ClrStreamInfo stream in streamInfos)
+            {
+                if (!streamNames.Add(stream.Name ?? string.Empty))
+                {
+                    validationMessages.Add($"Duplicate metadata stream name: {stream.Name}");
+                    isValid = false;
+                }
+
+                ulong end = (ulong)stream.Offset + (ulong)stream.Size;
+                if (end > (ulong)length)
+                {
+                    validationMessages.Add($"Metadata stream {stream.Name} exceeds metadata bounds.");
+                    isValid = false;
+                }
+            }
+
             string assemblyName = string.Empty;
             string assemblyVersion = string.Empty;
             string mvid = string.Empty;
@@ -8075,7 +8565,9 @@ namespace PECoff
                 propertyDefCount,
                 eventDefCount,
                 hasDebuggable,
-                debuggableModes);
+                debuggableModes,
+                isValid,
+                validationMessages.ToArray());
 
             return true;
         }
@@ -8179,6 +8671,15 @@ namespace PECoff
 
             ReadExactly(PEFileStream, buffer, 0, buffer.Length);
             IMAGE_COR20_HEADER clrHeader = ByteArrayToStructure<IMAGE_COR20_HEADER>(buffer);
+            uint expectedClrSize = (uint)Marshal.SizeOf(typeof(IMAGE_COR20_HEADER));
+            if (clrHeader.cb < expectedClrSize)
+            {
+                Warn(ParseIssueCategory.CLR, "CLR header size is smaller than expected.");
+            }
+            else if (directory.Size > 0 && clrHeader.cb > directory.Size)
+            {
+                Warn(ParseIssueCategory.CLR, "CLR header size exceeds directory size.");
+            }
             if (clrHeader.MetaData.Size == 0)
             {
                 Warn(ParseIssueCategory.CLR, "CLR header does not reference metadata.");
@@ -8204,6 +8705,10 @@ namespace PECoff
                 {
                     Warn(ParseIssueCategory.CLR, "Strong name signature could not be read.");
                 }
+            }
+            else if (clrHeader.StrongNameSignature.Size > 0)
+            {
+                Warn(ParseIssueCategory.CLR, "Strong name signature size is set but RVA is zero.");
             }
 
             if (clrHeader.ManagedNativeHeader.Size > 0 &&
@@ -8245,6 +8750,14 @@ namespace PECoff
                 }
 
                 _clrMetadata = metadataInfo;
+                if (metadataInfo.ValidationMessages != null && metadataInfo.ValidationMessages.Length > 0)
+                {
+                    int count = Math.Min(metadataInfo.ValidationMessages.Length, 5);
+                    for (int i = 0; i < count; i++)
+                    {
+                        Warn(ParseIssueCategory.Metadata, metadataInfo.ValidationMessages[i]);
+                    }
+                }
                 TryPopulateManagedResourceSizes(clrHeader, sections);
             }
             finally
@@ -8816,7 +9329,9 @@ namespace PECoff
                 info.PropertyDefinitionCount,
                 info.EventDefinitionCount,
                 info.HasDebuggableAttribute,
-                info.DebuggableModes);
+                info.DebuggableModes,
+                info.IsValid,
+                info.ValidationMessages);
         }
 
         private static bool IsTargetFrameworkAttribute(MetadataReader reader, CustomAttribute attribute)
@@ -9129,6 +9644,70 @@ namespace PECoff
                     }
                 }
             }
+
+            ComputeExportAnomalies();
+        }
+
+        private void ComputeExportAnomalies()
+        {
+            if (_exportEntries.Count == 0 && _exportOrdinalOutOfRangeCount == 0)
+            {
+                _exportAnomalies = new ExportAnomalySummary(0, 0, 0);
+                return;
+            }
+
+            Dictionary<string, int> nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<uint, int> ordinalCounts = new Dictionary<uint, int>();
+            foreach (ExportEntry entry in _exportEntries)
+            {
+                if (!string.IsNullOrWhiteSpace(entry.Name))
+                {
+                    nameCounts[entry.Name] = nameCounts.TryGetValue(entry.Name, out int count) ? count + 1 : 1;
+                }
+
+                ordinalCounts[entry.Ordinal] = ordinalCounts.TryGetValue(entry.Ordinal, out int ordCount) ? ordCount + 1 : 1;
+            }
+
+            int duplicateNameCount = nameCounts.Count(pair => pair.Value > 1);
+            int duplicateOrdinalCount = ordinalCounts.Count(pair => pair.Value > 1);
+            if (duplicateNameCount > 0)
+            {
+                Warn(ParseIssueCategory.Exports, $"Duplicate export names detected: {duplicateNameCount}.");
+            }
+
+            if (duplicateOrdinalCount > 0)
+            {
+                Warn(ParseIssueCategory.Exports, $"Duplicate export ordinals detected: {duplicateOrdinalCount}.");
+            }
+
+            if (_exportOrdinalOutOfRangeCount > 0)
+            {
+                Warn(ParseIssueCategory.Exports, $"Export name ordinals outside export address table: {_exportOrdinalOutOfRangeCount}.");
+            }
+
+            _exportAnomalies = new ExportAnomalySummary(duplicateNameCount, duplicateOrdinalCount, _exportOrdinalOutOfRangeCount);
+        }
+
+        internal static ExportAnomalySummary ComputeExportAnomaliesForTest(IEnumerable<ExportEntry> entries, int ordinalOutOfRangeCount)
+        {
+            Dictionary<string, int> nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<uint, int> ordinalCounts = new Dictionary<uint, int>();
+            if (entries != null)
+            {
+                foreach (ExportEntry entry in entries)
+                {
+                    if (!string.IsNullOrWhiteSpace(entry.Name))
+                    {
+                        nameCounts[entry.Name] = nameCounts.TryGetValue(entry.Name, out int count) ? count + 1 : 1;
+                    }
+
+                    ordinalCounts[entry.Ordinal] = ordinalCounts.TryGetValue(entry.Ordinal, out int ordCount) ? ordCount + 1 : 1;
+                }
+            }
+
+            int duplicateNameCount = nameCounts.Count(pair => pair.Value > 1);
+            int duplicateOrdinalCount = ordinalCounts.Count(pair => pair.Value > 1);
+            return new ExportAnomalySummary(duplicateNameCount, duplicateOrdinalCount, ordinalOutOfRangeCount);
         }
 
         private void ValidateRelocationHints()
@@ -9509,6 +10088,7 @@ namespace PECoff
                 _resources.Clear();
                 _resourceStringTables.Clear();
                 _resourceManifests.Clear();
+                _resourceLocaleCoverage.Clear();
                 _resourceMessageTables.Clear();
                 _resourceDialogs.Clear();
                 _resourceAccelerators.Clear();
@@ -9519,6 +10099,7 @@ namespace PECoff
                 _sectionEntropies.Clear();
                 _sectionSlacks.Clear();
                 _sectionGaps.Clear();
+                _sectionPermissions.Clear();
                 _overlayInfo = new OverlayInfo(0, 0);
                 _securityFeaturesInfo = null;
                 imports.Clear();
@@ -9529,10 +10110,13 @@ namespace PECoff
                 _delayImportEntries.Clear();
                 _delayImportDescriptors.Clear();
                 _exportEntries.Clear();
+                _exportOrdinalOutOfRangeCount = 0;
+                _exportAnomalies = new ExportAnomalySummary(0, 0, 0);
                 _exportDllName = string.Empty;
                 _boundImports.Clear();
                 _debugDirectories.Clear();
                 _baseRelocations.Clear();
+                _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0);
                 _exceptionFunctions.Clear();
                 _unwindInfoDetails.Clear();
                 _exceptionSummary = null;
@@ -9705,6 +10289,7 @@ namespace PECoff
                     _sections = sections;
 
                     ValidateSections(header, peHeader, sections, dataDirectory);
+                    BuildSectionPermissionInfos(sections);
 
                     for (int i = 0; i < dataDirectory.Length; i++)
                     {
@@ -9800,7 +10385,16 @@ namespace PECoff
                                             exports.Add(exportName);
                                             if (j < nameOrdinals.Count)
                                             {
-                                                exportNamesByIndex[nameOrdinals[j]] = exportName;
+                                                ushort ordinalIndex = nameOrdinals[j];
+                                                if (ordinalIndex >= edt.AddressTableEntries)
+                                                {
+                                                    _exportOrdinalOutOfRangeCount++;
+                                                    exportNameFailure = true;
+                                                }
+                                                else
+                                                {
+                                                    exportNamesByIndex[ordinalIndex] = exportName;
+                                                }
                                             }
                                         }
                                         else

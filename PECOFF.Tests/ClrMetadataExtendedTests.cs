@@ -68,6 +68,20 @@ public class ClrMetadataExtendedTests
         }
     }
 
+    [Fact]
+    public void ClrMetadata_Validation_Is_Clean_For_Valid_Assembly()
+    {
+        string assemblyPath = typeof(PECOFF).Assembly.Location;
+        Assert.False(string.IsNullOrWhiteSpace(assemblyPath));
+
+        PECOFF parser = new PECOFF(assemblyPath);
+        Assert.True(parser.ParseResult.IsSuccess);
+        Assert.NotNull(parser.ClrMetadata);
+
+        Assert.True(parser.ClrMetadata.IsValid);
+        Assert.Empty(parser.ClrMetadata.ValidationMessages);
+    }
+
     private static int GetTableCount(ClrMetadataInfo metadata, TableIndex table)
     {
         MetadataTableCountInfo? entry = metadata.MetadataTableCounts.FirstOrDefault(info => info.TableIndex == (int)table);

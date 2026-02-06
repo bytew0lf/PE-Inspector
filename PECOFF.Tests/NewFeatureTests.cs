@@ -22,7 +22,16 @@ public class NewFeatureTests
             .ToList();
 
         Assert.NotEmpty(apiSets);
-        Assert.All(apiSets, descriptor => Assert.True(descriptor.ApiSetResolution.Targets.Count > 0));
+        Assert.All(apiSets, descriptor =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(descriptor.ApiSetResolution.ResolutionSource));
+            Assert.False(string.IsNullOrWhiteSpace(descriptor.ApiSetResolution.ResolutionConfidence));
+            if (descriptor.ApiSetResolution.IsResolved)
+            {
+                Assert.True(descriptor.ApiSetResolution.Targets.Count > 0);
+                Assert.True(descriptor.ApiSetResolution.CanonicalTargets.Count > 0);
+            }
+        });
     }
 
     [Fact]
@@ -73,6 +82,14 @@ public class NewFeatureTests
     {
         PackingHintInfo[] hints = PECOFF.DetectOverlayHintsForTest(new byte[] { 0x55, 0x50, 0x58, 0x21 });
         Assert.Contains(hints, hint => hint.Name.Contains("UPX", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Packing_Hints_Detect_NSIS()
+    {
+        byte[] data = System.Text.Encoding.ASCII.GetBytes("Nullsoft Install System");
+        PackingHintInfo[] hints = PECOFF.DetectOverlayHintsForTest(data);
+        Assert.Contains(hints, hint => hint.Name.Contains("NSIS", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

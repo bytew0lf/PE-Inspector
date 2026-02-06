@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 6,
+  "SchemaVersion": 7,
   "FilePath": "minimal-x86.exe",
   "ParseResult": {
     "Errors": [],
@@ -45,6 +45,27 @@
   ],
   "SectionSlacks": [],
   "SectionGaps": [],
+  "SectionPermissions": [
+    {
+      "Name": ".text",
+      "Characteristics": 1610612768,
+      "Flags": [
+        "CNT_CODE",
+        "MEM_READ",
+        "MEM_EXECUTE"
+      ],
+      "IsReadable": true,
+      "IsWritable": false,
+      "IsExecutable": true,
+      "IsCode": true,
+      "IsInitializedData": false,
+      "IsUninitializedData": false,
+      "IsDiscardable": false,
+      "IsShared": false,
+      "HasSuspiciousPermissions": false,
+      "HasMismatch": false
+    }
+  ],
   "OptionalHeaderChecksum": 0,
   "ComputedChecksum": 33491,
   "IsChecksumValid": false,
@@ -84,6 +105,7 @@
   "ResourceMenus": [],
   "ResourceToolbars": [],
   "ResourceManifests": [],
+  "ResourceLocaleCoverage": [],
   "ResourceBitmaps": [],
   "ResourceCursorGroups": [],
   "IconGroups": [],
@@ -97,10 +119,21 @@
   "DelayImportDescriptors": [],
   "Exports": [],
   "ExportEntries": [],
+  "ExportAnomalies": {
+    "DuplicateNameCount": 0,
+    "DuplicateOrdinalCount": 0,
+    "OrdinalOutOfRangeCount": 0
+  },
   "BoundImports": [],
   "DebugDirectories": [],
   "BaseRelocations": [],
   "BaseRelocationSections": [],
+  "RelocationAnomalies": {
+    "ZeroSizedBlockCount": 0,
+    "EmptyBlockCount": 0,
+    "InvalidBlockCount": 0,
+    "OrphanedBlockCount": 0
+  },
   "ApiSetSchema": {
     "Loaded": false,
     "Version": 0,

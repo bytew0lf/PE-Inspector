@@ -316,6 +316,27 @@ namespace PE_FileInspector
             }
             sb.AppendLine();
 
+            sb.AppendLine("Section Permissions:");
+            if (pe.SectionPermissions.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (SectionPermissionInfo info in pe.SectionPermissions.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    string flags = info.Flags.Count > 0 ? string.Join(",", info.Flags) : "(none)";
+                    sb.AppendLine("  - " + Safe(info.Name) +
+                                  " | Flags: " + flags +
+                                  " | R:" + info.IsReadable +
+                                  " W:" + info.IsWritable +
+                                  " X:" + info.IsExecutable +
+                                  " | Suspicious: " + info.HasSuspiciousPermissions +
+                                  " | Mismatch: " + info.HasMismatch);
+                }
+            }
+            sb.AppendLine();
+
             sb.AppendLine("Section Padding:");
             if (pe.SectionSlacks.Length == 0 && pe.SectionGaps.Length == 0)
             {
@@ -452,6 +473,15 @@ namespace PE_FileInspector
                 sb.AppendLine("  32-bit Required: " + pe.ClrMetadata.Requires32Bit);
                 sb.AppendLine("  32-bit Preferred: " + pe.ClrMetadata.Prefers32Bit);
                 sb.AppendLine("  StrongName Signed: " + pe.ClrMetadata.StrongNameSigned);
+                sb.AppendLine("  Metadata Valid: " + pe.ClrMetadata.IsValid);
+                if (pe.ClrMetadata.ValidationMessages != null && pe.ClrMetadata.ValidationMessages.Length > 0)
+                {
+                    sb.AppendLine("  Metadata Validation Messages:");
+                    foreach (string message in pe.ClrMetadata.ValidationMessages)
+                    {
+                        sb.AppendLine("    - " + message);
+                    }
+                }
                 sb.AppendLine("  Assembly Name: " + Safe(pe.ClrMetadata.AssemblyName));
                 sb.AppendLine("  Assembly Version: " + Safe(pe.ClrMetadata.AssemblyVersion));
                 sb.AppendLine("  MVID: " + Safe(pe.ClrMetadata.Mvid));
@@ -707,8 +737,14 @@ namespace PE_FileInspector
                         string targets = descriptor.ApiSetResolution.Targets.Count > 0
                             ? string.Join(", ", descriptor.ApiSetResolution.Targets)
                             : "(unresolved)";
-                        string source = descriptor.ApiSetResolution.UsedFallback ? " (heuristic)" : string.Empty;
-                        sb.AppendLine("    ApiSet: " + Safe(descriptor.ApiSetResolution.ApiSetName) + " -> " + targets + source);
+                        string canonical = descriptor.ApiSetResolution.CanonicalTargets.Count > 0
+                            ? string.Join(", ", descriptor.ApiSetResolution.CanonicalTargets)
+                            : "(none)";
+                        sb.AppendLine("    ApiSet: " + Safe(descriptor.ApiSetResolution.ApiSetName) +
+                                      " -> " + targets +
+                                      " | Canonical: " + canonical +
+                                      " | Source: " + Safe(descriptor.ApiSetResolution.ResolutionSource) +
+                                      " | Confidence: " + Safe(descriptor.ApiSetResolution.ResolutionConfidence));
                     }
                     if (descriptor.IntOnlyFunctions.Count > 0)
                     {
@@ -781,8 +817,14 @@ namespace PE_FileInspector
                         string targets = descriptor.ApiSetResolution.Targets.Count > 0
                             ? string.Join(", ", descriptor.ApiSetResolution.Targets)
                             : "(unresolved)";
-                        string source = descriptor.ApiSetResolution.UsedFallback ? " (heuristic)" : string.Empty;
-                        sb.AppendLine("    ApiSet: " + Safe(descriptor.ApiSetResolution.ApiSetName) + " -> " + targets + source);
+                        string canonical = descriptor.ApiSetResolution.CanonicalTargets.Count > 0
+                            ? string.Join(", ", descriptor.ApiSetResolution.CanonicalTargets)
+                            : "(none)";
+                        sb.AppendLine("    ApiSet: " + Safe(descriptor.ApiSetResolution.ApiSetName) +
+                                      " -> " + targets +
+                                      " | Canonical: " + canonical +
+                                      " | Source: " + Safe(descriptor.ApiSetResolution.ResolutionSource) +
+                                      " | Confidence: " + Safe(descriptor.ApiSetResolution.ResolutionConfidence));
                     }
                     sb.AppendLine("    ModuleHandle RVA: 0x" + descriptor.ModuleHandleRva.ToString("X8", CultureInfo.InvariantCulture));
                     sb.AppendLine("    IAT RVA: 0x" + descriptor.ImportAddressTableRva.ToString("X8", CultureInfo.InvariantCulture));
@@ -834,6 +876,15 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+
+            if (pe.ExportAnomalies != null)
+            {
+                sb.AppendLine("Export Anomalies:");
+                sb.AppendLine("  Duplicate Names: " + pe.ExportAnomalies.DuplicateNameCount.ToString(CultureInfo.InvariantCulture) +
+                              " | Duplicate Ordinals: " + pe.ExportAnomalies.DuplicateOrdinalCount.ToString(CultureInfo.InvariantCulture) +
+                              " | Ordinal OutOfRange: " + pe.ExportAnomalies.OrdinalOutOfRangeCount.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine();
+            }
 
             sb.AppendLine("Export Details:");
             if (pe.ExportEntries.Length == 0)
@@ -1046,6 +1097,14 @@ namespace PE_FileInspector
                         }
                     }
                 }
+
+                if (pe.RelocationAnomalies != null)
+                {
+                    sb.AppendLine("  Anomalies: ZeroSized=" + pe.RelocationAnomalies.ZeroSizedBlockCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Empty=" + pe.RelocationAnomalies.EmptyBlockCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Invalid=" + pe.RelocationAnomalies.InvalidBlockCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Orphaned=" + pe.RelocationAnomalies.OrphanedBlockCount.ToString(CultureInfo.InvariantCulture));
+                }
             }
             sb.AppendLine();
 
@@ -1076,6 +1135,20 @@ namespace PE_FileInspector
                         if (!string.IsNullOrWhiteSpace(callback.SymbolName))
                         {
                             line += " " + callback.SymbolName;
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(callback.SectionName))
+                        {
+                            line += " | Section: " + callback.SectionName;
+                            if (callback.SectionOffset != 0)
+                            {
+                                line += "+0x" + callback.SectionOffset.ToString("X", CultureInfo.InvariantCulture);
+                            }
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(callback.ResolutionSource))
+                        {
+                            line += " | Resolved: " + callback.ResolutionSource;
                         }
 
                         sb.AppendLine(line);
@@ -1149,6 +1222,19 @@ namespace PE_FileInspector
                     sb.AppendLine("  GuardXFG Dispatch Function: 0x" + pe.LoadConfig.GuardXfgDispatchFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
                     sb.AppendLine("  GuardXFG Table Dispatch: 0x" + pe.LoadConfig.GuardXfgTableDispatchFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
                 }
+
+                if (pe.LoadConfig.GuardFeatureMatrix != null && pe.LoadConfig.GuardFeatureMatrix.Count > 0)
+                {
+                    sb.AppendLine("  Guard Feature Matrix:");
+                    foreach (GuardFeatureInfo feature in pe.LoadConfig.GuardFeatureMatrix)
+                    {
+                        sb.AppendLine("    - " + Safe(feature.Feature) +
+                                      " | Enabled: " + feature.Enabled +
+                                      " | Table: " + feature.HasTable +
+                                      " | Pointer: " + feature.HasPointer +
+                                      (string.IsNullOrWhiteSpace(feature.Notes) ? string.Empty : " | " + Safe(feature.Notes)));
+                    }
+                }
             }
             sb.AppendLine();
 
@@ -1163,7 +1249,9 @@ namespace PE_FileInspector
                 foreach (RichHeaderEntry entry in pe.RichHeader.Entries)
                 {
                     sb.AppendLine("  - Product: " + entry.ProductId.ToString(CultureInfo.InvariantCulture) +
+                                  " (" + Safe(entry.ProductName) + ")" +
                                   " | Build: " + entry.BuildNumber.ToString(CultureInfo.InvariantCulture) +
+                                  " | Toolchain: " + Safe(entry.ToolchainVersion) +
                                   " | Count: " + entry.Count.ToString(CultureInfo.InvariantCulture));
                 }
             }
@@ -1591,6 +1679,27 @@ namespace PE_FileInspector
                             sb.AppendLine("    " + line);
                         }
                     }
+                }
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("Resource Locale Coverage:");
+            if (pe.ResourceLocaleCoverage.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceLocaleCoverageInfo coverage in pe.ResourceLocaleCoverage.OrderBy(c => c.ResourceKind, StringComparer.OrdinalIgnoreCase))
+                {
+                    string langs = coverage.LanguageIds.Count > 0
+                        ? string.Join(", ", coverage.LanguageIds.Select(id => "0x" + id.ToString("X4", CultureInfo.InvariantCulture)))
+                        : "(none)";
+                    sb.AppendLine("  - " + Safe(coverage.ResourceKind) +
+                                  " | Langs: " + langs +
+                                  " | Neutral: " + coverage.HasNeutralLanguage +
+                                  " | Localized: " + coverage.HasLocalizedLanguage +
+                                  " | MissingNeutral: " + coverage.MissingNeutralFallback);
                 }
             }
 

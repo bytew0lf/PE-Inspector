@@ -285,13 +285,23 @@ namespace PECoff
         public ushort BuildNumber { get; }
         public uint Count { get; }
         public uint RawCompId { get; }
+        public string ProductName { get; }
+        public string ToolchainVersion { get; }
 
-        public RichHeaderEntry(ushort productId, ushort buildNumber, uint count, uint rawCompId)
+        public RichHeaderEntry(
+            ushort productId,
+            ushort buildNumber,
+            uint count,
+            uint rawCompId,
+            string productName,
+            string toolchainVersion)
         {
             ProductId = productId;
             BuildNumber = buildNumber;
             Count = count;
             RawCompId = rawCompId;
+            ProductName = productName ?? string.Empty;
+            ToolchainVersion = toolchainVersion ?? string.Empty;
         }
     }
 
@@ -414,6 +424,22 @@ namespace PECoff
             UnwindInfoCount = unwindInfoCount;
             UnwindInfoParseFailures = unwindInfoParseFailures;
             UnwindInfoVersions = Array.AsReadOnly(unwindInfoVersions ?? Array.Empty<UnwindInfoVersionCount>());
+        }
+    }
+
+    public sealed class RelocationAnomalySummary
+    {
+        public int ZeroSizedBlockCount { get; }
+        public int EmptyBlockCount { get; }
+        public int InvalidBlockCount { get; }
+        public int OrphanedBlockCount { get; }
+
+        public RelocationAnomalySummary(int zeroSizedBlockCount, int emptyBlockCount, int invalidBlockCount, int orphanedBlockCount)
+        {
+            ZeroSizedBlockCount = zeroSizedBlockCount;
+            EmptyBlockCount = emptyBlockCount;
+            InvalidBlockCount = invalidBlockCount;
+            OrphanedBlockCount = orphanedBlockCount;
         }
     }
 
@@ -555,12 +581,27 @@ namespace PECoff
         public ulong Address { get; }
         public uint Rva { get; }
         public string SymbolName { get; }
+        public string SectionName { get; }
+        public uint SectionRva { get; }
+        public uint SectionOffset { get; }
+        public string ResolutionSource { get; }
 
-        public TlsCallbackInfo(ulong address, uint rva, string symbolName)
+        public TlsCallbackInfo(
+            ulong address,
+            uint rva,
+            string symbolName,
+            string sectionName,
+            uint sectionRva,
+            uint sectionOffset,
+            string resolutionSource)
         {
             Address = address;
             Rva = rva;
             SymbolName = symbolName ?? string.Empty;
+            SectionName = sectionName ?? string.Empty;
+            SectionRva = sectionRva;
+            SectionOffset = sectionOffset;
+            ResolutionSource = resolutionSource ?? string.Empty;
         }
     }
 
@@ -638,6 +679,24 @@ namespace PECoff
         }
     }
 
+    public sealed class GuardFeatureInfo
+    {
+        public string Feature { get; }
+        public bool Enabled { get; }
+        public bool HasTable { get; }
+        public bool HasPointer { get; }
+        public string Notes { get; }
+
+        public GuardFeatureInfo(string feature, bool enabled, bool hasTable, bool hasPointer, string notes)
+        {
+            Feature = feature ?? string.Empty;
+            Enabled = enabled;
+            HasTable = hasTable;
+            HasPointer = hasPointer;
+            Notes = notes ?? string.Empty;
+        }
+    }
+
     public sealed class LoadConfigInfo
     {
         public uint Size { get; }
@@ -665,6 +724,7 @@ namespace PECoff
         public ulong GuardXfgCheckFunctionPointer { get; }
         public ulong GuardXfgDispatchFunctionPointer { get; }
         public ulong GuardXfgTableDispatchFunctionPointer { get; }
+        public IReadOnlyList<GuardFeatureInfo> GuardFeatureMatrix { get; }
 
         public LoadConfigInfo(
             uint size,
@@ -691,7 +751,8 @@ namespace PECoff
             ulong guardEhContinuationCount,
             ulong guardXfgCheckFunctionPointer,
             ulong guardXfgDispatchFunctionPointer,
-            ulong guardXfgTableDispatchFunctionPointer)
+            ulong guardXfgTableDispatchFunctionPointer,
+            GuardFeatureInfo[] guardFeatureMatrix)
         {
             Size = size;
             TimeDateStamp = timeDateStamp;
@@ -718,6 +779,7 @@ namespace PECoff
             GuardXfgCheckFunctionPointer = guardXfgCheckFunctionPointer;
             GuardXfgDispatchFunctionPointer = guardXfgDispatchFunctionPointer;
             GuardXfgTableDispatchFunctionPointer = guardXfgTableDispatchFunctionPointer;
+            GuardFeatureMatrix = Array.AsReadOnly(guardFeatureMatrix ?? Array.Empty<GuardFeatureInfo>());
         }
     }
 
@@ -1127,21 +1189,82 @@ namespace PECoff
         }
     }
 
+    public sealed class SectionPermissionInfo
+    {
+        public string Name { get; }
+        public uint Characteristics { get; }
+        public IReadOnlyList<string> Flags { get; }
+        public bool IsReadable { get; }
+        public bool IsWritable { get; }
+        public bool IsExecutable { get; }
+        public bool IsCode { get; }
+        public bool IsInitializedData { get; }
+        public bool IsUninitializedData { get; }
+        public bool IsDiscardable { get; }
+        public bool IsShared { get; }
+        public bool HasSuspiciousPermissions { get; }
+        public bool HasMismatch { get; }
+
+        public SectionPermissionInfo(
+            string name,
+            uint characteristics,
+            string[] flags,
+            bool isReadable,
+            bool isWritable,
+            bool isExecutable,
+            bool isCode,
+            bool isInitializedData,
+            bool isUninitializedData,
+            bool isDiscardable,
+            bool isShared,
+            bool hasSuspiciousPermissions,
+            bool hasMismatch)
+        {
+            Name = name ?? string.Empty;
+            Characteristics = characteristics;
+            Flags = Array.AsReadOnly(flags ?? Array.Empty<string>());
+            IsReadable = isReadable;
+            IsWritable = isWritable;
+            IsExecutable = isExecutable;
+            IsCode = isCode;
+            IsInitializedData = isInitializedData;
+            IsUninitializedData = isUninitializedData;
+            IsDiscardable = isDiscardable;
+            IsShared = isShared;
+            HasSuspiciousPermissions = hasSuspiciousPermissions;
+            HasMismatch = hasMismatch;
+        }
+    }
+
     public sealed class ApiSetResolutionInfo
     {
         public bool IsApiSet { get; }
         public bool IsResolved { get; }
         public bool UsedFallback { get; }
         public string ApiSetName { get; }
+        public string ResolutionSource { get; }
+        public string ResolutionConfidence { get; }
         public IReadOnlyList<string> Targets { get; }
+        public IReadOnlyList<string> CanonicalTargets { get; }
 
-        public ApiSetResolutionInfo(bool isApiSet, bool isResolved, bool usedFallback, string apiSetName, string[] targets)
+        public ApiSetResolutionInfo(
+            bool isApiSet,
+            bool isResolved,
+            bool usedFallback,
+            string apiSetName,
+            string resolutionSource,
+            string resolutionConfidence,
+            string[] targets,
+            string[] canonicalTargets)
         {
             IsApiSet = isApiSet;
             IsResolved = isResolved;
             UsedFallback = usedFallback;
             ApiSetName = apiSetName ?? string.Empty;
+            ResolutionSource = resolutionSource ?? string.Empty;
+            ResolutionConfidence = resolutionConfidence ?? string.Empty;
             Targets = Array.AsReadOnly(targets ?? Array.Empty<string>());
+            CanonicalTargets = Array.AsReadOnly(canonicalTargets ?? Array.Empty<string>());
         }
     }
 
@@ -1201,7 +1324,30 @@ namespace PECoff
             IatCount = iatCount;
             IntOnlyFunctions = Array.AsReadOnly(intOnlyFunctions ?? Array.Empty<string>());
             IatOnlyFunctions = Array.AsReadOnly(iatOnlyFunctions ?? Array.Empty<string>());
-            ApiSetResolution = apiSetResolution ?? new ApiSetResolutionInfo(false, false, false, string.Empty, Array.Empty<string>());
+            ApiSetResolution = apiSetResolution
+                ?? new ApiSetResolutionInfo(
+                    false,
+                    false,
+                    false,
+                    string.Empty,
+                    string.Empty,
+                    string.Empty,
+                    Array.Empty<string>(),
+                    Array.Empty<string>());
+        }
+    }
+
+    public sealed class ExportAnomalySummary
+    {
+        public int DuplicateNameCount { get; }
+        public int DuplicateOrdinalCount { get; }
+        public int OrdinalOutOfRangeCount { get; }
+
+        public ExportAnomalySummary(int duplicateNameCount, int duplicateOrdinalCount, int ordinalOutOfRangeCount)
+        {
+            DuplicateNameCount = duplicateNameCount;
+            DuplicateOrdinalCount = duplicateOrdinalCount;
+            OrdinalOutOfRangeCount = ordinalOutOfRangeCount;
         }
     }
 
@@ -1485,7 +1631,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 6;
+        public const int CurrentSchemaVersion = 7;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -1518,6 +1664,7 @@ namespace PECoff
         public IReadOnlyList<SectionEntropyInfo> SectionEntropies { get; }
         public IReadOnlyList<SectionSlackInfo> SectionSlacks { get; }
         public IReadOnlyList<SectionGapInfo> SectionGaps { get; }
+        public IReadOnlyList<SectionPermissionInfo> SectionPermissions { get; }
         public uint OptionalHeaderChecksum { get; }
         public uint ComputedChecksum { get; }
         public bool IsChecksumValid { get; }
@@ -1538,6 +1685,7 @@ namespace PECoff
         public IReadOnlyList<ResourceMenuInfo> ResourceMenus { get; }
         public IReadOnlyList<ResourceToolbarInfo> ResourceToolbars { get; }
         public IReadOnlyList<ResourceManifestInfo> ResourceManifests { get; }
+        public IReadOnlyList<ResourceLocaleCoverageInfo> ResourceLocaleCoverage { get; }
         public IReadOnlyList<ResourceBitmapInfo> ResourceBitmaps { get; }
         public IReadOnlyList<ResourceCursorGroupInfo> ResourceCursorGroups { get; }
         public IReadOnlyList<IconGroupInfo> IconGroups { get; }
@@ -1551,10 +1699,12 @@ namespace PECoff
         public IReadOnlyList<DelayImportDescriptorInfo> DelayImportDescriptors { get; }
         public IReadOnlyList<string> Exports { get; }
         public IReadOnlyList<ExportEntry> ExportEntries { get; }
+        public ExportAnomalySummary ExportAnomalies { get; }
         public IReadOnlyList<BoundImportEntry> BoundImports { get; }
         public IReadOnlyList<DebugDirectoryEntry> DebugDirectories { get; }
         public IReadOnlyList<BaseRelocationBlockInfo> BaseRelocations { get; }
         public IReadOnlyList<BaseRelocationSectionSummary> BaseRelocationSections { get; }
+        public RelocationAnomalySummary RelocationAnomalies { get; }
         public ApiSetSchemaInfo ApiSetSchema { get; }
         public IReadOnlyList<ExceptionFunctionInfo> ExceptionFunctions { get; }
         public ExceptionDirectorySummary ExceptionSummary { get; }
@@ -1596,6 +1746,7 @@ namespace PECoff
             SectionEntropyInfo[] sectionEntropies,
             SectionSlackInfo[] sectionSlacks,
             SectionGapInfo[] sectionGaps,
+            SectionPermissionInfo[] sectionPermissions,
             uint optionalHeaderChecksum,
             uint computedChecksum,
             bool isChecksumValid,
@@ -1616,6 +1767,7 @@ namespace PECoff
             ResourceMenuInfo[] resourceMenus,
             ResourceToolbarInfo[] resourceToolbars,
             ResourceManifestInfo[] resourceManifests,
+            ResourceLocaleCoverageInfo[] resourceLocaleCoverage,
             ResourceBitmapInfo[] resourceBitmaps,
             ResourceCursorGroupInfo[] resourceCursorGroups,
             IconGroupInfo[] iconGroups,
@@ -1629,10 +1781,12 @@ namespace PECoff
             DelayImportDescriptorInfo[] delayImportDescriptors,
             string[] exports,
             ExportEntry[] exportEntries,
+            ExportAnomalySummary exportAnomalies,
             BoundImportEntry[] boundImports,
             DebugDirectoryEntry[] debugDirectories,
             BaseRelocationBlockInfo[] baseRelocations,
             BaseRelocationSectionSummary[] baseRelocationSections,
+            RelocationAnomalySummary relocationAnomalies,
             ApiSetSchemaInfo apiSetSchema,
             ExceptionFunctionInfo[] exceptionFunctions,
             ExceptionDirectorySummary exceptionSummary,
@@ -1674,6 +1828,7 @@ namespace PECoff
             SectionEntropies = Array.AsReadOnly(sectionEntropies ?? Array.Empty<SectionEntropyInfo>());
             SectionSlacks = Array.AsReadOnly(sectionSlacks ?? Array.Empty<SectionSlackInfo>());
             SectionGaps = Array.AsReadOnly(sectionGaps ?? Array.Empty<SectionGapInfo>());
+            SectionPermissions = Array.AsReadOnly(sectionPermissions ?? Array.Empty<SectionPermissionInfo>());
             OptionalHeaderChecksum = optionalHeaderChecksum;
             ComputedChecksum = computedChecksum;
             IsChecksumValid = isChecksumValid;
@@ -1694,6 +1849,7 @@ namespace PECoff
             ResourceMenus = Array.AsReadOnly(resourceMenus ?? Array.Empty<ResourceMenuInfo>());
             ResourceToolbars = Array.AsReadOnly(resourceToolbars ?? Array.Empty<ResourceToolbarInfo>());
             ResourceManifests = Array.AsReadOnly(resourceManifests ?? Array.Empty<ResourceManifestInfo>());
+            ResourceLocaleCoverage = Array.AsReadOnly(resourceLocaleCoverage ?? Array.Empty<ResourceLocaleCoverageInfo>());
             ResourceBitmaps = Array.AsReadOnly(resourceBitmaps ?? Array.Empty<ResourceBitmapInfo>());
             ResourceCursorGroups = Array.AsReadOnly(resourceCursorGroups ?? Array.Empty<ResourceCursorGroupInfo>());
             IconGroups = Array.AsReadOnly(iconGroups ?? Array.Empty<IconGroupInfo>());
@@ -1707,10 +1863,12 @@ namespace PECoff
             DelayImportDescriptors = Array.AsReadOnly(delayImportDescriptors ?? Array.Empty<DelayImportDescriptorInfo>());
             Exports = Array.AsReadOnly(exports ?? Array.Empty<string>());
             ExportEntries = Array.AsReadOnly(exportEntries ?? Array.Empty<ExportEntry>());
+            ExportAnomalies = exportAnomalies ?? new ExportAnomalySummary(0, 0, 0);
             BoundImports = Array.AsReadOnly(boundImports ?? Array.Empty<BoundImportEntry>());
             DebugDirectories = Array.AsReadOnly(debugDirectories ?? Array.Empty<DebugDirectoryEntry>());
             BaseRelocations = Array.AsReadOnly(baseRelocations ?? Array.Empty<BaseRelocationBlockInfo>());
             BaseRelocationSections = Array.AsReadOnly(baseRelocationSections ?? Array.Empty<BaseRelocationSectionSummary>());
+            RelocationAnomalies = relocationAnomalies ?? new RelocationAnomalySummary(0, 0, 0, 0);
             ApiSetSchema = apiSetSchema ?? new ApiSetSchemaInfo(false, 0, string.Empty, string.Empty);
             ExceptionFunctions = Array.AsReadOnly(exceptionFunctions ?? Array.Empty<ExceptionFunctionInfo>());
             ExceptionSummary = exceptionSummary;
@@ -1778,6 +1936,12 @@ namespace PECoff
             SectionGapInfo[] gaps = stableOrdering
                 ? SectionGaps.OrderBy(info => info.PreviousSection, StringComparer.OrdinalIgnoreCase).ToArray()
                 : SectionGaps.ToArray();
+            SectionPermissionInfo[] permissions = stableOrdering
+                ? SectionPermissions.OrderBy(info => info.Name, StringComparer.OrdinalIgnoreCase).ToArray()
+                : SectionPermissions.ToArray();
+            ResourceLocaleCoverageInfo[] resourceCoverage = stableOrdering
+                ? ResourceLocaleCoverage.OrderBy(info => info.ResourceKind, StringComparer.OrdinalIgnoreCase).ToArray()
+                : ResourceLocaleCoverage.ToArray();
 
             var report = new
             {
@@ -1812,6 +1976,7 @@ namespace PECoff
                 SectionEntropies = entropies,
                 SectionSlacks = slacks,
                 SectionGaps = gaps,
+                SectionPermissions = permissions,
                 OptionalHeaderChecksum,
                 ComputedChecksum,
                 IsChecksumValid,
@@ -1830,6 +1995,7 @@ namespace PECoff
                 ResourceMenus,
                 ResourceToolbars,
                 ResourceManifests,
+                ResourceLocaleCoverage = resourceCoverage,
                 ResourceBitmaps,
                 ResourceCursorGroups,
                 IconGroups = iconGroups,
@@ -1843,10 +2009,12 @@ namespace PECoff
                 DelayImportDescriptors,
                 Exports = exports,
                 ExportEntries,
+                ExportAnomalies,
                 BoundImports,
                 DebugDirectories,
                 BaseRelocations,
                 BaseRelocationSections,
+                RelocationAnomalies,
                 ApiSetSchema,
                 ExceptionFunctions,
                 ExceptionSummary,
@@ -1911,6 +2079,29 @@ namespace PECoff
             BlockId = blockId;
             LanguageId = languageId;
             Strings = strings ?? Array.Empty<string>();
+        }
+    }
+
+    public sealed class ResourceLocaleCoverageInfo
+    {
+        public string ResourceKind { get; }
+        public IReadOnlyList<ushort> LanguageIds { get; }
+        public bool HasNeutralLanguage { get; }
+        public bool HasLocalizedLanguage { get; }
+        public bool MissingNeutralFallback { get; }
+
+        public ResourceLocaleCoverageInfo(
+            string resourceKind,
+            ushort[] languageIds,
+            bool hasNeutralLanguage,
+            bool hasLocalizedLanguage,
+            bool missingNeutralFallback)
+        {
+            ResourceKind = resourceKind ?? string.Empty;
+            LanguageIds = Array.AsReadOnly(languageIds ?? Array.Empty<ushort>());
+            HasNeutralLanguage = hasNeutralLanguage;
+            HasLocalizedLanguage = hasLocalizedLanguage;
+            MissingNeutralFallback = missingNeutralFallback;
         }
     }
 
