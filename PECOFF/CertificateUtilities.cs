@@ -70,6 +70,124 @@ namespace PECoff
 
     public static class CertificateUtilities
     {
+        public static AuthenticodeStatusInfo BuildAuthenticodeStatus(Pkcs7SignerInfo[] signers)
+        {
+            if (signers == null || signers.Length == 0)
+            {
+                return new AuthenticodeStatusInfo(0, 0, false, false, false, false, false, Array.Empty<string>(), Array.Empty<string>());
+            }
+
+            List<string> chainStatus = new List<string>();
+            List<string> timestampStatus = new List<string>();
+            int signerCount = 0;
+            int timestampCount = 0;
+            bool signatureValid = false;
+            bool chainValid = false;
+            bool timestampValid = false;
+
+            foreach (Pkcs7SignerInfo signer in FlattenSigners(signers))
+            {
+                if (signer == null)
+                {
+                    continue;
+                }
+
+                if (signer.IsTimestampSigner)
+                {
+                    timestampCount++;
+                    if (signer.SignatureValid && signer.ChainValid)
+                    {
+                        timestampValid = true;
+                    }
+
+                    if (signer.ChainStatus != null)
+                    {
+                        foreach (string status in signer.ChainStatus)
+                        {
+                            AddStatus(timestampStatus, status);
+                        }
+                    }
+                }
+                else
+                {
+                    signerCount++;
+                    if (signer.SignatureValid)
+                    {
+                        signatureValid = true;
+                    }
+
+                    if (signer.ChainValid)
+                    {
+                        chainValid = true;
+                    }
+
+                    if (signer.ChainStatus != null)
+                    {
+                        foreach (string status in signer.ChainStatus)
+                        {
+                            AddStatus(chainStatus, status);
+                        }
+                    }
+                }
+            }
+
+            bool hasSignature = signerCount > 0;
+            bool hasTimestamp = timestampCount > 0;
+            return new AuthenticodeStatusInfo(
+                signerCount,
+                timestampCount,
+                hasSignature,
+                signatureValid,
+                chainValid,
+                hasTimestamp,
+                timestampValid,
+                chainStatus.ToArray(),
+                timestampStatus.ToArray());
+        }
+
+        private static IEnumerable<Pkcs7SignerInfo> FlattenSigners(Pkcs7SignerInfo[] signers)
+        {
+            foreach (Pkcs7SignerInfo signer in signers)
+            {
+                if (signer == null)
+                {
+                    continue;
+                }
+
+                yield return signer;
+                if (signer.CounterSigners == null)
+                {
+                    continue;
+                }
+
+                foreach (Pkcs7SignerInfo counter in signer.CounterSigners)
+                {
+                    if (counter != null)
+                    {
+                        yield return counter;
+                    }
+                }
+            }
+        }
+
+        private static void AddStatus(List<string> statuses, string status)
+        {
+            if (string.IsNullOrWhiteSpace(status))
+            {
+                return;
+            }
+
+            foreach (string existing in statuses)
+            {
+                if (string.Equals(existing, status, StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+
+            statuses.Add(status);
+        }
+
         public static string GetCertificateExtension(CertificateTypeKind type)
         {
             switch (type)

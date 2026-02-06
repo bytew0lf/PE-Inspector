@@ -102,9 +102,10 @@ namespace PECoff
         public Pkcs7SignerInfo[] Pkcs7SignerInfos { get; }
         public string Pkcs7Error { get; }
         public AuthenticodeVerificationResult[] AuthenticodeResults { get; }
+        public AuthenticodeStatusInfo AuthenticodeStatus { get; }
 
         public CertificateEntry(CertificateTypeKind type, byte[] data)
-            : this(type, data, Array.Empty<Pkcs7SignerInfo>(), string.Empty, Array.Empty<AuthenticodeVerificationResult>())
+            : this(type, data, Array.Empty<Pkcs7SignerInfo>(), string.Empty, Array.Empty<AuthenticodeVerificationResult>(), null)
         {
         }
 
@@ -113,13 +114,15 @@ namespace PECoff
             byte[] data,
             Pkcs7SignerInfo[] pkcs7SignerInfos,
             string pkcs7Error,
-            AuthenticodeVerificationResult[] authenticodeResults)
+            AuthenticodeVerificationResult[] authenticodeResults,
+            AuthenticodeStatusInfo authenticodeStatus)
         {
             Type = type;
             Data = data ?? Array.Empty<byte>();
             Pkcs7SignerInfos = pkcs7SignerInfos ?? Array.Empty<Pkcs7SignerInfo>();
             Pkcs7Error = pkcs7Error ?? string.Empty;
             AuthenticodeResults = authenticodeResults ?? Array.Empty<AuthenticodeVerificationResult>();
+            AuthenticodeStatus = authenticodeStatus ?? CertificateUtilities.BuildAuthenticodeStatus(Pkcs7SignerInfos);
         }
     }
 
@@ -307,6 +310,8 @@ namespace PECoff
         public int FieldDefinitionCount { get; }
         public int PropertyDefinitionCount { get; }
         public int EventDefinitionCount { get; }
+        public bool HasDebuggableAttribute { get; }
+        public string DebuggableModes { get; }
 
         public ClrMetadataInfo(
             ushort majorRuntimeVersion,
@@ -331,7 +336,9 @@ namespace PECoff
             int methodDefinitionCount,
             int fieldDefinitionCount,
             int propertyDefinitionCount,
-            int eventDefinitionCount)
+            int eventDefinitionCount,
+            bool hasDebuggableAttribute,
+            string debuggableModes)
         {
             MajorRuntimeVersion = majorRuntimeVersion;
             MinorRuntimeVersion = minorRuntimeVersion;
@@ -356,6 +363,8 @@ namespace PECoff
             FieldDefinitionCount = fieldDefinitionCount;
             PropertyDefinitionCount = propertyDefinitionCount;
             EventDefinitionCount = eventDefinitionCount;
+            HasDebuggableAttribute = hasDebuggableAttribute;
+            DebuggableModes = debuggableModes ?? string.Empty;
         }
     }
 
@@ -373,6 +382,22 @@ namespace PECoff
         private readonly ParseResult _parseResult = new ParseResult();
         private readonly PECOFFOptions _options;
         private readonly string _filePath;
+
+        private sealed class ImportDescriptorInternal
+        {
+            public string DllName { get; }
+            public uint TimeDateStamp { get; }
+            public uint ImportNameTableRva { get; }
+            public uint ImportAddressTableRva { get; }
+
+            public ImportDescriptorInternal(string dllName, uint timeDateStamp, uint importNameTableRva, uint importAddressTableRva)
+            {
+                DllName = dllName ?? string.Empty;
+                TimeDateStamp = timeDateStamp;
+                ImportNameTableRva = importNameTableRva;
+                ImportAddressTableRva = importAddressTableRva;
+            }
+        }
 
         #region Constructor / Destructor
         public PECOFF(string FileName)
@@ -652,7 +677,8 @@ namespace PECoff
             AnimatedCursor = 21,
             AnimatedIcon = 22,
             HTML = 23,
-            Manifest = 24
+            Manifest = 24,
+            Toolbar = 241
         }
 
         #endregion
@@ -1378,6 +1404,12 @@ namespace PECoff
             }
         }
 
+        private string _dotNetRuntimeHint;
+        public string DotNetRuntimeHint
+        {
+            get { return _dotNetRuntimeHint; }
+        }
+
         private string _hash;
         public string Hash
         {
@@ -1449,6 +1481,18 @@ namespace PECoff
             get { return _resourceAccelerators.ToArray(); }
         }
 
+        private readonly List<ResourceMenuInfo> _resourceMenus = new List<ResourceMenuInfo>();
+        public ResourceMenuInfo[] ResourceMenus
+        {
+            get { return _resourceMenus.ToArray(); }
+        }
+
+        private readonly List<ResourceToolbarInfo> _resourceToolbars = new List<ResourceToolbarInfo>();
+        public ResourceToolbarInfo[] ResourceToolbars
+        {
+            get { return _resourceToolbars.ToArray(); }
+        }
+
         private readonly List<IconGroupInfo> _iconGroups = new List<IconGroupInfo>();
         public IconGroupInfo[] IconGroups
         {
@@ -1490,6 +1534,14 @@ namespace PECoff
         {
             get { return _importEntries.ToArray(); }
         }
+
+        private readonly List<ImportDescriptorInfo> _importDescriptors = new List<ImportDescriptorInfo>();
+        public ImportDescriptorInfo[] ImportDescriptors
+        {
+            get { return _importDescriptors.ToArray(); }
+        }
+
+        private readonly List<ImportDescriptorInternal> _importDescriptorInternals = new List<ImportDescriptorInternal>();
 
         private readonly List<ImportEntry> _delayImportEntries = new List<ImportEntry>();
         public ImportEntry[] DelayImportEntries
@@ -1702,6 +1754,7 @@ namespace PECoff
                 _hash ?? string.Empty,
                 _importHash ?? string.Empty,
                 _isDotNetFile,
+                _dotNetRuntimeHint ?? string.Empty,
                 _isObfuscated,
                 _obfuscationPercentage,
                 _fileversion ?? string.Empty,
@@ -1740,6 +1793,8 @@ namespace PECoff
                 _resourceMessageTables.ToArray(),
                 _resourceDialogs.ToArray(),
                 _resourceAccelerators.ToArray(),
+                _resourceMenus.ToArray(),
+                _resourceToolbars.ToArray(),
                 _resourceManifests.ToArray(),
                 _iconGroups.ToArray(),
                 _clrMetadata,
@@ -1747,6 +1802,7 @@ namespace PECoff
                 _readyToRun,
                 imports.ToArray(),
                 _importEntries.ToArray(),
+                _importDescriptors.ToArray(),
                 _delayImportEntries.ToArray(),
                 _delayImportDescriptors.ToArray(),
                 exports.ToArray(),
@@ -2170,6 +2226,18 @@ namespace PECoff
                     double entropy = ComputeShannonEntropy(new ReadOnlySpan<byte>(buffer, 0, size));
                     string name = section.Section.TrimEnd('\0');
                     _sectionEntropies.Add(new SectionEntropyInfo(name, section.SizeOfRawData, entropy));
+
+                    bool isExecutable = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_EXECUTE) != 0;
+                    bool isWritable = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_WRITE) != 0;
+                    bool isCode = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0;
+                    if (entropy >= 7.3 && isExecutable && isWritable)
+                    {
+                        Warn(ParseIssueCategory.Sections, $"Section {name} has high entropy and is RWX.");
+                    }
+                    else if (entropy >= 7.3 && isExecutable && !isCode)
+                    {
+                        Warn(ParseIssueCategory.Sections, $"Section {name} has high entropy and is executable but not marked as code.");
+                    }
                 }
                 finally
                 {
@@ -2926,6 +2994,68 @@ namespace PECoff
             }
         }
 
+        private void DecodeResourceMenus(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.Menu)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] _))
+                {
+                    continue;
+                }
+
+                if (!TryParseMenuTemplate(dataSpan, out ResourceMenuInfo menu))
+                {
+                    Warn(ParseIssueCategory.Resources, "Menu resource could not be parsed.");
+                    continue;
+                }
+
+                _resourceMenus.Add(new ResourceMenuInfo(
+                    entry.NameId,
+                    entry.LanguageId,
+                    menu.IsExtended,
+                    menu.ItemCount,
+                    menu.ItemTexts.ToArray()));
+            }
+        }
+
+        private void DecodeResourceToolbars(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.Toolbar)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] _))
+                {
+                    continue;
+                }
+
+                if (!TryParseToolbarResource(dataSpan, out ResourceToolbarInfo toolbar))
+                {
+                    Warn(ParseIssueCategory.Resources, "Toolbar resource could not be parsed.");
+                    continue;
+                }
+
+                _resourceToolbars.Add(new ResourceToolbarInfo(
+                    entry.NameId,
+                    entry.LanguageId,
+                    toolbar.Version,
+                    toolbar.Width,
+                    toolbar.Height,
+                    toolbar.ItemCount,
+                    toolbar.ItemIds.ToArray()));
+            }
+        }
+
         private void DecodeResourceVersionInfo(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
         {
             ResourceEntry versionEntry = _resources.FirstOrDefault(r => r.TypeId == (uint)ResourceType.Version);
@@ -2966,9 +3096,13 @@ namespace PECoff
                 }
 
                 byte[] data = owned.Length > 0 ? owned : dataSpan.ToArray();
-                if (TryParseGroupIcon(entry, data, iconEntries, resourceBuffer, resourceBaseRva, sections, out IconGroupInfo group))
+                if (TryParseGroupIcon(entry, data, iconEntries, resourceBuffer, resourceBaseRva, sections, out IconGroupInfo group, out bool hasMissingIcons))
                 {
                     _iconGroups.Add(group);
+                    if (hasMissingIcons)
+                    {
+                        Warn(ParseIssueCategory.Resources, "Icon group references missing icon resources.");
+                    }
                 }
             }
         }
@@ -2980,9 +3114,11 @@ namespace PECoff
             ReadOnlySpan<byte> resourceBuffer,
             uint resourceBaseRva,
             List<IMAGE_SECTION_HEADER> sections,
-            out IconGroupInfo group)
+            out IconGroupInfo group,
+            out bool hasMissingIcons)
         {
             group = null;
+            hasMissingIcons = false;
             if (groupData == null || groupData.Length < 6)
             {
                 return false;
@@ -3026,6 +3162,7 @@ namespace PECoff
                 else
                 {
                     iconImages.Add(Array.Empty<byte>());
+                    hasMissingIcons = true;
                 }
             }
 
@@ -3462,6 +3599,166 @@ namespace PECoff
             return entries.Length > 0;
         }
 
+        private static bool TryParseMenuTemplate(ReadOnlySpan<byte> data, out ResourceMenuInfo menu)
+        {
+            menu = null;
+            if (data.Length < 4)
+            {
+                return false;
+            }
+
+            bool isExtended = ReadUInt16(data, 0) == 1 && ReadUInt16(data, 2) == 4;
+            List<string> items = new List<string>();
+            int itemCount = 0;
+
+            if (!TryParseMenuTemplateStandard(data, items, out itemCount))
+            {
+                items.Clear();
+                if (!TryParseMenuStrings(data, items))
+                {
+                    return false;
+                }
+
+                itemCount = items.Count;
+            }
+
+            menu = new ResourceMenuInfo(0, 0, isExtended, itemCount, items.ToArray());
+            return true;
+        }
+
+        private static bool TryParseMenuTemplateStandard(ReadOnlySpan<byte> data, List<string> items, out int itemCount)
+        {
+            itemCount = 0;
+            int offset = 0;
+            int depth = 0;
+            int maxItems = 1024;
+
+            while (offset + 2 <= data.Length && itemCount < maxItems)
+            {
+                ushort flags = ReadUInt16(data, offset);
+                offset += 2;
+
+                bool isPopup = (flags & 0x0010) != 0;
+                bool isEnd = (flags & 0x0080) != 0;
+
+                if (!isPopup)
+                {
+                    if (offset + 2 > data.Length)
+                    {
+                        break;
+                    }
+
+                    offset += 2; // id
+                }
+
+                if (!TryReadResourceUnicodeString(data, ref offset, out string text))
+                {
+                    return itemCount > 0;
+                }
+
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    items.Add(text);
+                }
+
+                itemCount++;
+
+                if (isPopup)
+                {
+                    depth++;
+                }
+
+                if (isEnd)
+                {
+                    if (depth == 0)
+                    {
+                        break;
+                    }
+
+                    depth--;
+                }
+            }
+
+            return itemCount > 0;
+        }
+
+        private static bool TryParseMenuStrings(ReadOnlySpan<byte> data, List<string> items)
+        {
+            int maxItems = 256;
+            int maxChars = 128;
+            StringBuilder sb = new StringBuilder();
+
+            for (int offset = 0; offset + 1 < data.Length; offset += 2)
+            {
+                ushort ch = ReadUInt16(data, offset);
+                if (ch == 0)
+                {
+                    if (sb.Length > 0)
+                    {
+                        string text = sb.ToString();
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            items.Add(text);
+                            if (items.Count >= maxItems)
+                            {
+                                break;
+                            }
+                        }
+                        sb.Clear();
+                    }
+                    continue;
+                }
+
+                if (ch < 0x20 && ch != 0x09)
+                {
+                    if (sb.Length > 0)
+                    {
+                        sb.Clear();
+                    }
+                    continue;
+                }
+
+                if (sb.Length < maxChars)
+                {
+                    sb.Append((char)ch);
+                }
+            }
+
+            return items.Count > 0;
+        }
+
+        private static bool TryParseToolbarResource(ReadOnlySpan<byte> data, out ResourceToolbarInfo toolbar)
+        {
+            toolbar = null;
+            if (data.Length < 8)
+            {
+                return false;
+            }
+
+            ushort version = ReadUInt16(data, 0);
+            ushort width = ReadUInt16(data, 2);
+            ushort height = ReadUInt16(data, 4);
+            ushort itemCount = ReadUInt16(data, 6);
+
+            int available = (data.Length - 8) / 2;
+            int cappedCount = Math.Min(itemCount, (ushort)Math.Min(available, 1024));
+            if (cappedCount <= 0)
+            {
+                return false;
+            }
+
+            ushort[] items = new ushort[cappedCount];
+            int offset = 8;
+            for (int i = 0; i < cappedCount; i++)
+            {
+                items[i] = ReadUInt16(data, offset);
+                offset += 2;
+            }
+
+            toolbar = new ResourceToolbarInfo(0, 0, version, width, height, (ushort)cappedCount, items);
+            return true;
+        }
+
         private static string[] DecodeAcceleratorFlags(byte flags)
         {
             List<string> names = new List<string>();
@@ -3845,8 +4142,18 @@ namespace PECoff
             foreach (IMAGE_SECTION_HEADER section in sections)
             {
                 string name = section.Section.TrimEnd('\0');
+                bool isCode = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0;
+                bool isInitData = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) != 0;
+                bool isUninitData = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0;
+                bool isExecutable = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_EXECUTE) != 0;
+                bool isReadable = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_READ) != 0;
+                bool isWritable = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_WRITE) != 0;
                 if (section.SizeOfRawData == 0)
                 {
+                    if ((isCode || isInitData) && section.VirtualSize > 0)
+                    {
+                        Warn(ParseIssueCategory.Sections, $"Section {name} has VirtualSize but no raw data for code/initialized data.");
+                    }
                     continue;
                 }
 
@@ -3876,6 +4183,40 @@ namespace PECoff
                     Warn(ParseIssueCategory.Sections, $"Section {name} raw data extends beyond end of file.");
                 }
 
+                bool skipRatioWarning = string.Equals(name, ".reloc", StringComparison.OrdinalIgnoreCase);
+                if (section.VirtualSize > 0 && section.SizeOfRawData > 0 && !skipRatioWarning)
+                {
+                    if (section.VirtualSize > section.SizeOfRawData * 4)
+                    {
+                        Warn(ParseIssueCategory.Sections, $"Section {name} VirtualSize is much larger than SizeOfRawData.");
+                    }
+
+                    if (section.SizeOfRawData > section.VirtualSize * 4)
+                    {
+                        Warn(ParseIssueCategory.Sections, $"Section {name} SizeOfRawData is much larger than VirtualSize.");
+                    }
+                }
+
+                if (isExecutable && isWritable)
+                {
+                    Warn(ParseIssueCategory.Sections, $"Section {name} is marked executable and writable (RWX).");
+                }
+
+                if (isCode && !isExecutable)
+                {
+                    Warn(ParseIssueCategory.Sections, $"Section {name} is marked as code but not executable.");
+                }
+
+                if (isInitData && isExecutable)
+                {
+                    Warn(ParseIssueCategory.Sections, $"Section {name} is marked as initialized data but executable.");
+                }
+
+                if (!isReadable && !isWritable && !isExecutable && !isUninitData)
+                {
+                    Warn(ParseIssueCategory.Sections, $"Section {name} has no readable/writeable/executable permissions.");
+                }
+
                 uint virtualSize = Math.Max(section.VirtualSize, section.SizeOfRawData);
                 uint virtualEnd = section.VirtualAddress + AlignUp(virtualSize, sectionAlignment == 0 ? 1u : sectionAlignment);
                 if (virtualEnd > maxVirtualEnd)
@@ -3883,12 +4224,12 @@ namespace PECoff
                     maxVirtualEnd = virtualEnd;
                 }
 
-                if ((section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0)
+                if (isCode)
                 {
                     sumCode += section.SizeOfRawData;
                 }
 
-                if ((section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) != 0)
+                if (isInitData)
                 {
                     sumInitData += section.SizeOfRawData;
                 }
@@ -4815,6 +5156,8 @@ namespace PECoff
             int fieldDefCount = 0;
             int propertyDefCount = 0;
             int eventDefCount = 0;
+            bool hasDebuggable = false;
+            string debuggableModes = string.Empty;
             TryParseMetadataDetails(
                 buffer,
                 length,
@@ -4830,7 +5173,9 @@ namespace PECoff
                 out methodDefCount,
                 out fieldDefCount,
                 out propertyDefCount,
-                out eventDefCount);
+                out eventDefCount,
+                out hasDebuggable,
+                out debuggableModes);
 
             info = new ClrMetadataInfo(
                 header.MajorRuntimeVersion,
@@ -4855,7 +5200,9 @@ namespace PECoff
                 methodDefCount,
                 fieldDefCount,
                 propertyDefCount,
-                eventDefCount);
+                eventDefCount,
+                hasDebuggable,
+                debuggableModes);
 
             return true;
         }
@@ -4977,7 +5324,9 @@ namespace PECoff
             out int methodDefinitionCount,
             out int fieldDefinitionCount,
             out int propertyDefinitionCount,
-            out int eventDefinitionCount)
+            out int eventDefinitionCount,
+            out bool hasDebuggableAttribute,
+            out string debuggableModes)
         {
             assemblyName = string.Empty;
             assemblyVersion = string.Empty;
@@ -4992,6 +5341,8 @@ namespace PECoff
             fieldDefinitionCount = 0;
             propertyDefinitionCount = 0;
             eventDefinitionCount = 0;
+            hasDebuggableAttribute = false;
+            debuggableModes = string.Empty;
 
             try
             {
@@ -5032,6 +5383,7 @@ namespace PECoff
                         assemblyName = reader.GetString(assembly.Name);
                         assemblyVersion = assembly.Version.ToString();
                         targetFramework = TryGetTargetFramework(reader, assembly);
+                        debuggableModes = TryGetDebuggableAttribute(reader, assembly, out hasDebuggableAttribute);
 
                         foreach (AssemblyReferenceHandle handle in reader.AssemblyReferences)
                         {
@@ -5083,6 +5435,46 @@ namespace PECoff
 
                     string value = blob.ReadSerializedString();
                     return value ?? string.Empty;
+                }
+                catch (Exception)
+                {
+                    return string.Empty;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private static string TryGetDebuggableAttribute(MetadataReader reader, AssemblyDefinition assembly, out bool hasAttribute)
+        {
+            hasAttribute = false;
+            foreach (CustomAttributeHandle handle in assembly.GetCustomAttributes())
+            {
+                CustomAttribute attribute = reader.GetCustomAttribute(handle);
+                if (!IsDebuggableAttribute(reader, attribute))
+                {
+                    continue;
+                }
+
+                hasAttribute = true;
+                try
+                {
+                    BlobReader blob = reader.GetBlobReader(attribute.Value);
+                    if (blob.Length < 2)
+                    {
+                        return string.Empty;
+                    }
+
+                    if (blob.ReadUInt16() != 1)
+                    {
+                        return string.Empty;
+                    }
+
+                    if (blob.RemainingBytes >= 4)
+                    {
+                        int modes = blob.ReadInt32();
+                        return BuildDebuggableModesString(modes);
+                    }
                 }
                 catch (Exception)
                 {
@@ -5158,6 +5550,59 @@ namespace PECoff
             return false;
         }
 
+        private static bool IsDebuggableAttribute(MetadataReader reader, CustomAttribute attribute)
+        {
+            EntityHandle ctor = attribute.Constructor;
+            if (ctor.Kind == HandleKind.MemberReference)
+            {
+                MemberReference member = reader.GetMemberReference((MemberReferenceHandle)ctor);
+                return TryGetTypeName(reader, member.Parent, out string name, out string ns) &&
+                       string.Equals(name, "DebuggableAttribute", StringComparison.Ordinal) &&
+                       string.Equals(ns, "System.Diagnostics", StringComparison.Ordinal);
+            }
+
+            if (ctor.Kind == HandleKind.MethodDefinition)
+            {
+                MethodDefinition method = reader.GetMethodDefinition((MethodDefinitionHandle)ctor);
+                TypeDefinition typeDef = reader.GetTypeDefinition(method.GetDeclaringType());
+                string name = reader.GetString(typeDef.Name);
+                string ns = reader.GetString(typeDef.Namespace);
+                return string.Equals(name, "DebuggableAttribute", StringComparison.Ordinal) &&
+                       string.Equals(ns, "System.Diagnostics", StringComparison.Ordinal);
+            }
+
+            return false;
+        }
+
+        private static string BuildDebuggableModesString(int modes)
+        {
+            List<string> labels = new List<string>();
+            if ((modes & 0x00000001) != 0)
+            {
+                labels.Add("Default");
+            }
+            if ((modes & 0x00000002) != 0)
+            {
+                labels.Add("IgnoreSymbolStoreSequencePoints");
+            }
+            if ((modes & 0x00000004) != 0)
+            {
+                labels.Add("EnableEditAndContinue");
+            }
+            if ((modes & 0x00000100) != 0)
+            {
+                labels.Add("DisableOptimizations");
+            }
+
+            string hex = "0x" + modes.ToString("X8", System.Globalization.CultureInfo.InvariantCulture);
+            if (labels.Count == 0)
+            {
+                return hex;
+            }
+
+            return hex + " (" + string.Join(", ", labels) + ")";
+        }
+
         private void ValidateImportExportConsistency()
         {
             if (_importEntries.Count > 0)
@@ -5186,6 +5631,176 @@ namespace PECoff
                     }
                 }
             }
+        }
+
+        private void ValidateRelocationHints()
+        {
+            if (_dllCharacteristicsInfo == null)
+            {
+                return;
+            }
+
+            bool dynamicBase = (_dllCharacteristicsInfo.Value & (ushort)DllCharacteristics.IMAGE_DLL_CHARACTERISTICS_DYNAMIC_BASE) != 0;
+            if (dynamicBase && _baseRelocations.Count == 0)
+            {
+                Warn(ParseIssueCategory.Relocations, "DYNAMIC_BASE is set but no base relocation blocks were found.");
+            }
+            else if (!dynamicBase && _baseRelocations.Count > 0)
+            {
+                Warn(ParseIssueCategory.Relocations, "Base relocation blocks present but DYNAMIC_BASE is not set.");
+            }
+        }
+
+        private void ComputeDotNetRuntimeHint()
+        {
+            if (!_isDotNetFile)
+            {
+                _dotNetRuntimeHint = string.Empty;
+                return;
+            }
+
+            if (_clrMetadata == null)
+            {
+                _dotNetRuntimeHint = "CLR (metadata unavailable)";
+                return;
+            }
+
+            if (_readyToRun != null)
+            {
+                _dotNetRuntimeHint = "ReadyToRun";
+            }
+            else if (_clrMetadata.IlOnly)
+            {
+                _dotNetRuntimeHint = "IL";
+            }
+            else
+            {
+                _dotNetRuntimeHint = "Mixed";
+            }
+        }
+
+        private void BuildImportDescriptorInfos()
+        {
+            _importDescriptors.Clear();
+            if (_importDescriptorInternals.Count == 0)
+            {
+                return;
+            }
+
+            Dictionary<string, uint> boundByDll = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase);
+            foreach (BoundImportEntry bound in _boundImports)
+            {
+                if (!string.IsNullOrWhiteSpace(bound.DllName))
+                {
+                    boundByDll[bound.DllName] = bound.TimeDateStamp;
+                }
+            }
+
+            Dictionary<string, (HashSet<string> IntSet, HashSet<string> IatSet)> byDll =
+                new Dictionary<string, (HashSet<string>, HashSet<string>)>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (ImportEntry entry in _importEntries)
+            {
+                if (string.IsNullOrWhiteSpace(entry.DllName))
+                {
+                    continue;
+                }
+
+                if (!byDll.TryGetValue(entry.DllName, out var sets))
+                {
+                    sets = (new HashSet<string>(StringComparer.OrdinalIgnoreCase), new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+                    byDll[entry.DllName] = sets;
+                }
+
+                string key = entry.IsByOrdinal
+                    ? "#" + entry.Ordinal.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    : entry.Name ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                if (entry.Source == ImportThunkSource.ImportNameTable)
+                {
+                    sets.IntSet.Add(key);
+                }
+                else
+                {
+                    sets.IatSet.Add(key);
+                }
+            }
+
+            foreach (ImportDescriptorInternal descriptor in _importDescriptorInternals)
+            {
+                if (string.IsNullOrWhiteSpace(descriptor.DllName))
+                {
+                    continue;
+                }
+
+                byDll.TryGetValue(descriptor.DllName, out var sets);
+                HashSet<string> intSet = sets.IntSet ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                HashSet<string> iatSet = sets.IatSet ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                string[] intOnly = BuildLimitedList(intSet.Except(iatSet), 128);
+                string[] iatOnly = BuildLimitedList(iatSet.Except(intSet), 128);
+
+                int intCount = intSet.Count;
+                int iatCount = iatSet.Count;
+
+                bool isBound = descriptor.TimeDateStamp != 0;
+                uint boundTimestamp = 0;
+                bool hasBound = boundByDll.TryGetValue(descriptor.DllName, out boundTimestamp);
+                bool isStale = isBound && hasBound && boundTimestamp != descriptor.TimeDateStamp;
+
+                if (intOnly.Length > 0 || iatOnly.Length > 0)
+                {
+                    Warn(ParseIssueCategory.Imports, $"Import INT/IAT mismatch for {descriptor.DllName} (INT-only={intOnly.Length}, IAT-only={iatOnly.Length}).");
+                }
+
+                if (isBound && !hasBound)
+                {
+                    Warn(ParseIssueCategory.Imports, $"Import {descriptor.DllName} is marked bound but no bound import entry was found.");
+                }
+                else if (isStale)
+                {
+                    Warn(ParseIssueCategory.Imports, $"Bound import for {descriptor.DllName} is stale (timestamp mismatch).");
+                }
+
+                _importDescriptors.Add(new ImportDescriptorInfo(
+                    descriptor.DllName,
+                    descriptor.TimeDateStamp,
+                    descriptor.ImportNameTableRva,
+                    descriptor.ImportAddressTableRva,
+                    isBound,
+                    boundTimestamp,
+                    isStale,
+                    intCount,
+                    iatCount,
+                    intOnly,
+                    iatOnly));
+            }
+        }
+
+        private static string[] BuildLimitedList(IEnumerable<string> items, int maxItems)
+        {
+            if (items == null)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> list = new List<string>();
+            foreach (string item in items.OrderBy(v => v, StringComparer.OrdinalIgnoreCase))
+            {
+                if (list.Count >= maxItems)
+                {
+                    break;
+                }
+
+                list.Add(item);
+            }
+
+            return list.ToArray();
         }
 
         private static bool TryGetTypeName(MetadataReader reader, EntityHandle handle, out string name, out string ns)
@@ -5302,6 +5917,8 @@ namespace PECoff
                 _resourceMessageTables.Clear();
                 _resourceDialogs.Clear();
                 _resourceAccelerators.Clear();
+                _resourceMenus.Clear();
+                _resourceToolbars.Clear();
                 _iconGroups.Clear();
                 _versionInfoDetails = null;
                 _sectionEntropies.Clear();
@@ -5310,6 +5927,8 @@ namespace PECoff
                 imports.Clear();
                 exports.Clear();
                 _importEntries.Clear();
+                _importDescriptors.Clear();
+                _importDescriptorInternals.Clear();
                 _delayImportEntries.Clear();
                 _delayImportDescriptors.Clear();
                 _exportEntries.Clear();
@@ -5339,6 +5958,7 @@ namespace PECoff
                 _certificateTableSize = 0;
                 _timeDateStamp = 0;
                 _readyToRun = null;
+                _dotNetRuntimeHint = string.Empty;
                 if (PEFile == null || PEFileStream == null)
                 {
                     Fail(ParseIssueCategory.File, "No PE file stream available.");
@@ -5684,6 +6304,12 @@ namespace PECoff
                                         {
                                             ParseImportThunks(importName, table.ImportAddressTableRVA, ImportThunkSource.ImportAddressTable, sections, isPe32Plus, _importEntries);
                                         }
+
+                                        _importDescriptorInternals.Add(new ImportDescriptorInternal(
+                                            importName,
+                                            table.TimeDateStamp,
+                                            table.LookupTableVirtualAddress,
+                                            table.ImportAddressTableRVA));
                                     }
                                 }
                                 
@@ -5739,6 +6365,8 @@ namespace PECoff
                                     DecodeResourceMessageTables(resourceSpan, resourceSection.VirtualAddress, sections);
                                     DecodeResourceDialogs(resourceSpan, resourceSection.VirtualAddress, sections);
                                     DecodeResourceAccelerators(resourceSpan, resourceSection.VirtualAddress, sections);
+                                    DecodeResourceMenus(resourceSpan, resourceSection.VirtualAddress, sections);
+                                    DecodeResourceToolbars(resourceSpan, resourceSection.VirtualAddress, sections);
                                     DecodeResourceManifests(resourceSpan, resourceSection.VirtualAddress, sections);
                                     DecodeResourceIconGroups(resourceSpan, resourceSection.VirtualAddress, sections);
                                     DecodeResourceVersionInfo(resourceSpan, resourceSection.VirtualAddress, sections);
@@ -5902,7 +6530,8 @@ namespace PECoff
                                         }
                                     }
 
-                                    _certificateEntries.Add(new CertificateEntry(typeKind, certData, pkcs7Signers, pkcs7Error, authenticodeResults));
+                                    AuthenticodeStatusInfo statusInfo = CertificateUtilities.BuildAuthenticodeStatus(pkcs7Signers);
+                                    _certificateEntries.Add(new CertificateEntry(typeKind, certData, pkcs7Signers, pkcs7Error, authenticodeResults, statusInfo));
 
                                     int aligned = Align8(entryLength);
                                     if (aligned <= 0)
@@ -6051,7 +6680,10 @@ namespace PECoff
                         }
                     }
 
+                    BuildImportDescriptorInfos();
                     ValidateImportExportConsistency();
+                    ValidateRelocationHints();
+                    ComputeDotNetRuntimeHint();
                     ComputeImportHash();
                     ComputeOverlayInfo(sections);
                     ComputeSectionEntropies(sections);

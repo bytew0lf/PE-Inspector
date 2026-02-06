@@ -528,6 +528,41 @@ namespace PECoff
         }
     }
 
+    public sealed class AuthenticodeStatusInfo
+    {
+        public int SignerCount { get; }
+        public int TimestampSignerCount { get; }
+        public bool HasSignature { get; }
+        public bool SignatureValid { get; }
+        public bool ChainValid { get; }
+        public bool HasTimestamp { get; }
+        public bool TimestampValid { get; }
+        public IReadOnlyList<string> ChainStatus { get; }
+        public IReadOnlyList<string> TimestampChainStatus { get; }
+
+        public AuthenticodeStatusInfo(
+            int signerCount,
+            int timestampSignerCount,
+            bool hasSignature,
+            bool signatureValid,
+            bool chainValid,
+            bool hasTimestamp,
+            bool timestampValid,
+            string[] chainStatus,
+            string[] timestampChainStatus)
+        {
+            SignerCount = signerCount;
+            TimestampSignerCount = timestampSignerCount;
+            HasSignature = hasSignature;
+            SignatureValid = signatureValid;
+            ChainValid = chainValid;
+            HasTimestamp = hasTimestamp;
+            TimestampValid = timestampValid;
+            ChainStatus = Array.AsReadOnly(chainStatus ?? Array.Empty<string>());
+            TimestampChainStatus = Array.AsReadOnly(timestampChainStatus ?? Array.Empty<string>());
+        }
+    }
+
     public sealed class OverlayInfo
     {
         public long StartOffset { get; }
@@ -552,6 +587,47 @@ namespace PECoff
             Name = name ?? string.Empty;
             RawSize = rawSize;
             Entropy = entropy;
+        }
+    }
+
+    public sealed class ImportDescriptorInfo
+    {
+        public string DllName { get; }
+        public uint TimeDateStamp { get; }
+        public uint ImportNameTableRva { get; }
+        public uint ImportAddressTableRva { get; }
+        public bool IsBound { get; }
+        public uint BoundTimeDateStamp { get; }
+        public bool IsBoundStale { get; }
+        public int IntCount { get; }
+        public int IatCount { get; }
+        public IReadOnlyList<string> IntOnlyFunctions { get; }
+        public IReadOnlyList<string> IatOnlyFunctions { get; }
+
+        public ImportDescriptorInfo(
+            string dllName,
+            uint timeDateStamp,
+            uint importNameTableRva,
+            uint importAddressTableRva,
+            bool isBound,
+            uint boundTimeDateStamp,
+            bool isBoundStale,
+            int intCount,
+            int iatCount,
+            string[] intOnlyFunctions,
+            string[] iatOnlyFunctions)
+        {
+            DllName = dllName ?? string.Empty;
+            TimeDateStamp = timeDateStamp;
+            ImportNameTableRva = importNameTableRva;
+            ImportAddressTableRva = importAddressTableRva;
+            IsBound = isBound;
+            BoundTimeDateStamp = boundTimeDateStamp;
+            IsBoundStale = isBoundStale;
+            IntCount = intCount;
+            IatCount = iatCount;
+            IntOnlyFunctions = Array.AsReadOnly(intOnlyFunctions ?? Array.Empty<string>());
+            IatOnlyFunctions = Array.AsReadOnly(iatOnlyFunctions ?? Array.Empty<string>());
         }
     }
 
@@ -724,6 +800,53 @@ namespace PECoff
         }
     }
 
+    public sealed class ResourceMenuInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public bool IsExtended { get; }
+        public int ItemCount { get; }
+        public IReadOnlyList<string> ItemTexts { get; }
+
+        public ResourceMenuInfo(uint nameId, ushort languageId, bool isExtended, int itemCount, string[] itemTexts)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            IsExtended = isExtended;
+            ItemCount = itemCount;
+            ItemTexts = Array.AsReadOnly(itemTexts ?? Array.Empty<string>());
+        }
+    }
+
+    public sealed class ResourceToolbarInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public ushort Version { get; }
+        public ushort Width { get; }
+        public ushort Height { get; }
+        public ushort ItemCount { get; }
+        public IReadOnlyList<ushort> ItemIds { get; }
+
+        public ResourceToolbarInfo(
+            uint nameId,
+            ushort languageId,
+            ushort version,
+            ushort width,
+            ushort height,
+            ushort itemCount,
+            ushort[] itemIds)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Version = version;
+            Width = width;
+            Height = height;
+            ItemCount = itemCount;
+            ItemIds = Array.AsReadOnly(itemIds ?? Array.Empty<ushort>());
+        }
+    }
+
     public sealed class ManifestSchemaInfo
     {
         public string RootElement { get; }
@@ -763,6 +886,7 @@ namespace PECoff
         public string Hash { get; }
         public string ImportHash { get; }
         public bool IsDotNetFile { get; }
+        public string DotNetRuntimeHint { get; }
         public bool IsObfuscated { get; }
         public double ObfuscationPercentage { get; }
         public string FileVersion { get; }
@@ -801,6 +925,8 @@ namespace PECoff
         public IReadOnlyList<ResourceMessageTableInfo> ResourceMessageTables { get; }
         public IReadOnlyList<ResourceDialogInfo> ResourceDialogs { get; }
         public IReadOnlyList<ResourceAcceleratorTableInfo> ResourceAccelerators { get; }
+        public IReadOnlyList<ResourceMenuInfo> ResourceMenus { get; }
+        public IReadOnlyList<ResourceToolbarInfo> ResourceToolbars { get; }
         public IReadOnlyList<ResourceManifestInfo> ResourceManifests { get; }
         public IReadOnlyList<IconGroupInfo> IconGroups { get; }
         public ClrMetadataInfo ClrMetadata { get; }
@@ -808,6 +934,7 @@ namespace PECoff
         public ReadyToRunInfo ReadyToRun { get; }
         public IReadOnlyList<string> Imports { get; }
         public IReadOnlyList<ImportEntry> ImportEntries { get; }
+        public IReadOnlyList<ImportDescriptorInfo> ImportDescriptors { get; }
         public IReadOnlyList<ImportEntry> DelayImportEntries { get; }
         public IReadOnlyList<DelayImportDescriptorInfo> DelayImportDescriptors { get; }
         public IReadOnlyList<string> Exports { get; }
@@ -828,6 +955,7 @@ namespace PECoff
             string hash,
             string importHash,
             bool isDotNetFile,
+            string dotNetRuntimeHint,
             bool isObfuscated,
             double obfuscationPercentage,
             string fileVersion,
@@ -866,6 +994,8 @@ namespace PECoff
             ResourceMessageTableInfo[] resourceMessageTables,
             ResourceDialogInfo[] resourceDialogs,
             ResourceAcceleratorTableInfo[] resourceAccelerators,
+            ResourceMenuInfo[] resourceMenus,
+            ResourceToolbarInfo[] resourceToolbars,
             ResourceManifestInfo[] resourceManifests,
             IconGroupInfo[] iconGroups,
             ClrMetadataInfo clrMetadata,
@@ -873,6 +1003,7 @@ namespace PECoff
             ReadyToRunInfo readyToRun,
             string[] imports,
             ImportEntry[] importEntries,
+            ImportDescriptorInfo[] importDescriptors,
             ImportEntry[] delayImportEntries,
             DelayImportDescriptorInfo[] delayImportDescriptors,
             string[] exports,
@@ -892,6 +1023,7 @@ namespace PECoff
             Hash = hash ?? string.Empty;
             ImportHash = importHash ?? string.Empty;
             IsDotNetFile = isDotNetFile;
+            DotNetRuntimeHint = dotNetRuntimeHint ?? string.Empty;
             IsObfuscated = isObfuscated;
             ObfuscationPercentage = obfuscationPercentage;
             FileVersion = fileVersion ?? string.Empty;
@@ -930,6 +1062,8 @@ namespace PECoff
             ResourceMessageTables = Array.AsReadOnly(resourceMessageTables ?? Array.Empty<ResourceMessageTableInfo>());
             ResourceDialogs = Array.AsReadOnly(resourceDialogs ?? Array.Empty<ResourceDialogInfo>());
             ResourceAccelerators = Array.AsReadOnly(resourceAccelerators ?? Array.Empty<ResourceAcceleratorTableInfo>());
+            ResourceMenus = Array.AsReadOnly(resourceMenus ?? Array.Empty<ResourceMenuInfo>());
+            ResourceToolbars = Array.AsReadOnly(resourceToolbars ?? Array.Empty<ResourceToolbarInfo>());
             ResourceManifests = Array.AsReadOnly(resourceManifests ?? Array.Empty<ResourceManifestInfo>());
             IconGroups = Array.AsReadOnly(iconGroups ?? Array.Empty<IconGroupInfo>());
             ClrMetadata = clrMetadata;
@@ -937,6 +1071,7 @@ namespace PECoff
             ReadyToRun = readyToRun;
             Imports = Array.AsReadOnly(imports ?? Array.Empty<string>());
             ImportEntries = Array.AsReadOnly(importEntries ?? Array.Empty<ImportEntry>());
+            ImportDescriptors = Array.AsReadOnly(importDescriptors ?? Array.Empty<ImportDescriptorInfo>());
             DelayImportEntries = Array.AsReadOnly(delayImportEntries ?? Array.Empty<ImportEntry>());
             DelayImportDescriptors = Array.AsReadOnly(delayImportDescriptors ?? Array.Empty<DelayImportDescriptorInfo>());
             Exports = Array.AsReadOnly(exports ?? Array.Empty<string>());

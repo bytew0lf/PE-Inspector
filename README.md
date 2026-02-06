@@ -22,13 +22,13 @@ Notes:
 The report contains all analysis details, and any embedded certificates are written to the output directory with their native extensions (e.g. `.cer`, `.p7b`) and additionally as PEM (`.pem`).
 
 The report also includes CLR/.NET metadata when present (runtime version, metadata version, and stream list).
-It now also includes assembly metadata (assembly name/version, MVID, target framework) and metadata-based assembly references.
+It now also includes assembly metadata (assembly name/version, MVID, target framework, debuggable attribute) and metadata-based assembly references, plus a runtime hint (IL/Mixed/ReadyToRun).
 Resource string tables and manifests are decoded and included in the report when available.
-The report also includes debug directory entries, base relocations, TLS/load-config data, version-info details, icon-group reconstruction, Authenticode digest checks, message tables, dialog/accelerator summaries, manifest schema summaries (including MUI when present), ReadyToRun headers, import hash/overlay/entropy summaries, and subsystem/security flags when present.
+The report also includes debug directory entries, base relocations, TLS/load-config data, version-info details, icon-group reconstruction, Authenticode digest checks and signer status summaries, message tables, dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI when present), ReadyToRun headers, import hash/overlay/entropy summaries, import descriptor consistency/bind hints, and subsystem/security flags when present.
 
 ## Additional functionality
 The PECOFF Library has also the ability to get all imports and exports of the PE-file as well as the certificate.
-It now exposes debug directory entries, base relocations, TLS/load-config metadata, icon groups, version-info details, message tables, dialog/accelerator parsing, manifest schema details, ReadyToRun headers, import hash/overlay/section entropy info, subsystem/DllCharacteristics summaries, and Authenticode digest verification results.
+It now exposes debug directory entries, base relocations, TLS/load-config metadata, icon groups, version-info details, message tables, dialog/menu/toolbar/accelerator parsing, manifest schema details, ReadyToRun headers, import hash/overlay/section entropy info, import descriptor consistency/bind status, subsystem/DllCharacteristics summaries, Authenticode digest verification results, and signer status summaries.
 
 ### Library API options
 The PECOFF parser supports options and an immutable result snapshot:

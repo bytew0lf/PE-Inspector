@@ -43,6 +43,7 @@ foreach (string file in Directory.GetFiles(testFilesDir, "*.*", SearchOption.Top
         parser.ImportHash ?? string.Empty,
         parser.IsDotNetFile,
         parser.ImportEntries.Length,
+        parser.ImportDescriptors.Length,
         parser.ExportEntries.Length,
         parser.DelayImportEntries.Length,
         parser.DelayImportDescriptors.Length,
@@ -60,7 +61,9 @@ foreach (string file in Directory.GetFiles(testFilesDir, "*.*", SearchOption.Top
         parser.OverlayInfo != null ? parser.OverlayInfo.Size : 0,
         parser.SectionEntropies.Length,
         parser.ResourceDialogs.Length,
-        parser.ResourceAccelerators.Length);
+        parser.ResourceAccelerators.Length,
+        parser.ResourceMenus.Length,
+        parser.ResourceToolbars.Length);
 
     snapshots[entry.Name] = entry;
 }
@@ -74,6 +77,7 @@ foreach (SnapshotEntry entry in snapshots.Values.OrderBy(e => e.Name, StringComp
         entry.ImportHash,
         entry.IsDotNet.ToString(),
         entry.ImportCount.ToString(CultureInfo.InvariantCulture),
+        entry.ImportDescriptorCount.ToString(CultureInfo.InvariantCulture),
         entry.ExportCount.ToString(CultureInfo.InvariantCulture),
         entry.DelayImportCount.ToString(CultureInfo.InvariantCulture),
         entry.DelayImportDescriptorCount.ToString(CultureInfo.InvariantCulture),
@@ -91,7 +95,9 @@ foreach (SnapshotEntry entry in snapshots.Values.OrderBy(e => e.Name, StringComp
         entry.OverlaySize.ToString(CultureInfo.InvariantCulture),
         entry.SectionEntropyCount.ToString(CultureInfo.InvariantCulture),
         entry.DialogCount.ToString(CultureInfo.InvariantCulture),
-        entry.AcceleratorCount.ToString(CultureInfo.InvariantCulture)));
+        entry.AcceleratorCount.ToString(CultureInfo.InvariantCulture),
+        entry.MenuCount.ToString(CultureInfo.InvariantCulture),
+        entry.ToolbarCount.ToString(CultureInfo.InvariantCulture)));
 }
 
 File.WriteAllLines(snapshotPath, lines);
@@ -125,6 +131,7 @@ sealed class SnapshotEntry
     public string ImportHash { get; }
     public bool IsDotNet { get; }
     public int ImportCount { get; }
+    public int ImportDescriptorCount { get; }
     public int ExportCount { get; }
     public int DelayImportCount { get; }
     public int DelayImportDescriptorCount { get; }
@@ -143,6 +150,8 @@ sealed class SnapshotEntry
     public int SectionEntropyCount { get; }
     public int DialogCount { get; }
     public int AcceleratorCount { get; }
+    public int MenuCount { get; }
+    public int ToolbarCount { get; }
 
     public SnapshotEntry(
         string name,
@@ -150,6 +159,7 @@ sealed class SnapshotEntry
         string importHash,
         bool isDotNet,
         int importCount,
+        int importDescriptorCount,
         int exportCount,
         int delayImportCount,
         int delayImportDescriptorCount,
@@ -167,13 +177,16 @@ sealed class SnapshotEntry
         long overlaySize,
         int sectionEntropyCount,
         int dialogCount,
-        int acceleratorCount)
+        int acceleratorCount,
+        int menuCount,
+        int toolbarCount)
     {
         Name = name ?? string.Empty;
         Hash = hash ?? string.Empty;
         ImportHash = importHash ?? string.Empty;
         IsDotNet = isDotNet;
         ImportCount = importCount;
+        ImportDescriptorCount = importDescriptorCount;
         ExportCount = exportCount;
         DelayImportCount = delayImportCount;
         DelayImportDescriptorCount = delayImportDescriptorCount;
@@ -192,5 +205,7 @@ sealed class SnapshotEntry
         SectionEntropyCount = sectionEntropyCount;
         DialogCount = dialogCount;
         AcceleratorCount = acceleratorCount;
+        MenuCount = menuCount;
+        ToolbarCount = toolbarCount;
     }
 }

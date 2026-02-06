@@ -39,6 +39,7 @@ public class SnapshotTests
             Assert.Equal(expectedEntry.ImportHash, actualEntry.ImportHash);
             Assert.Equal(expectedEntry.IsDotNet, actualEntry.IsDotNet);
             Assert.Equal(expectedEntry.ImportCount, actualEntry.ImportCount);
+            Assert.Equal(expectedEntry.ImportDescriptorCount, actualEntry.ImportDescriptorCount);
             Assert.Equal(expectedEntry.ExportCount, actualEntry.ExportCount);
             Assert.Equal(expectedEntry.DelayImportCount, actualEntry.DelayImportCount);
             Assert.Equal(expectedEntry.DelayImportDescriptorCount, actualEntry.DelayImportDescriptorCount);
@@ -57,6 +58,8 @@ public class SnapshotTests
             Assert.Equal(expectedEntry.SectionEntropyCount, actualEntry.SectionEntropyCount);
             Assert.Equal(expectedEntry.DialogCount, actualEntry.DialogCount);
             Assert.Equal(expectedEntry.AcceleratorCount, actualEntry.AcceleratorCount);
+            Assert.Equal(expectedEntry.MenuCount, actualEntry.MenuCount);
+            Assert.Equal(expectedEntry.ToolbarCount, actualEntry.ToolbarCount);
         }
     }
 
@@ -100,6 +103,7 @@ public class SnapshotTests
                 parser.ImportHash ?? string.Empty,
                 parser.IsDotNetFile,
                 parser.ImportEntries.Length,
+                parser.ImportDescriptors.Length,
                 parser.ExportEntries.Length,
                 parser.DelayImportEntries.Length,
                 parser.DelayImportDescriptors.Length,
@@ -117,7 +121,9 @@ public class SnapshotTests
                 parser.OverlayInfo != null ? parser.OverlayInfo.Size : 0,
                 parser.SectionEntropies.Length,
                 parser.ResourceDialogs.Length,
-                parser.ResourceAccelerators.Length);
+                parser.ResourceAccelerators.Length,
+                parser.ResourceMenus.Length,
+                parser.ResourceToolbars.Length);
 
             snapshots[entry.Name] = entry;
         }
@@ -156,7 +162,7 @@ public class SnapshotTests
             }
 
             string[] parts = line.Split('|');
-            if (parts.Length != 23)
+            if (parts.Length != 26)
             {
                 continue;
             }
@@ -178,13 +184,16 @@ public class SnapshotTests
                 int.Parse(parts[13], CultureInfo.InvariantCulture),
                 int.Parse(parts[14], CultureInfo.InvariantCulture),
                 int.Parse(parts[15], CultureInfo.InvariantCulture),
-                bool.Parse(parts[16]),
+                int.Parse(parts[16], CultureInfo.InvariantCulture),
                 bool.Parse(parts[17]),
-                int.Parse(parts[18], CultureInfo.InvariantCulture),
-                long.Parse(parts[19], CultureInfo.InvariantCulture),
-                int.Parse(parts[20], CultureInfo.InvariantCulture),
+                bool.Parse(parts[18]),
+                int.Parse(parts[19], CultureInfo.InvariantCulture),
+                long.Parse(parts[20], CultureInfo.InvariantCulture),
                 int.Parse(parts[21], CultureInfo.InvariantCulture),
-                int.Parse(parts[22], CultureInfo.InvariantCulture));
+                int.Parse(parts[22], CultureInfo.InvariantCulture),
+                int.Parse(parts[23], CultureInfo.InvariantCulture),
+                int.Parse(parts[24], CultureInfo.InvariantCulture),
+                int.Parse(parts[25], CultureInfo.InvariantCulture));
 
             snapshots[entry.Name] = entry;
         }
@@ -203,6 +212,7 @@ public class SnapshotTests
                 entry.ImportHash,
                 entry.IsDotNet.ToString(),
                 entry.ImportCount.ToString(CultureInfo.InvariantCulture),
+                entry.ImportDescriptorCount.ToString(CultureInfo.InvariantCulture),
                 entry.ExportCount.ToString(CultureInfo.InvariantCulture),
                 entry.DelayImportCount.ToString(CultureInfo.InvariantCulture),
                 entry.DelayImportDescriptorCount.ToString(CultureInfo.InvariantCulture),
@@ -220,7 +230,9 @@ public class SnapshotTests
                 entry.OverlaySize.ToString(CultureInfo.InvariantCulture),
                 entry.SectionEntropyCount.ToString(CultureInfo.InvariantCulture),
                 entry.DialogCount.ToString(CultureInfo.InvariantCulture),
-                entry.AcceleratorCount.ToString(CultureInfo.InvariantCulture)));
+                entry.AcceleratorCount.ToString(CultureInfo.InvariantCulture),
+                entry.MenuCount.ToString(CultureInfo.InvariantCulture),
+                entry.ToolbarCount.ToString(CultureInfo.InvariantCulture)));
         }
 
         File.WriteAllLines(path, lines);
@@ -275,6 +287,7 @@ public class SnapshotTests
         public string ImportHash { get; }
         public bool IsDotNet { get; }
         public int ImportCount { get; }
+        public int ImportDescriptorCount { get; }
         public int ExportCount { get; }
         public int DelayImportCount { get; }
         public int DelayImportDescriptorCount { get; }
@@ -293,6 +306,8 @@ public class SnapshotTests
         public int SectionEntropyCount { get; }
         public int DialogCount { get; }
         public int AcceleratorCount { get; }
+        public int MenuCount { get; }
+        public int ToolbarCount { get; }
 
         public SnapshotEntry(
             string name,
@@ -300,6 +315,7 @@ public class SnapshotTests
             string importHash,
             bool isDotNet,
             int importCount,
+            int importDescriptorCount,
             int exportCount,
             int delayImportCount,
             int delayImportDescriptorCount,
@@ -317,13 +333,16 @@ public class SnapshotTests
             long overlaySize,
             int sectionEntropyCount,
             int dialogCount,
-            int acceleratorCount)
+            int acceleratorCount,
+            int menuCount,
+            int toolbarCount)
         {
             Name = name ?? string.Empty;
             Hash = hash ?? string.Empty;
             ImportHash = importHash ?? string.Empty;
             IsDotNet = isDotNet;
             ImportCount = importCount;
+            ImportDescriptorCount = importDescriptorCount;
             ExportCount = exportCount;
             DelayImportCount = delayImportCount;
             DelayImportDescriptorCount = delayImportDescriptorCount;
@@ -342,6 +361,8 @@ public class SnapshotTests
             SectionEntropyCount = sectionEntropyCount;
             DialogCount = dialogCount;
             AcceleratorCount = acceleratorCount;
+            MenuCount = menuCount;
+            ToolbarCount = toolbarCount;
         }
     }
 }

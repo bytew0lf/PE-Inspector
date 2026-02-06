@@ -286,6 +286,14 @@ namespace PE_FileInspector
                     string typeToken = CertificateUtilities.GetCertificateTypeToken(entry.Type);
                     sb.AppendLine("  Entry " + (i + 1).ToString(CultureInfo.InvariantCulture) +
                                   " (" + typeToken + ", " + entry.Data.Length.ToString(CultureInfo.InvariantCulture) + " bytes)");
+                    if (entry.AuthenticodeStatus != null)
+                    {
+                        sb.AppendLine("    Status: Signers=" + entry.AuthenticodeStatus.SignerCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | SignatureValid=" + entry.AuthenticodeStatus.SignatureValid +
+                                      " | ChainValid=" + entry.AuthenticodeStatus.ChainValid +
+                                      " | Timestamp=" + entry.AuthenticodeStatus.HasTimestamp +
+                                      " | TimestampValid=" + entry.AuthenticodeStatus.TimestampValid);
+                    }
 
                     if (entry.Pkcs7SignerInfos == null || entry.Pkcs7SignerInfos.Length == 0)
                     {
@@ -344,6 +352,10 @@ namespace PE_FileInspector
             }
             else
             {
+                if (!string.IsNullOrWhiteSpace(pe.DotNetRuntimeHint))
+                {
+                    sb.AppendLine("  Runtime Hint: " + Safe(pe.DotNetRuntimeHint));
+                }
                 sb.AppendLine("  Runtime Version: " + pe.ClrMetadata.MajorRuntimeVersion + "." + pe.ClrMetadata.MinorRuntimeVersion);
                 sb.AppendLine("  Metadata Version: " + Safe(pe.ClrMetadata.MetadataVersion));
                 sb.AppendLine("  Flags: 0x" + pe.ClrMetadata.Flags.ToString("X8", CultureInfo.InvariantCulture));
@@ -363,6 +375,14 @@ namespace PE_FileInspector
                 sb.AppendLine("  Field Count: " + pe.ClrMetadata.FieldDefinitionCount.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Property Count: " + pe.ClrMetadata.PropertyDefinitionCount.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Event Count: " + pe.ClrMetadata.EventDefinitionCount.ToString(CultureInfo.InvariantCulture));
+                if (pe.ClrMetadata.HasDebuggableAttribute || !string.IsNullOrWhiteSpace(pe.ClrMetadata.DebuggableModes))
+                {
+                    sb.AppendLine("  Debuggable: " + Safe(pe.ClrMetadata.DebuggableModes));
+                }
+                else
+                {
+                    sb.AppendLine("  Debuggable: (none)");
+                }
                 if (pe.ClrMetadata.MetadataTableCounts.Length == 0)
                 {
                     sb.AppendLine("  Metadata Tables: (none)");
@@ -505,6 +525,40 @@ namespace PE_FileInspector
                             sb.AppendLine("    - [" + source + "] Hint: " + entry.Hint.ToString(CultureInfo.InvariantCulture) +
                                           ", Name: " + Safe(entry.Name) +
                                           " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
+                        }
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Import Descriptors:");
+            if (pe.ImportDescriptors.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ImportDescriptorInfo descriptor in pe.ImportDescriptors.OrderBy(d => d.DllName, StringComparer.OrdinalIgnoreCase))
+                {
+                    sb.AppendLine("  - " + Safe(descriptor.DllName) +
+                                  " | INT: " + descriptor.IntCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | IAT: " + descriptor.IatCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Bound: " + descriptor.IsBound +
+                                  " | Stale: " + descriptor.IsBoundStale);
+                    if (descriptor.IntOnlyFunctions.Count > 0)
+                    {
+                        sb.AppendLine("    INT-only: " + string.Join(", ", descriptor.IntOnlyFunctions.Take(10)));
+                        if (descriptor.IntOnlyFunctions.Count > 10)
+                        {
+                            sb.AppendLine("    (truncated)");
+                        }
+                    }
+                    if (descriptor.IatOnlyFunctions.Count > 0)
+                    {
+                        sb.AppendLine("    IAT-only: " + string.Join(", ", descriptor.IatOnlyFunctions.Take(10)));
+                        if (descriptor.IatOnlyFunctions.Count > 10)
+                        {
+                            sb.AppendLine("    (truncated)");
                         }
                     }
                 }
@@ -960,6 +1014,60 @@ namespace PE_FileInspector
                                       " | Cmd: 0x" + entry.Command.ToString("X4", CultureInfo.InvariantCulture) +
                                       " | Flags: " + flags +
                                       " | Last: " + entry.IsLast);
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resource Menus:");
+            if (pe.ResourceMenus.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceMenuInfo menu in pe.ResourceMenus.OrderBy(m => m.NameId).ThenBy(m => m.LanguageId))
+                {
+                    sb.AppendLine("  NameId: " + menu.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + menu.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Items: " + menu.ItemCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Extended: " + menu.IsExtended);
+                    if (menu.ItemTexts.Count > 0)
+                    {
+                        foreach (string text in menu.ItemTexts.Take(10))
+                        {
+                            sb.AppendLine("    - " + Safe(text));
+                        }
+                        if (menu.ItemTexts.Count > 10)
+                        {
+                            sb.AppendLine("    (truncated)");
+                        }
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resource Toolbars:");
+            if (pe.ResourceToolbars.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceToolbarInfo toolbar in pe.ResourceToolbars.OrderBy(t => t.NameId).ThenBy(t => t.LanguageId))
+                {
+                    sb.AppendLine("  NameId: " + toolbar.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + toolbar.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Version: " + toolbar.Version.ToString(CultureInfo.InvariantCulture) +
+                                  " | Size: " + toolbar.Width.ToString(CultureInfo.InvariantCulture) + "x" + toolbar.Height.ToString(CultureInfo.InvariantCulture) +
+                                  " | Items: " + toolbar.ItemCount.ToString(CultureInfo.InvariantCulture));
+                    if (toolbar.ItemIds.Count > 0)
+                    {
+                        sb.AppendLine("    Ids: " + string.Join(", ", toolbar.ItemIds.Take(12)));
+                        if (toolbar.ItemIds.Count > 12)
+                        {
+                            sb.AppendLine("    (truncated)");
+                        }
                     }
                 }
             }
