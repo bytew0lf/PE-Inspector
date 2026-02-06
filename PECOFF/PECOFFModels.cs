@@ -69,6 +69,7 @@ namespace PECoff
         public bool ComputeSectionEntropy { get; init; } = true;
         public bool ParseCertificateSigners { get; init; } = true;
         public bool ComputeAuthenticode { get; init; } = true;
+        public bool ComputeManagedResourceHashes { get; init; }
         public bool UseMemoryMappedFile { get; init; }
         public bool LazyParseDataDirectories { get; init; }
         public string ApiSetSchemaPath { get; init; } = string.Empty;
@@ -796,11 +797,15 @@ namespace PECoff
     public sealed class VersionStringTableInfo
     {
         public string Key { get; }
+        public ushort LanguageId { get; }
+        public ushort CodePage { get; }
         public IReadOnlyDictionary<string, string> Values { get; }
 
-        public VersionStringTableInfo(string key, IReadOnlyDictionary<string, string> values)
+        public VersionStringTableInfo(string key, ushort languageId, ushort codePage, IReadOnlyDictionary<string, string> values)
         {
             Key = key ?? string.Empty;
+            LanguageId = languageId;
+            CodePage = codePage;
             Values = values ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
     }
@@ -1440,6 +1445,8 @@ namespace PECoff
         public string DpiAware { get; }
         public string DpiAwareness { get; }
         public string UiLanguage { get; }
+        public bool IsValid { get; }
+        public IReadOnlyList<string> ValidationMessages { get; }
 
         public ManifestSchemaInfo(
             string rootElement,
@@ -1454,7 +1461,9 @@ namespace PECoff
             string uiAccess,
             string dpiAware,
             string dpiAwareness,
-            string uiLanguage)
+            string uiLanguage,
+            bool isValid,
+            string[] validationMessages)
         {
             RootElement = rootElement ?? string.Empty;
             Namespace = schemaNamespace ?? string.Empty;
@@ -1469,12 +1478,14 @@ namespace PECoff
             DpiAware = dpiAware ?? string.Empty;
             DpiAwareness = dpiAwareness ?? string.Empty;
             UiLanguage = uiLanguage ?? string.Empty;
+            IsValid = isValid;
+            ValidationMessages = Array.AsReadOnly(validationMessages ?? Array.Empty<string>());
         }
     }
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 5;
+        public const int CurrentSchemaVersion = 6;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -1859,6 +1870,7 @@ namespace PECoff
         public string PublicKeyOrToken { get; }
         public string PublicKeyToken { get; }
         public bool IsPublicKey { get; }
+        public string ResolutionHint { get; }
         public int Token { get; }
         public int RowId { get; }
         public string FullName { get; }
@@ -1870,6 +1882,7 @@ namespace PECoff
             string publicKeyOrToken,
             string publicKeyToken,
             bool isPublicKey,
+            string resolutionHint,
             int token,
             int rowId,
             string fullName)
@@ -1880,6 +1893,7 @@ namespace PECoff
             PublicKeyOrToken = publicKeyOrToken ?? string.Empty;
             PublicKeyToken = publicKeyToken ?? string.Empty;
             IsPublicKey = isPublicKey;
+            ResolutionHint = resolutionHint ?? string.Empty;
             Token = token;
             RowId = rowId;
             FullName = fullName ?? string.Empty;

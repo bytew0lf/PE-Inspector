@@ -21,6 +21,9 @@ public class LazyParsingTests
         Assert.False(GetBoolField(parser, "_resourcesParsed"));
         Assert.False(GetBoolField(parser, "_debugParsed"));
         Assert.False(GetBoolField(parser, "_relocationsParsed"));
+        Assert.False(GetBoolField(parser, "_exceptionParsed"));
+        Assert.False(GetBoolField(parser, "_loadConfigParsed"));
+        Assert.False(GetBoolField(parser, "_clrParsed"));
 
         _ = parser.ResourceStringTables;
         Assert.True(GetBoolField(parser, "_resourcesParsed"));
@@ -30,6 +33,15 @@ public class LazyParsingTests
 
         _ = parser.BaseRelocations;
         Assert.True(GetBoolField(parser, "_relocationsParsed"));
+
+        _ = parser.ExceptionFunctions;
+        Assert.True(GetBoolField(parser, "_exceptionParsed"));
+
+        _ = parser.LoadConfig;
+        Assert.True(GetBoolField(parser, "_loadConfigParsed"));
+
+        _ = parser.ClrMetadata;
+        Assert.True(GetBoolField(parser, "_clrParsed"));
     }
 
     private static bool GetBoolField(object target, string name)

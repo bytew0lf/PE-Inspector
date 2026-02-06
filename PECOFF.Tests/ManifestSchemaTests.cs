@@ -23,5 +23,7 @@ public class ManifestSchemaTests
         Assert.Equal("PerMonitorV2", schema.DpiAwareness);
         Assert.Equal("en-US", schema.UiLanguage);
         Assert.Equal("de-DE", schema.AssemblyIdentityLanguage);
+        Assert.True(schema.IsValid);
+        Assert.Empty(schema.ValidationMessages);
     }
 }

@@ -38,6 +38,13 @@ public class NewFeatureTests
         Assert.NotNull(details);
         Assert.True(details.StringTables.Count > 0);
         Assert.True(details.Translations.Count > 0);
+        foreach (VersionStringTableInfo table in details.StringTables)
+        {
+            if (table.Key.Length == 8)
+            {
+                Assert.True(table.LanguageId != 0 || table.CodePage != 0);
+            }
+        }
     }
 
     [Fact]

@@ -594,7 +594,12 @@ namespace PECoff
         {
             VersionFixedFileInfo fixedInfo = FixedFileInfo;
             VersionStringTableInfo[] stringTables = _stringTables
-                .Select(kvp => new VersionStringTableInfo(kvp.Key, new ReadOnlyDictionary<string, string>(kvp.Value)))
+                .Select(kvp =>
+                {
+                    Dictionary<string, string> normalized = NormalizeVersionStrings(kvp.Value);
+                    ParseStringTableKey(kvp.Key, out ushort languageId, out ushort codePage);
+                    return new VersionStringTableInfo(kvp.Key, languageId, codePage, new ReadOnlyDictionary<string, string>(normalized));
+                })
                 .ToArray();
             VersionTranslationInfo[] translations = _translations
                 .Distinct()
@@ -703,6 +708,46 @@ namespace PECoff
             }
 
             return ResolveCultureNameFromLangId(langId);
+        }
+
+        private static Dictionary<string, string> NormalizeVersionStrings(Dictionary<string, string> values)
+        {
+            Dictionary<string, string> normalized = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, string> entry in values)
+            {
+                string key = entry.Key?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                string value = entry.Value?.Trim() ?? string.Empty;
+                if (normalized.ContainsKey(key))
+                {
+                    continue;
+                }
+
+                normalized[key] = value;
+            }
+
+            return normalized;
+        }
+
+        private static void ParseStringTableKey(string key, out ushort languageId, out ushort codePage)
+        {
+            languageId = 0;
+            codePage = 0;
+            if (string.IsNullOrWhiteSpace(key) || key.Length != 8)
+            {
+                return;
+            }
+
+            if (ushort.TryParse(key.Substring(0, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ushort lang) &&
+                ushort.TryParse(key.Substring(4, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ushort cp))
+            {
+                languageId = lang;
+                codePage = cp;
+            }
         }
 
         private static string[] DecodeFileFlags(uint flags, uint mask)

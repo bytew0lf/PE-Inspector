@@ -21,8 +21,8 @@ Notes:
 
 The report contains all analysis details, and any embedded certificates are written to the output directory with their native extensions (e.g. `.cer`, `.p7b`) and additionally as PEM (`.pem`).
 
-The report also includes CLR/.NET metadata when present (runtime version, metadata version, stream list, module references, managed resource names/sizes).
-It now also includes assembly metadata (assembly name/version, MVID, target framework, debuggable attribute) and metadata-based assembly references (with public key tokens), plus a runtime hint (IL/Mixed/ReadyToRun).
+The report also includes CLR/.NET metadata when present (runtime version, metadata version, stream list, module references, managed resource names/sizes/hashes).
+It now also includes assembly metadata (assembly name/version, MVID, target framework, debuggable attribute, assembly/module attribute lists) and metadata-based assembly references (with public key tokens and resolution hints), plus a runtime hint (IL/Mixed/ReadyToRun).
 Resource string tables and manifests are decoded and included in the report when available.
 The report also includes debug directory entries (CodeView/PDB IDs + identity checks), base relocation summaries (top types + sample RVAs), TLS/load-config data (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, callback resolution), version-info details (string tables + translations + file flags), icon-group reconstruction (PNG detection), bitmap/cursor resource metadata, Authenticode digest checks and signer status/policy summaries (RFC3161 timestamps, nested signatures), message tables, dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI, requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/entropy summaries and packing hints, import descriptor consistency/bind hints with API-set resolution hints (schema or heuristic), export forwarder resolution hints, section padding analysis, exception directory summaries (unwind counts/details/range validity), and subsystem/security flags when present.
 
@@ -41,9 +41,10 @@ The PECOFF parser supports options and an immutable result snapshot:
 - `PECOFFOptions.EnableAssemblyAnalysis`: controls reflection-based obfuscation analysis.
 - `PECOFFOptions.ParseCertificateSigners`: extract PKCS7 signer info.
 - `PECOFFOptions.UseMemoryMappedFile`: enable memory-mapped parsing.
-- `PECOFFOptions.LazyParseDataDirectories`: defer parsing resources/debug/relocations until accessed.
+- `PECOFFOptions.LazyParseDataDirectories`: defer parsing resources/debug/relocations/exception/load-config/CLR until accessed.
 - `PECOFFOptions.AuthenticodePolicy`: configure chain/timestamp/EKU policy checks in signer status (including optional trust-store checks and revocation settings).
 - `AuthenticodePolicy.OfflineChainCheck`: disable certificate downloads and force offline chain evaluation.
+- `PECOFFOptions.ComputeManagedResourceHashes`: compute SHA256 for embedded managed resources.
 - `PECOFFOptions.IssueCallback`: receive issues as they are raised (warnings/errors) in addition to the collected lists.
 - `PECOFFOptions.PresetFast()` / `PresetDefault()` / `PresetStrictSecurity()`: convenience presets for common configurations.
 - `PECOFFOptions.ValidationProfile`: `Default`, `Compatibility`, `Strict`, `Forensic` severity presets for warnings/errors.
@@ -76,6 +77,14 @@ Regenerate it with the snapshot generator:
 Optional parameters:
 
     dotnet run --project tools/SnapshotGenerator/SnapshotGenerator.csproj -- --input <testfiles-dir> --output <snapshot-path>
+
+JSON golden snapshots for minimal fixtures live in:
+
+    PECOFF.Tests/Fixtures/json/
+
+Regenerate them by running the tests with:
+
+    PECOFF_UPDATE_JSON_SNAPSHOTS=1 dotnet test
 
 ### Minimal fixtures
 Small deterministic fixtures live in `PECOFF.Tests/Fixtures/minimal/` and are used for fast metadata sanity checks and option-policy coverage. The folder includes a handful of copied binaries from `testfiles` plus two synthetic stubs (`minimal-x86.exe`, `minimal-x64.exe`) that keep edge-case parsing stable across environments.
@@ -112,6 +121,7 @@ Defaults:
 - v3: resource metadata (bitmap/cursor), API-set schema, relocation summaries.
 - v4: CLR module references and managed resource list; public key tokens for assembly references.
 - v5: managed resource sizes, Pkcs7 chain element details, and stable JSON ordering support.
+- v6: managed resource hashes, manifest validation details, and CLR attribute lists.
 
 ## Contents of the output file
 The CSV-Output currently contains the following values for each analyzed file.

@@ -32,6 +32,12 @@ public class ClrMetadataExtendedTests
         {
             Assert.All(metadata.ManagedResources, info => Assert.False(string.IsNullOrWhiteSpace(info.Name)));
         }
+
+        int customAttributeCount = GetTableCount(metadata, TableIndex.CustomAttribute);
+        if (customAttributeCount > 0)
+        {
+            Assert.True(metadata.AssemblyAttributes.Length > 0 || metadata.ModuleAttributes.Length > 0);
+        }
     }
 
     [Fact]

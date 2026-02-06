@@ -498,9 +498,37 @@ namespace PE_FileInspector
                         string pktSuffix = string.IsNullOrWhiteSpace(reference.PublicKeyToken) || reference.PublicKeyOrToken == reference.PublicKeyToken
                             ? string.Empty
                             : " [PKT: " + reference.PublicKeyToken + "]";
+                        string hintSuffix = string.IsNullOrWhiteSpace(reference.ResolutionHint)
+                            ? string.Empty
+                            : " [" + reference.ResolutionHint + "]";
                         sb.AppendLine("    - " + reference.FullName +
                                       (string.IsNullOrWhiteSpace(tokenText) ? string.Empty : " [Token: " + tokenText + "]") +
-                                      pktSuffix);
+                                      pktSuffix +
+                                      hintSuffix);
+                    }
+                }
+                if (pe.ClrMetadata.AssemblyAttributes.Length == 0)
+                {
+                    sb.AppendLine("  Assembly Attributes: (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Assembly Attributes:");
+                    foreach (string attribute in pe.ClrMetadata.AssemblyAttributes)
+                    {
+                        sb.AppendLine("    - " + attribute);
+                    }
+                }
+                if (pe.ClrMetadata.ModuleAttributes.Length == 0)
+                {
+                    sb.AppendLine("  Module Attributes: (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Module Attributes:");
+                    foreach (string attribute in pe.ClrMetadata.ModuleAttributes)
+                    {
+                        sb.AppendLine("    - " + attribute);
                     }
                 }
                 if (pe.ClrMetadata.ModuleReferences.Length == 0)
@@ -531,7 +559,10 @@ namespace PE_FileInspector
                         string sizeText = resource.Size > 0
                             ? ", Size: " + resource.Size.ToString(CultureInfo.InvariantCulture)
                             : string.Empty;
-                        sb.AppendLine("    - " + resource.Name + " (" + details + ", Offset: " + resource.Offset.ToString(CultureInfo.InvariantCulture) + sizeText + ")");
+                        string hashText = string.IsNullOrWhiteSpace(resource.Sha256)
+                            ? string.Empty
+                            : ", SHA256: " + resource.Sha256;
+                        sb.AppendLine("    - " + resource.Name + " (" + details + ", Offset: " + resource.Offset.ToString(CultureInfo.InvariantCulture) + sizeText + hashText + ")");
                     }
                 }
                 if (pe.ClrMetadata.Streams.Length == 0)
@@ -824,6 +855,7 @@ namespace PE_FileInspector
                         {
                             line += ", ForwarderTarget: " + Safe(entry.ForwarderTarget);
                         }
+                        line += ", ForwarderResolved: " + entry.ForwarderResolved;
                     }
                     sb.AppendLine(line);
                     if (entry.IsForwarder && entry.ForwarderChain.Count > 0)
@@ -1541,6 +1573,15 @@ namespace PE_FileInspector
                         if (!string.IsNullOrWhiteSpace(manifest.Schema.UiLanguage))
                         {
                             sb.AppendLine("      UiLanguage: " + Safe(manifest.Schema.UiLanguage));
+                        }
+                        sb.AppendLine("      SchemaValid: " + manifest.Schema.IsValid);
+                        if (manifest.Schema.ValidationMessages != null && manifest.Schema.ValidationMessages.Count > 0)
+                        {
+                            sb.AppendLine("      Validation:");
+                            foreach (string message in manifest.Schema.ValidationMessages)
+                            {
+                                sb.AppendLine("        - " + message);
+                            }
                         }
                     }
                     if (!string.IsNullOrWhiteSpace(manifest.Content))
