@@ -24,17 +24,19 @@ The report contains all analysis details, and any embedded certificates are writ
 The report also includes CLR/.NET metadata when present (runtime version, metadata version, and stream list).
 It now also includes assembly metadata (assembly name/version, MVID, target framework) and metadata-based assembly references.
 Resource string tables and manifests are decoded and included in the report when available.
-The report also includes debug directory entries, base relocations, TLS/load-config data, version-info details, icon-group reconstruction, Authenticode digest checks, message tables, manifest schema summaries (including MUI when present), ReadyToRun headers, and subsystem/security flags when present.
+The report also includes debug directory entries, base relocations, TLS/load-config data, version-info details, icon-group reconstruction, Authenticode digest checks, message tables, dialog/accelerator summaries, manifest schema summaries (including MUI when present), ReadyToRun headers, import hash/overlay/entropy summaries, and subsystem/security flags when present.
 
 ## Additional functionality
 The PECOFF Library has also the ability to get all imports and exports of the PE-file as well as the certificate.
-It now exposes debug directory entries, base relocations, TLS/load-config metadata, icon groups, version-info details, message tables, manifest schema details, ReadyToRun headers, subsystem/DllCharacteristics summaries, and Authenticode digest verification results.
+It now exposes debug directory entries, base relocations, TLS/load-config metadata, icon groups, version-info details, message tables, dialog/accelerator parsing, manifest schema details, ReadyToRun headers, import hash/overlay/section entropy info, subsystem/DllCharacteristics summaries, and Authenticode digest verification results.
 
 ### Library API options
 The PECOFF parser supports options and an immutable result snapshot:
 
 - `PECOFFOptions.StrictMode`: treat warnings as errors and throw `PECOFFParseException`.
 - `PECOFFOptions.ComputeHash` / `ComputeChecksum`: toggle hashing/checksum work.
+- `PECOFFOptions.ComputeImportHash`: toggle imphash computation for imports.
+- `PECOFFOptions.ComputeSectionEntropy`: toggle section entropy scanning.
 - `PECOFFOptions.ComputeAuthenticode`: toggle Authenticode digest verification.
 - `PECOFFOptions.EnableAssemblyAnalysis`: controls reflection-based obfuscation analysis.
 - `PECOFFOptions.ParseCertificateSigners`: extract PKCS7 signer info.

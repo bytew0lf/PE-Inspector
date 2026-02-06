@@ -52,7 +52,9 @@ namespace PECoff
         public bool StrictMode { get; init; }
         public bool EnableAssemblyAnalysis { get; init; } = true;
         public bool ComputeHash { get; init; } = true;
+        public bool ComputeImportHash { get; init; } = true;
         public bool ComputeChecksum { get; init; } = true;
+        public bool ComputeSectionEntropy { get; init; } = true;
         public bool ParseCertificateSigners { get; init; } = true;
         public bool ComputeAuthenticode { get; init; } = true;
         public bool UseMemoryMappedFile { get; init; }
@@ -494,6 +496,65 @@ namespace PECoff
         }
     }
 
+    public sealed class SecurityFeaturesInfo
+    {
+        public bool NxCompat { get; }
+        public bool AslrEnabled { get; }
+        public bool HighEntropyVa { get; }
+        public bool GuardCf { get; }
+        public bool HasSecurityCookie { get; }
+        public bool HasSeHandlerTable { get; }
+        public bool SafeSeh { get; }
+        public bool NoSeh { get; }
+
+        public SecurityFeaturesInfo(
+            bool nxCompat,
+            bool aslrEnabled,
+            bool highEntropyVa,
+            bool guardCf,
+            bool hasSecurityCookie,
+            bool hasSeHandlerTable,
+            bool safeSeh,
+            bool noSeh)
+        {
+            NxCompat = nxCompat;
+            AslrEnabled = aslrEnabled;
+            HighEntropyVa = highEntropyVa;
+            GuardCf = guardCf;
+            HasSecurityCookie = hasSecurityCookie;
+            HasSeHandlerTable = hasSeHandlerTable;
+            SafeSeh = safeSeh;
+            NoSeh = noSeh;
+        }
+    }
+
+    public sealed class OverlayInfo
+    {
+        public long StartOffset { get; }
+        public long Size { get; }
+        public bool HasOverlay => Size > 0;
+
+        public OverlayInfo(long startOffset, long size)
+        {
+            StartOffset = startOffset < 0 ? 0 : startOffset;
+            Size = size < 0 ? 0 : size;
+        }
+    }
+
+    public sealed class SectionEntropyInfo
+    {
+        public string Name { get; }
+        public uint RawSize { get; }
+        public double Entropy { get; }
+
+        public SectionEntropyInfo(string name, uint rawSize, double entropy)
+        {
+            Name = name ?? string.Empty;
+            RawSize = rawSize;
+            Entropy = entropy;
+        }
+    }
+
     public sealed class MetadataTableCountInfo
     {
         public int TableIndex { get; }
@@ -578,6 +639,91 @@ namespace PECoff
         }
     }
 
+    public sealed class ResourceDialogInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public bool IsExtended { get; }
+        public uint Style { get; }
+        public uint ExtendedStyle { get; }
+        public ushort ControlCount { get; }
+        public short X { get; }
+        public short Y { get; }
+        public short Cx { get; }
+        public short Cy { get; }
+        public string Menu { get; }
+        public string WindowClass { get; }
+        public string Title { get; }
+        public ushort? FontPointSize { get; }
+        public string FontFace { get; }
+
+        public ResourceDialogInfo(
+            uint nameId,
+            ushort languageId,
+            bool isExtended,
+            uint style,
+            uint extendedStyle,
+            ushort controlCount,
+            short x,
+            short y,
+            short cx,
+            short cy,
+            string menu,
+            string windowClass,
+            string title,
+            ushort? fontPointSize,
+            string fontFace)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            IsExtended = isExtended;
+            Style = style;
+            ExtendedStyle = extendedStyle;
+            ControlCount = controlCount;
+            X = x;
+            Y = y;
+            Cx = cx;
+            Cy = cy;
+            Menu = menu ?? string.Empty;
+            WindowClass = windowClass ?? string.Empty;
+            Title = title ?? string.Empty;
+            FontPointSize = fontPointSize;
+            FontFace = fontFace ?? string.Empty;
+        }
+    }
+
+    public sealed class ResourceAcceleratorEntryInfo
+    {
+        public byte Flags { get; }
+        public ushort Key { get; }
+        public ushort Command { get; }
+        public bool IsLast { get; }
+        public string[] FlagNames { get; }
+
+        public ResourceAcceleratorEntryInfo(byte flags, ushort key, ushort command, bool isLast, string[] flagNames)
+        {
+            Flags = flags;
+            Key = key;
+            Command = command;
+            IsLast = isLast;
+            FlagNames = flagNames ?? Array.Empty<string>();
+        }
+    }
+
+    public sealed class ResourceAcceleratorTableInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public IReadOnlyList<ResourceAcceleratorEntryInfo> Entries { get; }
+
+        public ResourceAcceleratorTableInfo(uint nameId, ushort languageId, ResourceAcceleratorEntryInfo[] entries)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<ResourceAcceleratorEntryInfo>());
+        }
+    }
+
     public sealed class ManifestSchemaInfo
     {
         public string RootElement { get; }
@@ -615,6 +761,7 @@ namespace PECoff
         public string FilePath { get; }
         public ParseResultSnapshot ParseResult { get; }
         public string Hash { get; }
+        public string ImportHash { get; }
         public bool IsDotNetFile { get; }
         public bool IsObfuscated { get; }
         public double ObfuscationPercentage { get; }
@@ -635,6 +782,8 @@ namespace PECoff
         public uint FileAlignment { get; }
         public uint SectionAlignment { get; }
         public uint SizeOfHeaders { get; }
+        public OverlayInfo OverlayInfo { get; }
+        public IReadOnlyList<SectionEntropyInfo> SectionEntropies { get; }
         public uint OptionalHeaderChecksum { get; }
         public uint ComputedChecksum { get; }
         public bool IsChecksumValid { get; }
@@ -642,6 +791,7 @@ namespace PECoff
         public DateTimeOffset? TimeDateStampUtc { get; }
         public SubsystemInfo Subsystem { get; }
         public DllCharacteristicsInfo DllCharacteristics { get; }
+        public SecurityFeaturesInfo SecurityFeatures { get; }
         public bool HasCertificate { get; }
         public byte[] Certificate { get; }
         public IReadOnlyList<byte[]> Certificates { get; }
@@ -649,6 +799,8 @@ namespace PECoff
         public IReadOnlyList<ResourceEntry> Resources { get; }
         public IReadOnlyList<ResourceStringTableInfo> ResourceStringTables { get; }
         public IReadOnlyList<ResourceMessageTableInfo> ResourceMessageTables { get; }
+        public IReadOnlyList<ResourceDialogInfo> ResourceDialogs { get; }
+        public IReadOnlyList<ResourceAcceleratorTableInfo> ResourceAccelerators { get; }
         public IReadOnlyList<ResourceManifestInfo> ResourceManifests { get; }
         public IReadOnlyList<IconGroupInfo> IconGroups { get; }
         public ClrMetadataInfo ClrMetadata { get; }
@@ -674,6 +826,7 @@ namespace PECoff
             string filePath,
             ParseResultSnapshot parseResult,
             string hash,
+            string importHash,
             bool isDotNetFile,
             bool isObfuscated,
             double obfuscationPercentage,
@@ -694,6 +847,8 @@ namespace PECoff
             uint fileAlignment,
             uint sectionAlignment,
             uint sizeOfHeaders,
+            OverlayInfo overlayInfo,
+            SectionEntropyInfo[] sectionEntropies,
             uint optionalHeaderChecksum,
             uint computedChecksum,
             bool isChecksumValid,
@@ -701,6 +856,7 @@ namespace PECoff
             DateTimeOffset? timeDateStampUtc,
             SubsystemInfo subsystem,
             DllCharacteristicsInfo dllCharacteristics,
+            SecurityFeaturesInfo securityFeatures,
             bool hasCertificate,
             byte[] certificate,
             byte[][] certificates,
@@ -708,6 +864,8 @@ namespace PECoff
             ResourceEntry[] resources,
             ResourceStringTableInfo[] resourceStringTables,
             ResourceMessageTableInfo[] resourceMessageTables,
+            ResourceDialogInfo[] resourceDialogs,
+            ResourceAcceleratorTableInfo[] resourceAccelerators,
             ResourceManifestInfo[] resourceManifests,
             IconGroupInfo[] iconGroups,
             ClrMetadataInfo clrMetadata,
@@ -732,6 +890,7 @@ namespace PECoff
             FilePath = filePath ?? string.Empty;
             ParseResult = parseResult ?? new ParseResultSnapshot(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<ParseIssue>());
             Hash = hash ?? string.Empty;
+            ImportHash = importHash ?? string.Empty;
             IsDotNetFile = isDotNetFile;
             IsObfuscated = isObfuscated;
             ObfuscationPercentage = obfuscationPercentage;
@@ -752,6 +911,8 @@ namespace PECoff
             FileAlignment = fileAlignment;
             SectionAlignment = sectionAlignment;
             SizeOfHeaders = sizeOfHeaders;
+            OverlayInfo = overlayInfo ?? new OverlayInfo(0, 0);
+            SectionEntropies = Array.AsReadOnly(sectionEntropies ?? Array.Empty<SectionEntropyInfo>());
             OptionalHeaderChecksum = optionalHeaderChecksum;
             ComputedChecksum = computedChecksum;
             IsChecksumValid = isChecksumValid;
@@ -759,6 +920,7 @@ namespace PECoff
             TimeDateStampUtc = timeDateStampUtc;
             Subsystem = subsystem;
             DllCharacteristics = dllCharacteristics;
+            SecurityFeatures = securityFeatures;
             HasCertificate = hasCertificate;
             Certificate = certificate ?? Array.Empty<byte>();
             Certificates = Array.AsReadOnly(certificates ?? Array.Empty<byte[]>());
@@ -766,6 +928,8 @@ namespace PECoff
             Resources = Array.AsReadOnly(resources ?? Array.Empty<ResourceEntry>());
             ResourceStringTables = Array.AsReadOnly(resourceStringTables ?? Array.Empty<ResourceStringTableInfo>());
             ResourceMessageTables = Array.AsReadOnly(resourceMessageTables ?? Array.Empty<ResourceMessageTableInfo>());
+            ResourceDialogs = Array.AsReadOnly(resourceDialogs ?? Array.Empty<ResourceDialogInfo>());
+            ResourceAccelerators = Array.AsReadOnly(resourceAccelerators ?? Array.Empty<ResourceAcceleratorTableInfo>());
             ResourceManifests = Array.AsReadOnly(resourceManifests ?? Array.Empty<ResourceManifestInfo>());
             IconGroups = Array.AsReadOnly(iconGroups ?? Array.Empty<IconGroupInfo>());
             ClrMetadata = clrMetadata;

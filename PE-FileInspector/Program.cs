@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
 using PECoff;
@@ -12,6 +13,16 @@ namespace PE_FileInspector
 {
     internal static class Program
     {
+        private static IDisposable? _cssmSuppressor;
+
+        [ModuleInitializer]
+        internal static void InitializeCssmFilter()
+        {
+            Environment.SetEnvironmentVariable("OS_ACTIVITY_MODE", "disable");
+            bool suppress = CssmStderrFilter.GetDefaultSuppressSetting();
+            _cssmSuppressor = CssmStderrFilter.TryStart(suppress);
+        }
+
         private sealed class Options
         {
             public string OutputFileName { get; set; } = string.Empty;
@@ -29,7 +40,15 @@ namespace PE_FileInspector
             }
 
             bool suppressCssm = options.SuppressCssm ?? CssmStderrFilter.GetDefaultSuppressSetting();
-            IDisposable? suppressor = CssmStderrFilter.TryStart(suppressCssm);
+            if (!suppressCssm && _cssmSuppressor != null)
+            {
+                _cssmSuppressor.Dispose();
+                _cssmSuppressor = null;
+            }
+            else if (suppressCssm && _cssmSuppressor == null)
+            {
+                _cssmSuppressor = CssmStderrFilter.TryStart(true);
+            }
             try
             {
                 if (!File.Exists(options.FilePath))
@@ -119,7 +138,7 @@ namespace PE_FileInspector
             }
             finally
             {
-                suppressor?.Dispose();
+                // Filter is kept until process exit to catch late CSSM warnings.
             }
         }
 
@@ -161,9 +180,15 @@ namespace PE_FileInspector
             sb.AppendLine("  Is .NET File: " + pe.IsDotNetFile);
             sb.AppendLine("  Is Obfuscated: " + pe.IsObfuscated);
             sb.AppendLine("  Obfuscation Percentage: " + pe.ObfuscationPercentage.ToString(CultureInfo.InvariantCulture));
+            sb.AppendLine("  Import Hash: " + Safe(pe.ImportHash));
             sb.AppendLine("  File Alignment: " + pe.FileAlignment.ToString(CultureInfo.InvariantCulture));
             sb.AppendLine("  Section Alignment: " + pe.SectionAlignment.ToString(CultureInfo.InvariantCulture));
             sb.AppendLine("  Size Of Headers: " + pe.SizeOfHeaders.ToString(CultureInfo.InvariantCulture));
+            if (pe.OverlayInfo != null)
+            {
+                sb.AppendLine("  Overlay Start: 0x" + pe.OverlayInfo.StartOffset.ToString("X", CultureInfo.InvariantCulture));
+                sb.AppendLine("  Overlay Size: " + pe.OverlayInfo.Size.ToString(CultureInfo.InvariantCulture));
+            }
             sb.AppendLine("  Optional Header Checksum: 0x" + pe.OptionalHeaderChecksum.ToString("X8", CultureInfo.InvariantCulture));
             sb.AppendLine("  Computed Checksum: 0x" + pe.ComputedChecksum.ToString("X8", CultureInfo.InvariantCulture));
             sb.AppendLine("  Checksum Valid: " + pe.IsChecksumValid);
@@ -189,6 +214,17 @@ namespace PE_FileInspector
                         sb.AppendLine("    - " + flag);
                     }
                 }
+            }
+            if (pe.SecurityFeaturesInfo != null)
+            {
+                sb.AppendLine("  Security Features:");
+                sb.AppendLine("    NX Compat: " + pe.SecurityFeaturesInfo.NxCompat);
+                sb.AppendLine("    ASLR: " + pe.SecurityFeaturesInfo.AslrEnabled);
+                sb.AppendLine("    High Entropy VA: " + pe.SecurityFeaturesInfo.HighEntropyVa);
+                sb.AppendLine("    CFG: " + pe.SecurityFeaturesInfo.GuardCf);
+                sb.AppendLine("    Security Cookie: " + pe.SecurityFeaturesInfo.HasSecurityCookie);
+                sb.AppendLine("    SafeSEH: " + pe.SecurityFeaturesInfo.SafeSeh);
+                sb.AppendLine("    NO_SEH: " + pe.SecurityFeaturesInfo.NoSeh);
             }
             sb.AppendLine("  TimeDateStamp (raw): 0x" + pe.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
             sb.AppendLine("  TimeDateStamp (UTC): " + (pe.TimeDateStampUtc?.ToString("u", CultureInfo.InvariantCulture) ?? string.Empty));
@@ -216,6 +252,22 @@ namespace PE_FileInspector
                 foreach (string path in pemPaths)
                 {
                     sb.AppendLine("    - " + path);
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Section Entropy:");
+            if (pe.SectionEntropies.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (SectionEntropyInfo entry in pe.SectionEntropies.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase))
+                {
+                    sb.AppendLine("  - " + entry.Name +
+                                  " | Size: " + entry.RawSize.ToString(CultureInfo.InvariantCulture) +
+                                  " | Entropy: " + entry.Entropy.ToString("F3", CultureInfo.InvariantCulture));
                 }
             }
             sb.AppendLine();
@@ -306,6 +358,11 @@ namespace PE_FileInspector
                 sb.AppendLine("  Target Framework: " + Safe(pe.ClrMetadata.TargetFramework));
                 sb.AppendLine("  Module Count: " + pe.ClrMetadata.ModuleDefinitionCount.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  TypeDef Count: " + pe.ClrMetadata.TypeDefinitionCount.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  TypeRef Count: " + pe.ClrMetadata.TypeReferenceCount.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  MethodDef Count: " + pe.ClrMetadata.MethodDefinitionCount.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  Field Count: " + pe.ClrMetadata.FieldDefinitionCount.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  Property Count: " + pe.ClrMetadata.PropertyDefinitionCount.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  Event Count: " + pe.ClrMetadata.EventDefinitionCount.ToString(CultureInfo.InvariantCulture));
                 if (pe.ClrMetadata.MetadataTableCounts.Length == 0)
                 {
                     sb.AppendLine("  Metadata Tables: (none)");
@@ -844,6 +901,65 @@ namespace PE_FileInspector
                     if (table.Entries.Count > 50)
                     {
                         sb.AppendLine("  (truncated)");
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resource Dialogs:");
+            if (pe.ResourceDialogs.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceDialogInfo dialog in pe.ResourceDialogs.OrderBy(d => d.NameId).ThenBy(d => d.LanguageId))
+                {
+                    sb.AppendLine("  NameId: " + dialog.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + dialog.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Controls: " + dialog.ControlCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Title: " + Safe(dialog.Title));
+                    sb.AppendLine("    Style: 0x" + dialog.Style.ToString("X8", CultureInfo.InvariantCulture) +
+                                  " | ExStyle: 0x" + dialog.ExtendedStyle.ToString("X8", CultureInfo.InvariantCulture) +
+                                  " | Rect: " + dialog.X + "," + dialog.Y + " " + dialog.Cx + "x" + dialog.Cy);
+                    if (!string.IsNullOrWhiteSpace(dialog.Menu))
+                    {
+                        sb.AppendLine("    Menu: " + Safe(dialog.Menu));
+                    }
+                    if (!string.IsNullOrWhiteSpace(dialog.WindowClass))
+                    {
+                        sb.AppendLine("    Class: " + Safe(dialog.WindowClass));
+                    }
+                    if (dialog.FontPointSize.HasValue)
+                    {
+                        sb.AppendLine("    Font: " + dialog.FontPointSize.Value.ToString(CultureInfo.InvariantCulture) +
+                                      (string.IsNullOrWhiteSpace(dialog.FontFace) ? string.Empty : " " + dialog.FontFace));
+                    }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resource Accelerators:");
+            if (pe.ResourceAccelerators.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceAcceleratorTableInfo table in pe.ResourceAccelerators.OrderBy(t => t.NameId).ThenBy(t => t.LanguageId))
+                {
+                    sb.AppendLine("  NameId: " + table.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + table.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Entries: " + table.Entries.Count.ToString(CultureInfo.InvariantCulture));
+                    foreach (ResourceAcceleratorEntryInfo entry in table.Entries)
+                    {
+                        string flags = entry.FlagNames.Length == 0
+                            ? "0x" + entry.Flags.ToString("X2", CultureInfo.InvariantCulture)
+                            : string.Join(",", entry.FlagNames);
+                        sb.AppendLine("    - Key: 0x" + entry.Key.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | Cmd: 0x" + entry.Command.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | Flags: " + flags +
+                                      " | Last: " + entry.IsLast);
                     }
                 }
             }

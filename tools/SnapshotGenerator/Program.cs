@@ -40,6 +40,7 @@ foreach (string file in Directory.GetFiles(testFilesDir, "*.*", SearchOption.Top
     SnapshotEntry entry = new SnapshotEntry(
         Path.GetFileName(file) ?? file,
         parser.Hash ?? string.Empty,
+        parser.ImportHash ?? string.Empty,
         parser.IsDotNetFile,
         parser.ImportEntries.Length,
         parser.ExportEntries.Length,
@@ -55,7 +56,11 @@ foreach (string file in Directory.GetFiles(testFilesDir, "*.*", SearchOption.Top
         parser.IconGroups.Length,
         parser.TlsInfo != null,
         parser.LoadConfig != null,
-        parser.CertificateEntries.Sum(e => e.AuthenticodeResults?.Length ?? 0));
+        parser.CertificateEntries.Sum(e => e.AuthenticodeResults?.Length ?? 0),
+        parser.OverlayInfo != null ? parser.OverlayInfo.Size : 0,
+        parser.SectionEntropies.Length,
+        parser.ResourceDialogs.Length,
+        parser.ResourceAccelerators.Length);
 
     snapshots[entry.Name] = entry;
 }
@@ -66,6 +71,7 @@ foreach (SnapshotEntry entry in snapshots.Values.OrderBy(e => e.Name, StringComp
     lines.Add(string.Join("|",
         entry.Name,
         entry.Hash,
+        entry.ImportHash,
         entry.IsDotNet.ToString(),
         entry.ImportCount.ToString(CultureInfo.InvariantCulture),
         entry.ExportCount.ToString(CultureInfo.InvariantCulture),
@@ -81,7 +87,11 @@ foreach (SnapshotEntry entry in snapshots.Values.OrderBy(e => e.Name, StringComp
         entry.IconGroupCount.ToString(CultureInfo.InvariantCulture),
         entry.HasTls.ToString(),
         entry.HasLoadConfig.ToString(),
-        entry.AuthenticodeResultCount.ToString(CultureInfo.InvariantCulture)));
+        entry.AuthenticodeResultCount.ToString(CultureInfo.InvariantCulture),
+        entry.OverlaySize.ToString(CultureInfo.InvariantCulture),
+        entry.SectionEntropyCount.ToString(CultureInfo.InvariantCulture),
+        entry.DialogCount.ToString(CultureInfo.InvariantCulture),
+        entry.AcceleratorCount.ToString(CultureInfo.InvariantCulture)));
 }
 
 File.WriteAllLines(snapshotPath, lines);
@@ -112,6 +122,7 @@ sealed class SnapshotEntry
 {
     public string Name { get; }
     public string Hash { get; }
+    public string ImportHash { get; }
     public bool IsDotNet { get; }
     public int ImportCount { get; }
     public int ExportCount { get; }
@@ -128,10 +139,15 @@ sealed class SnapshotEntry
     public bool HasTls { get; }
     public bool HasLoadConfig { get; }
     public int AuthenticodeResultCount { get; }
+    public long OverlaySize { get; }
+    public int SectionEntropyCount { get; }
+    public int DialogCount { get; }
+    public int AcceleratorCount { get; }
 
     public SnapshotEntry(
         string name,
         string hash,
+        string importHash,
         bool isDotNet,
         int importCount,
         int exportCount,
@@ -147,10 +163,15 @@ sealed class SnapshotEntry
         int iconGroupCount,
         bool hasTls,
         bool hasLoadConfig,
-        int authenticodeResultCount)
+        int authenticodeResultCount,
+        long overlaySize,
+        int sectionEntropyCount,
+        int dialogCount,
+        int acceleratorCount)
     {
         Name = name ?? string.Empty;
         Hash = hash ?? string.Empty;
+        ImportHash = importHash ?? string.Empty;
         IsDotNet = isDotNet;
         ImportCount = importCount;
         ExportCount = exportCount;
@@ -167,5 +188,9 @@ sealed class SnapshotEntry
         HasTls = hasTls;
         HasLoadConfig = hasLoadConfig;
         AuthenticodeResultCount = authenticodeResultCount;
+        OverlaySize = overlaySize;
+        SectionEntropyCount = sectionEntropyCount;
+        DialogCount = dialogCount;
+        AcceleratorCount = acceleratorCount;
     }
 }
