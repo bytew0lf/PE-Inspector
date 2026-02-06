@@ -528,7 +528,10 @@ namespace PE_FileInspector
                         string details = string.IsNullOrWhiteSpace(resource.Implementation)
                             ? visibility
                             : visibility + ", " + resource.Implementation;
-                        sb.AppendLine("    - " + resource.Name + " (" + details + ", Offset: " + resource.Offset.ToString(CultureInfo.InvariantCulture) + ")");
+                        string sizeText = resource.Size > 0
+                            ? ", Size: " + resource.Size.ToString(CultureInfo.InvariantCulture)
+                            : string.Empty;
+                        sb.AppendLine("    - " + resource.Name + " (" + details + ", Offset: " + resource.Offset.ToString(CultureInfo.InvariantCulture) + sizeText + ")");
                     }
                 }
                 if (pe.ClrMetadata.Streams.Length == 0)
@@ -1597,6 +1600,30 @@ namespace PE_FileInspector
                 foreach (string status in signer.ChainStatus)
                 {
                     sb.AppendLine(prefix + "    - " + status);
+                }
+            }
+            if (signer.ChainElements != null && signer.ChainElements.Count > 0)
+            {
+                sb.AppendLine(prefix + "  Chain Elements:");
+                foreach (Pkcs7ChainElementInfo element in signer.ChainElements)
+                {
+                    sb.AppendLine(prefix + "    - " + Safe(element.Subject));
+                    if (!string.IsNullOrWhiteSpace(element.Thumbprint))
+                    {
+                        sb.AppendLine(prefix + "      Thumbprint: " + Safe(element.Thumbprint));
+                    }
+                    if (element.IsSelfSigned)
+                    {
+                        sb.AppendLine(prefix + "      SelfSigned: true");
+                    }
+                    if (element.Status != null && element.Status.Length > 0)
+                    {
+                        sb.AppendLine(prefix + "      Status:");
+                        foreach (string status in element.Status)
+                        {
+                            sb.AppendLine(prefix + "        - " + status);
+                        }
+                    }
                 }
             }
             if (signer.IsTimestampSigner)

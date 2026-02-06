@@ -24,6 +24,7 @@ namespace PECoff
         public string SignatureError { get; }
         public bool ChainValid { get; }
         public string[] ChainStatus { get; }
+        public IReadOnlyList<Pkcs7ChainElementInfo> ChainElements { get; }
         public bool IsTimestampSigner { get; }
         public bool HasCodeSigningEku { get; }
         public bool HasTimestampEku { get; }
@@ -46,6 +47,7 @@ namespace PECoff
             string signatureError,
             bool chainValid,
             string[] chainStatus,
+            Pkcs7ChainElementInfo[] chainElements,
             bool isTimestampSigner,
             bool hasCodeSigningEku,
             bool hasTimestampEku,
@@ -67,6 +69,7 @@ namespace PECoff
             SignatureError = signatureError ?? string.Empty;
             ChainValid = chainValid;
             ChainStatus = chainStatus ?? Array.Empty<string>();
+            ChainElements = Array.AsReadOnly(chainElements ?? Array.Empty<Pkcs7ChainElementInfo>());
             IsTimestampSigner = isTimestampSigner;
             HasCodeSigningEku = hasCodeSigningEku;
             HasTimestampEku = hasTimestampEku;
@@ -75,6 +78,24 @@ namespace PECoff
             CounterSigners = counterSigners ?? Array.Empty<Pkcs7SignerInfo>();
             NestedSigners = nestedSigners ?? Array.Empty<Pkcs7SignerInfo>();
             Rfc3161Timestamps = Array.AsReadOnly(rfc3161Timestamps ?? Array.Empty<Pkcs7TimestampInfo>());
+        }
+    }
+
+    public sealed class Pkcs7ChainElementInfo
+    {
+        public string Subject { get; }
+        public string Issuer { get; }
+        public string Thumbprint { get; }
+        public string[] Status { get; }
+        public bool IsSelfSigned { get; }
+
+        public Pkcs7ChainElementInfo(string subject, string issuer, string thumbprint, string[] status, bool isSelfSigned)
+        {
+            Subject = subject ?? string.Empty;
+            Issuer = issuer ?? string.Empty;
+            Thumbprint = thumbprint ?? string.Empty;
+            Status = status ?? Array.Empty<string>();
+            IsSelfSigned = isSelfSigned;
         }
     }
 
@@ -598,6 +619,7 @@ namespace PECoff
 
             bool chainValid = false;
             string[] chainStatus = Array.Empty<string>();
+            List<Pkcs7ChainElementInfo> chainElements = new List<Pkcs7ChainElementInfo>();
             if (signer.Certificate != null)
             {
                 try
@@ -606,7 +628,15 @@ namespace PECoff
                     {
                         if (policy != null)
                         {
-                            chain.ChainPolicy.RevocationMode = policy.RevocationMode;
+                            if (policy.OfflineChainCheck)
+                            {
+                                chain.ChainPolicy.DisableCertificateDownloads = true;
+                                chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                            }
+                            else
+                            {
+                                chain.ChainPolicy.RevocationMode = policy.RevocationMode;
+                            }
                             chain.ChainPolicy.RevocationFlag = policy.RevocationFlag;
                             chain.ChainPolicy.VerificationFlags = policy.EnableTrustStoreCheck
                                 ? X509VerificationFlags.NoFlag
@@ -629,6 +659,24 @@ namespace PECoff
                                 statuses.Add(status.Status + ": " + status.StatusInformation.Trim());
                             }
                             chainStatus = statuses.ToArray();
+                        }
+
+                        foreach (X509ChainElement element in chain.ChainElements)
+                        {
+                            string subjectName = element.Certificate?.Subject ?? string.Empty;
+                            string issuerName = element.Certificate?.Issuer ?? string.Empty;
+                            string thumb = element.Certificate?.Thumbprint ?? string.Empty;
+                            bool isSelfSigned = !string.IsNullOrWhiteSpace(subjectName) &&
+                                                string.Equals(subjectName, issuerName, StringComparison.OrdinalIgnoreCase);
+                            List<string> elementStatus = new List<string>();
+                            if (element.ChainElementStatus != null && element.ChainElementStatus.Length > 0)
+                            {
+                                foreach (X509ChainStatus status in element.ChainElementStatus)
+                                {
+                                    elementStatus.Add(status.Status + ": " + status.StatusInformation.Trim());
+                                }
+                            }
+                            chainElements.Add(new Pkcs7ChainElementInfo(subjectName, issuerName, thumb, elementStatus.ToArray(), isSelfSigned));
                         }
                     }
                 }
@@ -668,6 +716,7 @@ namespace PECoff
                 signatureError,
                 chainValid,
                 chainStatus,
+                chainElements.ToArray(),
                 isTimestamp,
                 hasCodeSigningEku,
                 hasTimestampEku,

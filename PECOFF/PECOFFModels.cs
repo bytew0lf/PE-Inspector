@@ -70,6 +70,7 @@ namespace PECoff
         public bool ParseCertificateSigners { get; init; } = true;
         public bool ComputeAuthenticode { get; init; } = true;
         public bool UseMemoryMappedFile { get; init; }
+        public bool LazyParseDataDirectories { get; init; }
         public string ApiSetSchemaPath { get; init; } = string.Empty;
         public AuthenticodePolicy AuthenticodePolicy { get; init; } = new AuthenticodePolicy();
         public Dictionary<ParseIssueCategory, ParseIssueSeverity> IssuePolicy { get; init; } = new Dictionary<ParseIssueCategory, ParseIssueSeverity>();
@@ -86,7 +87,8 @@ namespace PECoff
                 ComputeSectionEntropy = false,
                 ParseCertificateSigners = false,
                 ComputeAuthenticode = false,
-                UseMemoryMappedFile = true
+                UseMemoryMappedFile = true,
+                LazyParseDataDirectories = true
             };
         }
 
@@ -128,6 +130,7 @@ namespace PECoff
         public bool RequireTimestampValid { get; init; }
         public bool RequireCodeSigningEku { get; init; }
         public bool EnableTrustStoreCheck { get; init; } = true;
+        public bool OfflineChainCheck { get; init; }
         public X509RevocationMode RevocationMode { get; init; } = X509RevocationMode.NoCheck;
         public X509RevocationFlag RevocationFlag { get; init; } = X509RevocationFlag.ExcludeRoot;
     }
@@ -1471,7 +1474,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 4;
+        public const int CurrentSchemaVersion = 5;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -1708,7 +1711,7 @@ namespace PECoff
             AssemblyReferenceInfos = Array.AsReadOnly(assemblyReferenceInfos ?? Array.Empty<AssemblyReferenceInfo>());
         }
 
-        public string ToJsonReport(bool includeBinary = false, bool indented = true)
+        public string ToJsonReport(bool includeBinary = false, bool indented = true, bool stableOrdering = true)
         {
             JsonSerializerOptions options = new JsonSerializerOptions { WriteIndented = indented };
             object certificateEntries = includeBinary
@@ -1743,6 +1746,28 @@ namespace PECoff
                         DataSize = StrongNameSignature.Data?.Length ?? 0
                     });
 
+            string[] imports = stableOrdering
+                ? Imports.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray()
+                : Imports.ToArray();
+            string[] exports = stableOrdering
+                ? Exports.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray()
+                : Exports.ToArray();
+            string[] assemblyRefs = stableOrdering
+                ? AssemblyReferences.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToArray()
+                : AssemblyReferences.ToArray();
+            PackingHintInfo[] packingHints = stableOrdering
+                ? PackingHints.OrderBy(hint => hint.Name, StringComparer.OrdinalIgnoreCase).ToArray()
+                : PackingHints.ToArray();
+            SectionEntropyInfo[] entropies = stableOrdering
+                ? SectionEntropies.OrderBy(info => info.Name, StringComparer.OrdinalIgnoreCase).ToArray()
+                : SectionEntropies.ToArray();
+            SectionSlackInfo[] slacks = stableOrdering
+                ? SectionSlacks.OrderBy(info => info.SectionName, StringComparer.OrdinalIgnoreCase).ToArray()
+                : SectionSlacks.ToArray();
+            SectionGapInfo[] gaps = stableOrdering
+                ? SectionGaps.OrderBy(info => info.PreviousSection, StringComparer.OrdinalIgnoreCase).ToArray()
+                : SectionGaps.ToArray();
+
             var report = new
             {
                 SchemaVersion,
@@ -1772,10 +1797,10 @@ namespace PECoff
                 SectionAlignment,
                 SizeOfHeaders,
                 OverlayInfo,
-                PackingHints,
-                SectionEntropies,
-                SectionSlacks,
-                SectionGaps,
+                PackingHints = packingHints,
+                SectionEntropies = entropies,
+                SectionSlacks = slacks,
+                SectionGaps = gaps,
                 OptionalHeaderChecksum,
                 ComputedChecksum,
                 IsChecksumValid,
@@ -1800,12 +1825,12 @@ namespace PECoff
                 ClrMetadata,
                 StrongNameSignature = strongNameSignature,
                 ReadyToRun,
-                Imports,
+                Imports = imports,
                 ImportEntries,
                 ImportDescriptors,
                 DelayImportEntries,
                 DelayImportDescriptors,
-                Exports,
+                Exports = exports,
                 ExportEntries,
                 BoundImports,
                 DebugDirectories,
@@ -1818,7 +1843,7 @@ namespace PECoff
                 RichHeader,
                 TlsInfo,
                 LoadConfig,
-                AssemblyReferences,
+                AssemblyReferences = assemblyRefs,
                 AssemblyReferenceInfos
             };
 

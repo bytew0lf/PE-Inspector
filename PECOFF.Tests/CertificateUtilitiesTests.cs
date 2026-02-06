@@ -88,6 +88,7 @@ public class CertificateUtilitiesTests
             signatureError: string.Empty,
             chainValid: chainValid,
             chainStatus: status,
+            chainElements: Array.Empty<Pkcs7ChainElementInfo>(),
             isTimestampSigner: isTimestamp,
             hasCodeSigningEku: hasCodeSigningEku,
             hasTimestampEku: hasTimestampEku,

@@ -325,13 +325,15 @@ namespace PECoff
     {
         public string Name { get; }
         public uint Offset { get; }
+        public uint Size { get; }
         public bool IsPublic { get; }
         public string Implementation { get; }
 
-        public ManagedResourceInfo(string name, uint offset, bool isPublic, string implementation)
+        public ManagedResourceInfo(string name, uint offset, uint size, bool isPublic, string implementation)
         {
             Name = name ?? string.Empty;
             Offset = offset;
+            Size = size;
             IsPublic = isPublic;
             Implementation = implementation ?? string.Empty;
         }
@@ -444,6 +446,14 @@ namespace PECoff
         private ApiSetSchemaData _apiSetSchema;
         private bool _apiSetSchemaLoaded;
         private ApiSetSchemaInfo _apiSetSchemaInfo;
+        private IMAGE_DATA_DIRECTORY[] _dataDirectories = Array.Empty<IMAGE_DATA_DIRECTORY>();
+        private List<IMAGE_SECTION_HEADER> _sections = new List<IMAGE_SECTION_HEADER>();
+        private bool _hasResourceDirectory;
+        private bool _hasDebugDirectory;
+        private bool _hasRelocationDirectory;
+        private bool _resourcesParsed;
+        private bool _debugParsed;
+        private bool _relocationsParsed;
 
         private sealed class ImportDescriptorInternal
         {
@@ -1301,6 +1311,7 @@ namespace PECoff
         {
             get
             {
+                EnsureResourcesParsed();
                 return _productversion;
             }
         }
@@ -1310,6 +1321,7 @@ namespace PECoff
         {
             get
             {
+                EnsureResourcesParsed();
                 return _fileversion;
             }
         }
@@ -1317,67 +1329,111 @@ namespace PECoff
         private string _companyName;
         public string CompanyName
         {
-            get { return _companyName; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _companyName;
+            }
         }
 
         private string _fileDescription;
         public string FileDescription
         {
-            get { return _fileDescription; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _fileDescription;
+            }
         }
 
         private string _internalName;
         public string InternalName
         {
-            get { return _internalName; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _internalName;
+            }
         }
 
         private string _originalFilename;
         public string OriginalFilename
         {
-            get { return _originalFilename; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _originalFilename;
+            }
         }
 
         private string _productName;
         public string ProductName
         {
-            get { return _productName; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _productName;
+            }
         }
 
         private string _comments;
         public string Comments
         {
-            get { return _comments; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _comments;
+            }
         }
 
         private string _legalCopyright;
         public string LegalCopyright
         {
-            get { return _legalCopyright; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _legalCopyright;
+            }
         }
 
         private string _legalTrademarks;
         public string LegalTrademarks
         {
-            get { return _legalTrademarks; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _legalTrademarks;
+            }
         }
 
         private string _privateBuild;
         public string PrivateBuild
         {
-            get { return _privateBuild; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _privateBuild;
+            }
         }
 
         private string _specialBuild;
         public string SpecialBuild
         {
-            get { return _specialBuild; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _specialBuild;
+            }
         }
 
         private string _language;
         public string Language
         {
-            get { return _language; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _language;
+            }
         }
 
         private bool _isObfuscated;
@@ -1577,73 +1633,121 @@ namespace PECoff
         private readonly List<ResourceEntry> _resources = new List<ResourceEntry>();
         public ResourceEntry[] Resources
         {
-            get { return _resources.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _resources.ToArray();
+            }
         }
 
         private readonly List<ResourceStringTableInfo> _resourceStringTables = new List<ResourceStringTableInfo>();
         public ResourceStringTableInfo[] ResourceStringTables
         {
-            get { return _resourceStringTables.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceStringTables.ToArray();
+            }
         }
 
         private readonly List<ResourceManifestInfo> _resourceManifests = new List<ResourceManifestInfo>();
         public ResourceManifestInfo[] ResourceManifests
         {
-            get { return _resourceManifests.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceManifests.ToArray();
+            }
         }
 
         private readonly List<ResourceMessageTableInfo> _resourceMessageTables = new List<ResourceMessageTableInfo>();
         public ResourceMessageTableInfo[] ResourceMessageTables
         {
-            get { return _resourceMessageTables.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceMessageTables.ToArray();
+            }
         }
 
         private readonly List<ResourceDialogInfo> _resourceDialogs = new List<ResourceDialogInfo>();
         public ResourceDialogInfo[] ResourceDialogs
         {
-            get { return _resourceDialogs.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceDialogs.ToArray();
+            }
         }
 
         private readonly List<ResourceAcceleratorTableInfo> _resourceAccelerators = new List<ResourceAcceleratorTableInfo>();
         public ResourceAcceleratorTableInfo[] ResourceAccelerators
         {
-            get { return _resourceAccelerators.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceAccelerators.ToArray();
+            }
         }
 
         private readonly List<ResourceMenuInfo> _resourceMenus = new List<ResourceMenuInfo>();
         public ResourceMenuInfo[] ResourceMenus
         {
-            get { return _resourceMenus.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceMenus.ToArray();
+            }
         }
 
         private readonly List<ResourceToolbarInfo> _resourceToolbars = new List<ResourceToolbarInfo>();
         public ResourceToolbarInfo[] ResourceToolbars
         {
-            get { return _resourceToolbars.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceToolbars.ToArray();
+            }
         }
 
         private readonly List<ResourceBitmapInfo> _resourceBitmaps = new List<ResourceBitmapInfo>();
         public ResourceBitmapInfo[] ResourceBitmaps
         {
-            get { return _resourceBitmaps.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceBitmaps.ToArray();
+            }
         }
 
         private readonly List<ResourceCursorGroupInfo> _resourceCursorGroups = new List<ResourceCursorGroupInfo>();
         public ResourceCursorGroupInfo[] ResourceCursorGroups
         {
-            get { return _resourceCursorGroups.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceCursorGroups.ToArray();
+            }
         }
 
         private readonly List<IconGroupInfo> _iconGroups = new List<IconGroupInfo>();
         public IconGroupInfo[] IconGroups
         {
-            get { return _iconGroups.ToArray(); }
+            get
+            {
+                EnsureResourcesParsed();
+                return _iconGroups.ToArray();
+            }
         }
 
         private VersionInfoDetails _versionInfoDetails;
         public VersionInfoDetails VersionInfoDetails
         {
-            get { return _versionInfoDetails; }
+            get
+            {
+                EnsureResourcesParsed();
+                return _versionInfoDetails;
+            }
         }
 
         private ClrMetadataInfo _clrMetadata;
@@ -1662,6 +1766,55 @@ namespace PECoff
         public ReadyToRunInfo ReadyToRun
         {
             get { return _readyToRun; }
+        }
+
+        private void EnsureResourcesParsed()
+        {
+            if (_resourcesParsed)
+            {
+                return;
+            }
+
+            _resourcesParsed = true;
+            if (!_hasResourceDirectory || _dataDirectories == null || _dataDirectories.Length <= 2 || _sections.Count == 0)
+            {
+                return;
+            }
+
+            ParseResourceDirectoryTable(_dataDirectories[2], _sections);
+        }
+
+        private void EnsureDebugDirectoryParsed()
+        {
+            if (_debugParsed)
+            {
+                return;
+            }
+
+            _debugParsed = true;
+            if (!_hasDebugDirectory || _dataDirectories == null || _dataDirectories.Length <= 6 || _sections.Count == 0)
+            {
+                return;
+            }
+
+            ParseDebugDirectory(_dataDirectories[6], _sections);
+        }
+
+        private void EnsureRelocationsParsed()
+        {
+            if (_relocationsParsed)
+            {
+                return;
+            }
+
+            _relocationsParsed = true;
+            if (!_hasRelocationDirectory || _dataDirectories == null || _dataDirectories.Length <= 5 || _sections.Count == 0)
+            {
+                return;
+            }
+
+            ParseBaseRelocationTable(_dataDirectories[5], _sections);
+            ValidateRelocationHints();
         }
 
         private List<string> imports = new List<string>();
@@ -1728,19 +1881,31 @@ namespace PECoff
         private readonly List<DebugDirectoryEntry> _debugDirectories = new List<DebugDirectoryEntry>();
         public DebugDirectoryEntry[] DebugDirectories
         {
-            get { return _debugDirectories.ToArray(); }
+            get
+            {
+                EnsureDebugDirectoryParsed();
+                return _debugDirectories.ToArray();
+            }
         }
 
         private readonly List<BaseRelocationBlockInfo> _baseRelocations = new List<BaseRelocationBlockInfo>();
         public BaseRelocationBlockInfo[] BaseRelocations
         {
-            get { return _baseRelocations.ToArray(); }
+            get
+            {
+                EnsureRelocationsParsed();
+                return _baseRelocations.ToArray();
+            }
         }
 
         private readonly List<BaseRelocationSectionSummary> _baseRelocationSections = new List<BaseRelocationSectionSummary>();
         public BaseRelocationSectionSummary[] BaseRelocationSections
         {
-            get { return _baseRelocationSections.ToArray(); }
+            get
+            {
+                EnsureRelocationsParsed();
+                return _baseRelocationSections.ToArray();
+            }
         }
 
         private readonly List<ExceptionFunctionInfo> _exceptionFunctions = new List<ExceptionFunctionInfo>();
@@ -1950,7 +2115,7 @@ namespace PECoff
         {
             foreach (IMAGE_SECTION_HEADER section in sections)
             {
-                uint sectionSize = Math.Max(section.VirtualSize, section.SizeOfRawData);
+                uint sectionSize = GetSectionSpan(section);
                 if (sectionSize == 0)
                 {
                     continue;
@@ -1967,6 +2132,46 @@ namespace PECoff
 
             result = default;
             return false;
+        }
+
+        private static bool TryGetSectionByRvaRange(List<IMAGE_SECTION_HEADER> sections, uint rva, uint size, out IMAGE_SECTION_HEADER result)
+        {
+            foreach (IMAGE_SECTION_HEADER section in sections)
+            {
+                uint sectionSize = GetSectionSpan(section);
+                if (sectionSize == 0)
+                {
+                    continue;
+                }
+
+                uint sectionStart = section.VirtualAddress;
+                uint sectionEnd = sectionStart + sectionSize;
+                if (rva < sectionStart || rva >= sectionEnd)
+                {
+                    continue;
+                }
+
+                if (size == 0)
+                {
+                    result = section;
+                    return true;
+                }
+
+                ulong end = (ulong)rva + size;
+                if (end <= sectionEnd)
+                {
+                    result = section;
+                    return true;
+                }
+            }
+
+            result = default;
+            return false;
+        }
+
+        private static uint GetSectionSpan(IMAGE_SECTION_HEADER section)
+        {
+            return Math.Max(section.VirtualSize, section.SizeOfRawData);
         }
 
         private bool TryReadNullTerminatedString(long startOffset, out string value, int maxLength = 4096)
@@ -2402,6 +2607,10 @@ namespace PECoff
 
         public PECOFFResult ToResult()
         {
+            EnsureResourcesParsed();
+            EnsureDebugDirectoryParsed();
+            EnsureRelocationsParsed();
+
             ApiSetSchemaInfo apiSetInfo = _apiSetSchemaInfo;
             if (apiSetInfo == null)
             {
@@ -4192,6 +4401,56 @@ namespace PECoff
                 SetIfEmpty(ref _privateBuild, versionInfo.PrivateBuild);
                 SetIfEmpty(ref _specialBuild, versionInfo.SpecialBuild);
                 SetIfEmpty(ref _language, versionInfo.Language);
+            }
+        }
+
+        private void ParseResourceDirectoryTable(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
+        {
+            IMAGE_SECTION_HEADER resourceSection;
+            if (!TryGetSectionByRva(sections, directory.VirtualAddress, out resourceSection))
+            {
+                resourceSection = sections.Find(
+                    p => p.Section.TrimEnd('\0').Equals(".rsrc", StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (resourceSection.Name == null || !TryGetIntSize(resourceSection.SizeOfRawData, out int rsrcSize))
+            {
+                Warn(ParseIssueCategory.Resources, "Resource section not found or invalid.");
+                return;
+            }
+
+            if (!TrySetPosition(resourceSection.PointerToRawData, rsrcSize))
+            {
+                Warn(ParseIssueCategory.Resources, "Resource section offset outside file bounds.");
+                return;
+            }
+
+            bool parsedResource = false;
+            if (_memoryMappedAccessor != null)
+            {
+                long resourceOffset = resourceSection.PointerToRawData;
+                if (TryWithMappedSpan(resourceOffset, rsrcSize, span =>
+                {
+                    ParseResourceSection(span, rsrcSize, directory.VirtualAddress, resourceSection, sections, null);
+                }))
+                {
+                    parsedResource = true;
+                }
+            }
+
+            if (!parsedResource)
+            {
+                byte[] resourceBuffer = ArrayPool<byte>.Shared.Rent(rsrcSize);
+                try
+                {
+                    ReadExactly(PEFileStream, resourceBuffer, 0, rsrcSize);
+                    ReadOnlySpan<byte> resourceSpan = new ReadOnlySpan<byte>(resourceBuffer, 0, rsrcSize);
+                    ParseResourceSection(resourceSpan, rsrcSize, directory.VirtualAddress, resourceSection, sections, resourceBuffer);
+                }
+                finally
+                {
+                    ArrayPool<byte>.Shared.Return(resourceBuffer);
+                }
             }
         }
 
@@ -6026,6 +6285,8 @@ namespace PECoff
             int maxIterations = 65536;
             bool terminated = false;
             bool warnedNullThunks = false;
+            bool warnedUnmappedThunkEntry = false;
+            bool warnedUnmappedNameRva = false;
             for (int index = 0; index < maxIterations; index++)
             {
                 long entryOffset = thunkOffset + (index * thunkSize);
@@ -6077,6 +6338,13 @@ namespace PECoff
                     break;
                 }
 
+                uint thunkEntryRva = (uint)entryRva;
+                if (!warnedUnmappedThunkEntry && !TryGetSectionByRvaRange(sections, thunkEntryRva, (uint)thunkSize, out _))
+                {
+                    Warn(ParseIssueCategory.Imports, $"Import thunk entry RVA not mapped to a section for {dllName}.");
+                    warnedUnmappedThunkEntry = true;
+                }
+
                 bool isOrdinal = isPe32Plus
                     ? (value & 0x8000000000000000UL) != 0
                     : (value & 0x80000000UL) != 0;
@@ -6084,7 +6352,6 @@ namespace PECoff
                 if (isOrdinal)
                 {
                     ushort ordinal = (ushort)(value & 0xFFFF);
-                    uint thunkEntryRva = (uint)entryRva;
                     targetList.Add(new ImportEntry(dllName, string.Empty, 0, ordinal, true, source, thunkEntryRva));
                     continue;
                 }
@@ -6092,12 +6359,19 @@ namespace PECoff
                 uint nameRva = (uint)value;
                 if (TryReadImportByName(sections, nameRva, out ushort hint, out string importName))
                 {
-                    uint thunkEntryRva = (uint)entryRva;
                     targetList.Add(new ImportEntry(dllName, importName, hint, 0, false, source, thunkEntryRva));
                 }
                 else if (source == ImportThunkSource.ImportNameTable)
                 {
-                    Warn(ParseIssueCategory.Imports, "Import name entry could not be read.");
+                    if (!warnedUnmappedNameRva && !TryGetSectionByRvaRange(sections, nameRva, 2, out _))
+                    {
+                        Warn(ParseIssueCategory.Imports, $"Import name RVA not mapped to a section for {dllName}.");
+                        warnedUnmappedNameRva = true;
+                    }
+                    else
+                    {
+                        Warn(ParseIssueCategory.Imports, "Import name entry could not be read.");
+                    }
                 }
             }
 
@@ -6425,17 +6699,18 @@ namespace PECoff
                         reservedTypeCount++;
                     }
 
-                    if (_sizeOfImage != 0)
+                    uint entryRva = header.VirtualAddress + (uint)(entry & 0x0FFF);
+                    if (_sizeOfImage != 0 && entryRva >= _sizeOfImage)
                     {
-                        uint entryRva = header.VirtualAddress + (uint)(entry & 0x0FFF);
-                        if (entryRva >= _sizeOfImage)
-                        {
-                            outOfRangeCount++;
-                        }
-                        if (accumulator.Samples.Count < 5)
-                        {
-                            accumulator.Samples.Add(new RelocationSampleInfo(entryRva, type, GetRelocationTypeName(type)));
-                        }
+                        outOfRangeCount++;
+                    }
+                    if (blockMapped && !TryGetSectionByRvaRange(sections, entryRva, 1, out _))
+                    {
+                        unmappedCount++;
+                    }
+                    if (accumulator.Samples.Count < 5)
+                    {
+                        accumulator.Samples.Add(new RelocationSampleInfo(entryRva, type, GetRelocationTypeName(type)));
                     }
                 }
 
@@ -8043,7 +8318,7 @@ namespace PECoff
                 uint offset = rawOffset < 0
                     ? 0u
                     : (rawOffset > uint.MaxValue ? uint.MaxValue : (uint)rawOffset);
-                resources.Add(new ManagedResourceInfo(name, offset, isPublic, implementation));
+                resources.Add(new ManagedResourceInfo(name, offset, 0, isPublic, implementation));
             }
 
             return resources.ToArray();
@@ -8103,6 +8378,106 @@ namespace PECoff
             }
 
             return ToHex(token);
+        }
+
+        private void TryPopulateManagedResourceSizes(IMAGE_COR20_HEADER clrHeader, List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (_clrMetadata == null || _clrMetadata.ManagedResources.Length == 0)
+            {
+                return;
+            }
+
+            if (clrHeader.Resources.VirtualAddress == 0 || clrHeader.Resources.Size == 0)
+            {
+                return;
+            }
+
+            if (!TryGetFileOffset(sections, clrHeader.Resources.VirtualAddress, out long resourceOffset))
+            {
+                Warn(ParseIssueCategory.CLR, "CLR managed resources RVA not mapped to a section.");
+                return;
+            }
+
+            if (!TryGetIntSize(clrHeader.Resources.Size, out int resourceSize) || resourceSize < 4)
+            {
+                Warn(ParseIssueCategory.CLR, "CLR managed resources size is invalid.");
+                return;
+            }
+
+            if (!TrySetPosition(resourceOffset, resourceSize))
+            {
+                Warn(ParseIssueCategory.CLR, "CLR managed resources offset outside file bounds.");
+                return;
+            }
+
+            byte[] buffer = new byte[resourceSize];
+            ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+
+            bool warnedBounds = false;
+            ManagedResourceInfo[] updated = new ManagedResourceInfo[_clrMetadata.ManagedResources.Length];
+            for (int i = 0; i < _clrMetadata.ManagedResources.Length; i++)
+            {
+                ManagedResourceInfo resource = _clrMetadata.ManagedResources[i];
+                uint size = 0;
+                if (string.Equals(resource.Implementation, "embedded", StringComparison.OrdinalIgnoreCase))
+                {
+                    uint offset = resource.Offset;
+                    if (buffer.Length >= 4 && offset <= (uint)buffer.Length - 4)
+                    {
+                        size = ReadUInt32(buffer, (int)offset);
+                        if (size > 0 && (ulong)offset + 4 + size > (uint)buffer.Length)
+                        {
+                            size = 0;
+                            if (!warnedBounds)
+                            {
+                                Warn(ParseIssueCategory.CLR, "Managed resource size extends beyond resource section.");
+                                warnedBounds = true;
+                            }
+                        }
+                    }
+                    else if (!warnedBounds)
+                    {
+                        Warn(ParseIssueCategory.CLR, "Managed resource offset outside resource section.");
+                        warnedBounds = true;
+                    }
+                }
+
+                updated[i] = new ManagedResourceInfo(resource.Name, resource.Offset, size, resource.IsPublic, resource.Implementation);
+            }
+
+            _clrMetadata = CloneClrMetadataWithResources(_clrMetadata, updated);
+        }
+
+        private static ClrMetadataInfo CloneClrMetadataWithResources(ClrMetadataInfo info, ManagedResourceInfo[] resources)
+        {
+            return new ClrMetadataInfo(
+                info.MajorRuntimeVersion,
+                info.MinorRuntimeVersion,
+                info.Flags,
+                info.EntryPointToken,
+                info.MetadataVersion,
+                info.Streams,
+                info.AssemblyName,
+                info.AssemblyVersion,
+                info.Mvid,
+                info.TargetFramework,
+                info.AssemblyReferences,
+                info.ModuleReferences,
+                resources,
+                info.MetadataTableCounts,
+                info.IlOnly,
+                info.Requires32Bit,
+                info.Prefers32Bit,
+                info.StrongNameSigned,
+                info.ModuleDefinitionCount,
+                info.TypeDefinitionCount,
+                info.TypeReferenceCount,
+                info.MethodDefinitionCount,
+                info.FieldDefinitionCount,
+                info.PropertyDefinitionCount,
+                info.EventDefinitionCount,
+                info.HasDebuggableAttribute,
+                info.DebuggableModes);
         }
 
         private static bool IsTargetFrameworkAttribute(MetadataReader reader, CustomAttribute attribute)
@@ -8403,6 +8778,11 @@ namespace PECoff
         private void ValidateRelocationHints()
         {
             if (_dllCharacteristicsInfo == null)
+            {
+                return;
+            }
+
+            if (_options != null && _options.LazyParseDataDirectories && !_relocationsParsed)
             {
                 return;
             }
@@ -8882,6 +9262,13 @@ namespace PECoff
                     _dllCharacteristicsInfo = BuildDllCharacteristicsInfo(peHeader.DllCharacteristics);
 
                     IMAGE_DATA_DIRECTORY[] dataDirectory = peHeader.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
+                    _dataDirectories = dataDirectory;
+                    _resourcesParsed = false;
+                    _debugParsed = false;
+                    _relocationsParsed = false;
+                    _hasResourceDirectory = dataDirectory.Length > 2 && dataDirectory[2].Size > 0;
+                    _hasRelocationDirectory = dataDirectory.Length > 5 && dataDirectory[5].Size > 0;
+                    _hasDebugDirectory = dataDirectory.Length > 6 && dataDirectory[6].Size > 0;
                     if (dataDirectory.Length > 4)
                     {
                         _certificateTableOffset = dataDirectory[4].VirtualAddress;
@@ -8949,6 +9336,8 @@ namespace PECoff
                     {                       
                         sections.Add(new IMAGE_SECTION_HEADER(PEFile));
                     }
+
+                    _sections = sections;
 
                     ValidateSections(header, peHeader, sections, dataDirectory);
 
@@ -9188,52 +9577,13 @@ namespace PECoff
                                 break;
                             case 2:
                                 // Resource Table                                
-                                IMAGE_SECTION_HEADER resourceSection;
-                                if (!TryGetSectionByRva(sections, dataDirectory[i].VirtualAddress, out resourceSection))
+                                if (_options != null && _options.LazyParseDataDirectories)
                                 {
-                                    resourceSection = sections.Find(
-                                        p => p.Section.TrimEnd('\0').Equals(".rsrc", StringComparison.OrdinalIgnoreCase));
-                                }
-
-                                if (resourceSection.Name == null || !TryGetIntSize(resourceSection.SizeOfRawData, out int rsrcSize))
-                                {
-                                    Warn(ParseIssueCategory.Resources, "Resource section not found or invalid.");
                                     break;
                                 }
 
-                                if (!TrySetPosition(resourceSection.PointerToRawData, rsrcSize))
-                                {
-                                    Warn(ParseIssueCategory.Resources, "Resource section offset outside file bounds.");
-                                    break;
-                                }
-                                bool parsedResource = false;
-                                if (_memoryMappedAccessor != null)
-                                {
-                                    long resourceOffset = resourceSection.PointerToRawData;
-                                    if (TryWithMappedSpan(resourceOffset, rsrcSize, span =>
-                                    {
-                                        ParseResourceSection(span, rsrcSize, dataDirectory[i].VirtualAddress, resourceSection, sections, null);
-                                    }))
-                                    {
-                                        parsedResource = true;
-                                    }
-                                }
-
-                                if (!parsedResource)
-                                {
-                                    byte[] resourceBuffer = ArrayPool<byte>.Shared.Rent(rsrcSize);
-                                    try
-                                    {
-                                        ReadExactly(PEFileStream, resourceBuffer, 0, rsrcSize);
-                                        ReadOnlySpan<byte> resourceSpan = new ReadOnlySpan<byte>(resourceBuffer, 0, rsrcSize);
-                                        ParseResourceSection(resourceSpan, rsrcSize, dataDirectory[i].VirtualAddress, resourceSection, sections, resourceBuffer);
-                                    }
-                                    finally
-                                    {
-                                        ArrayPool<byte>.Shared.Return(resourceBuffer);
-                                    }
-                                }
-
+                                ParseResourceDirectoryTable(dataDirectory[i], sections);
+                                _resourcesParsed = true;
                                 break;
                             case 3:
                                 // Exception Table -> The .pdata Section
@@ -9354,11 +9704,23 @@ namespace PECoff
                                 break;
                             case 5:
                                 // Base Relocation Table -> The .reloc Section
+                                if (_options != null && _options.LazyParseDataDirectories)
+                                {
+                                    break;
+                                }
+
                                 ParseBaseRelocationTable(dataDirectory[i], sections);
+                                _relocationsParsed = true;
                                 break;
                             case 6:
                                 // Debug The .debug Section
+                                if (_options != null && _options.LazyParseDataDirectories)
+                                {
+                                    break;
+                                }
+
                                 ParseDebugDirectory(dataDirectory[i], sections);
+                                _debugParsed = true;
                                 break;
                             case 7:
                                 // Archive -> Reserved, must be 0
@@ -9469,6 +9831,7 @@ namespace PECoff
                                     }
 
                                     _clrMetadata = metadataInfo;
+                                    TryPopulateManagedResourceSizes(clrHeader, sections);
                                 }
                                 finally
                                 {

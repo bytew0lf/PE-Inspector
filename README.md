@@ -21,7 +21,7 @@ Notes:
 
 The report contains all analysis details, and any embedded certificates are written to the output directory with their native extensions (e.g. `.cer`, `.p7b`) and additionally as PEM (`.pem`).
 
-The report also includes CLR/.NET metadata when present (runtime version, metadata version, stream list, module references, and managed resource names).
+The report also includes CLR/.NET metadata when present (runtime version, metadata version, stream list, module references, managed resource names/sizes).
 It now also includes assembly metadata (assembly name/version, MVID, target framework, debuggable attribute) and metadata-based assembly references (with public key tokens), plus a runtime hint (IL/Mixed/ReadyToRun).
 Resource string tables and manifests are decoded and included in the report when available.
 The report also includes debug directory entries (CodeView/PDB IDs + identity checks), base relocation summaries (top types + sample RVAs), TLS/load-config data (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, callback resolution), version-info details (string tables + translations + file flags), icon-group reconstruction (PNG detection), bitmap/cursor resource metadata, Authenticode digest checks and signer status/policy summaries (RFC3161 timestamps, nested signatures), message tables, dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI, requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/entropy summaries and packing hints, import descriptor consistency/bind hints with API-set resolution hints (schema or heuristic), export forwarder resolution hints, section padding analysis, exception directory summaries (unwind counts/details/range validity), and subsystem/security flags when present.
@@ -41,7 +41,9 @@ The PECOFF parser supports options and an immutable result snapshot:
 - `PECOFFOptions.EnableAssemblyAnalysis`: controls reflection-based obfuscation analysis.
 - `PECOFFOptions.ParseCertificateSigners`: extract PKCS7 signer info.
 - `PECOFFOptions.UseMemoryMappedFile`: enable memory-mapped parsing.
+- `PECOFFOptions.LazyParseDataDirectories`: defer parsing resources/debug/relocations until accessed.
 - `PECOFFOptions.AuthenticodePolicy`: configure chain/timestamp/EKU policy checks in signer status (including optional trust-store checks and revocation settings).
+- `AuthenticodePolicy.OfflineChainCheck`: disable certificate downloads and force offline chain evaluation.
 - `PECOFFOptions.IssueCallback`: receive issues as they are raised (warnings/errors) in addition to the collected lists.
 - `PECOFFOptions.PresetFast()` / `PresetDefault()` / `PresetStrictSecurity()`: convenience presets for common configurations.
 - `PECOFFOptions.ValidationProfile`: `Default`, `Compatibility`, `Strict`, `Forensic` severity presets for warnings/errors.
@@ -57,6 +59,7 @@ For CI/automation, you can emit a JSON report snapshot:
     string json = pe.Result.ToJsonReport();
 
 Set `includeBinary: true` if you want raw byte arrays embedded; the default summarizes binary blobs by size.
+Set `stableOrdering: false` to keep the natural parse order; the default orders common lists for diff-friendly snapshots.
 
 ### Corrupt fixtures
 Small intentionally-corrupt fixtures live in `PECOFF.Tests/Fixtures/corrupt/` (e.g., bad RVA, overlapping sections) to validate warning behavior and profile policies.
@@ -102,6 +105,13 @@ Defaults:
 
 - Output goes to `artifacts/<app-name>/<rid>/`.
 - Override `RID` and `CONFIGURATION` if needed (e.g. `RID=osx-arm64`).
+
+### SchemaVersion
+`PECOFFResult.SchemaVersion` increments when report fields change:
+
+- v3: resource metadata (bitmap/cursor), API-set schema, relocation summaries.
+- v4: CLR module references and managed resource list; public key tokens for assembly references.
+- v5: managed resource sizes, Pkcs7 chain element details, and stable JSON ordering support.
 
 ## Contents of the output file
 The CSV-Output currently contains the following values for each analyzed file.
