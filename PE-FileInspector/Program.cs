@@ -495,8 +495,40 @@ namespace PE_FileInspector
                         string tokenText = reference.Token != 0
                             ? "0x" + reference.Token.ToString("X8", CultureInfo.InvariantCulture)
                             : string.Empty;
+                        string pktSuffix = string.IsNullOrWhiteSpace(reference.PublicKeyToken) || reference.PublicKeyOrToken == reference.PublicKeyToken
+                            ? string.Empty
+                            : " [PKT: " + reference.PublicKeyToken + "]";
                         sb.AppendLine("    - " + reference.FullName +
-                                      (string.IsNullOrWhiteSpace(tokenText) ? string.Empty : " [Token: " + tokenText + "]"));
+                                      (string.IsNullOrWhiteSpace(tokenText) ? string.Empty : " [Token: " + tokenText + "]") +
+                                      pktSuffix);
+                    }
+                }
+                if (pe.ClrMetadata.ModuleReferences.Length == 0)
+                {
+                    sb.AppendLine("  Module References: (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Module References:");
+                    foreach (string moduleRef in pe.ClrMetadata.ModuleReferences)
+                    {
+                        sb.AppendLine("    - " + moduleRef);
+                    }
+                }
+                if (pe.ClrMetadata.ManagedResources.Length == 0)
+                {
+                    sb.AppendLine("  Managed Resources: (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Managed Resources:");
+                    foreach (ManagedResourceInfo resource in pe.ClrMetadata.ManagedResources)
+                    {
+                        string visibility = resource.IsPublic ? "public" : "private";
+                        string details = string.IsNullOrWhiteSpace(resource.Implementation)
+                            ? visibility
+                            : visibility + ", " + resource.Implementation;
+                        sb.AppendLine("    - " + resource.Name + " (" + details + ", Offset: " + resource.Offset.ToString(CultureInfo.InvariantCulture) + ")");
                     }
                 }
                 if (pe.ClrMetadata.Streams.Length == 0)

@@ -321,6 +321,22 @@ namespace PECoff
         }
     }
 
+    public sealed class ManagedResourceInfo
+    {
+        public string Name { get; }
+        public uint Offset { get; }
+        public bool IsPublic { get; }
+        public string Implementation { get; }
+
+        public ManagedResourceInfo(string name, uint offset, bool isPublic, string implementation)
+        {
+            Name = name ?? string.Empty;
+            Offset = offset;
+            IsPublic = isPublic;
+            Implementation = implementation ?? string.Empty;
+        }
+    }
+
     public sealed class ClrMetadataInfo
     {
         public ushort MajorRuntimeVersion { get; }
@@ -334,6 +350,8 @@ namespace PECoff
         public string Mvid { get; }
         public string TargetFramework { get; }
         public ClrAssemblyReferenceInfo[] AssemblyReferences { get; }
+        public string[] ModuleReferences { get; }
+        public ManagedResourceInfo[] ManagedResources { get; }
         public MetadataTableCountInfo[] MetadataTableCounts { get; }
         public bool IlOnly { get; }
         public bool Requires32Bit { get; }
@@ -361,6 +379,8 @@ namespace PECoff
             string mvid,
             string targetFramework,
             ClrAssemblyReferenceInfo[] assemblyReferences,
+            string[] moduleReferences,
+            ManagedResourceInfo[] managedResources,
             MetadataTableCountInfo[] metadataTableCounts,
             bool ilOnly,
             bool requires32Bit,
@@ -387,6 +407,8 @@ namespace PECoff
             Mvid = mvid ?? string.Empty;
             TargetFramework = targetFramework ?? string.Empty;
             AssemblyReferences = assemblyReferences ?? Array.Empty<ClrAssemblyReferenceInfo>();
+            ModuleReferences = moduleReferences ?? Array.Empty<string>();
+            ManagedResources = managedResources ?? Array.Empty<ManagedResourceInfo>();
             MetadataTableCounts = metadataTableCounts ?? Array.Empty<MetadataTableCountInfo>();
             IlOnly = ilOnly;
             Requires32Bit = requires32Bit;
@@ -419,7 +441,7 @@ namespace PECoff
         private readonly ParseResult _parseResult = new ParseResult();
         private readonly PECOFFOptions _options;
         private readonly string _filePath;
-        private ApiSetSchema _apiSetSchema;
+        private ApiSetSchemaData _apiSetSchema;
         private bool _apiSetSchemaLoaded;
         private ApiSetSchemaInfo _apiSetSchemaInfo;
 
@@ -1971,13 +1993,13 @@ namespace PECoff
             return false;
         }
 
-        private sealed class ApiSetSchema
+        private sealed class ApiSetSchemaData
         {
             public Dictionary<string, string[]> Map { get; }
             public int Version { get; }
             public string SourcePath { get; }
 
-            public ApiSetSchema(Dictionary<string, string[]> map, int version, string sourcePath)
+            public ApiSetSchemaData(Dictionary<string, string[]> map, int version, string sourcePath)
             {
                 Map = map ?? new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
                 Version = version;
@@ -1985,7 +2007,7 @@ namespace PECoff
             }
         }
 
-        private ApiSetSchema EnsureApiSetSchema()
+        private ApiSetSchemaData EnsureApiSetSchema()
         {
             if (_apiSetSchemaLoaded)
             {
@@ -2010,7 +2032,7 @@ namespace PECoff
             try
             {
                 byte[] data = File.ReadAllBytes(path);
-                if (TryParseApiSetSchema(data, path, out ApiSetSchema schema, out string error))
+                if (TryParseApiSetSchema(data, path, out ApiSetSchemaData schema, out string error))
                 {
                     _apiSetSchema = schema;
                     _apiSetSchemaInfo = new ApiSetSchemaInfo(true, schema.Version, GetApiSetFlavor(schema.Version), schema.SourcePath);
@@ -2105,7 +2127,7 @@ namespace PECoff
             }
 
             string normalized = NormalizeApiSetName(dllName);
-            ApiSetSchema schema = EnsureApiSetSchema();
+            ApiSetSchemaData schema = EnsureApiSetSchema();
             if (schema != null && schema.Map.TryGetValue(normalized, out string[] targets) && targets.Length > 0)
             {
                 return new ApiSetResolutionInfo(true, true, false, normalized, targets);
@@ -2192,7 +2214,7 @@ namespace PECoff
             return Array.Empty<string>();
         }
 
-        private static bool TryParseApiSetSchema(byte[] data, string sourcePath, out ApiSetSchema schema, out string error)
+        private static bool TryParseApiSetSchema(byte[] data, string sourcePath, out ApiSetSchemaData schema, out string error)
         {
             schema = null;
             error = string.Empty;
@@ -2314,7 +2336,7 @@ namespace PECoff
                 return false;
             }
 
-            schema = new ApiSetSchema(map, (int)version, sourcePath);
+            schema = new ApiSetSchemaData(map, (int)version, sourcePath);
             return true;
         }
 
@@ -7559,6 +7581,8 @@ namespace PECoff
             string mvid = string.Empty;
             string targetFramework = string.Empty;
             ClrAssemblyReferenceInfo[] assemblyReferences = Array.Empty<ClrAssemblyReferenceInfo>();
+            string[] moduleReferences = Array.Empty<string>();
+            ManagedResourceInfo[] managedResources = Array.Empty<ManagedResourceInfo>();
             MetadataTableCountInfo[] metadataTableCounts = Array.Empty<MetadataTableCountInfo>();
             int moduleCount = 0;
             int typeDefCount = 0;
@@ -7577,6 +7601,8 @@ namespace PECoff
                 out mvid,
                 out targetFramework,
                 out assemblyReferences,
+                out moduleReferences,
+                out managedResources,
                 out metadataTableCounts,
                 out moduleCount,
                 out typeDefCount,
@@ -7600,6 +7626,8 @@ namespace PECoff
                 mvid,
                 targetFramework,
                 assemblyReferences,
+                moduleReferences,
+                managedResources,
                 metadataTableCounts,
                 (header.Flags & 0x00000001) != 0,
                 (header.Flags & 0x00000002) != 0,
@@ -7752,6 +7780,8 @@ namespace PECoff
             out string mvid,
             out string targetFramework,
             out ClrAssemblyReferenceInfo[] assemblyReferences,
+            out string[] moduleReferences,
+            out ManagedResourceInfo[] managedResources,
             out MetadataTableCountInfo[] metadataTableCounts,
             out int moduleDefinitionCount,
             out int typeDefinitionCount,
@@ -7768,6 +7798,8 @@ namespace PECoff
             mvid = string.Empty;
             targetFramework = string.Empty;
             assemblyReferences = Array.Empty<ClrAssemblyReferenceInfo>();
+            moduleReferences = Array.Empty<string>();
+            managedResources = Array.Empty<ManagedResourceInfo>();
             metadataTableCounts = Array.Empty<MetadataTableCountInfo>();
             moduleDefinitionCount = 0;
             typeDefinitionCount = 0;
@@ -7826,16 +7858,23 @@ namespace PECoff
                             string name = reader.GetString(reference.Name);
                             string version = reference.Version.ToString();
                             string culture = reference.Culture.IsNil ? string.Empty : reader.GetString(reference.Culture);
-                            string token = ToHex(reader.GetBlobBytes(reference.PublicKeyOrToken));
+                            byte[] publicKeyOrToken = reader.GetBlobBytes(reference.PublicKeyOrToken);
+                            bool isPublicKey = (reference.Flags & AssemblyFlags.PublicKey) != 0;
+                            string publicKeyOrTokenHex = ToHex(publicKeyOrToken);
+                            string publicKeyToken = isPublicKey
+                                ? ComputePublicKeyToken(publicKeyOrToken)
+                                : publicKeyOrTokenHex;
                             int rowId = MetadataTokens.GetRowNumber(handle);
                             int metadataToken = MetadataTokens.GetToken(handle);
-                            string fullName = BuildAssemblyDisplayName(name, version, culture, token);
+                            string fullName = BuildAssemblyDisplayName(name, version, culture, publicKeyToken);
 
-                            refs.Add(new ClrAssemblyReferenceInfo(name, version, culture, token, metadataToken, rowId, fullName));
+                            refs.Add(new ClrAssemblyReferenceInfo(name, version, culture, publicKeyOrTokenHex, publicKeyToken, isPublicKey, metadataToken, rowId, fullName));
                         }
                     }
 
                     assemblyReferences = refs.ToArray();
+                    moduleReferences = BuildModuleReferenceList(reader);
+                    managedResources = BuildManagedResourceList(reader);
                     return true;
                 }
             }
@@ -7959,6 +7998,111 @@ namespace PECoff
             }
 
             return sb.ToString();
+        }
+
+        private static string[] BuildModuleReferenceList(MetadataReader reader)
+        {
+            int count = reader.GetTableRowCount(TableIndex.ModuleRef);
+            if (count <= 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> refs = new List<string>(count);
+            for (int i = 1; i <= count; i++)
+            {
+                ModuleReferenceHandle handle = MetadataTokens.ModuleReferenceHandle(i);
+                ModuleReference moduleReference = reader.GetModuleReference(handle);
+                string name = reader.GetString(moduleReference.Name);
+                if (!string.IsNullOrWhiteSpace(name))
+                {
+                    refs.Add(name);
+                }
+            }
+
+            return refs.ToArray();
+        }
+
+        private static ManagedResourceInfo[] BuildManagedResourceList(MetadataReader reader)
+        {
+            int count = reader.GetTableRowCount(TableIndex.ManifestResource);
+            if (count <= 0)
+            {
+                return Array.Empty<ManagedResourceInfo>();
+            }
+
+            List<ManagedResourceInfo> resources = new List<ManagedResourceInfo>(count);
+            for (int i = 1; i <= count; i++)
+            {
+                ManifestResourceHandle handle = MetadataTokens.ManifestResourceHandle(i);
+                ManifestResource resource = reader.GetManifestResource(handle);
+                string name = reader.GetString(resource.Name);
+                bool isPublic = (resource.Attributes & ManifestResourceAttributes.Public) != 0;
+                string implementation = GetManagedResourceImplementation(reader, resource.Implementation);
+                long rawOffset = resource.Offset;
+                uint offset = rawOffset < 0
+                    ? 0u
+                    : (rawOffset > uint.MaxValue ? uint.MaxValue : (uint)rawOffset);
+                resources.Add(new ManagedResourceInfo(name, offset, isPublic, implementation));
+            }
+
+            return resources.ToArray();
+        }
+
+        private static string GetManagedResourceImplementation(MetadataReader reader, EntityHandle handle)
+        {
+            if (handle.IsNil)
+            {
+                return "embedded";
+            }
+
+            switch (handle.Kind)
+            {
+                case HandleKind.AssemblyReference:
+                    {
+                        AssemblyReference reference = reader.GetAssemblyReference((AssemblyReferenceHandle)handle);
+                        string name = reader.GetString(reference.Name);
+                        return string.IsNullOrWhiteSpace(name) ? "assembly" : "assembly:" + name;
+                    }
+                case HandleKind.AssemblyFile:
+                    {
+                        AssemblyFile file = reader.GetAssemblyFile((AssemblyFileHandle)handle);
+                        string name = reader.GetString(file.Name);
+                        return string.IsNullOrWhiteSpace(name) ? "file" : "file:" + name;
+                    }
+                case HandleKind.ExportedType:
+                    {
+                        ExportedType type = reader.GetExportedType((ExportedTypeHandle)handle);
+                        string typeName = reader.GetString(type.Name);
+                        string typeNamespace = reader.GetString(type.Namespace);
+                        string fullName = string.IsNullOrWhiteSpace(typeNamespace) ? typeName : typeNamespace + "." + typeName;
+                        return string.IsNullOrWhiteSpace(fullName) ? "exported-type" : "exported-type:" + fullName;
+                    }
+                default:
+                    return "unknown";
+            }
+        }
+
+        private static string ComputePublicKeyToken(byte[] publicKey)
+        {
+            if (publicKey == null || publicKey.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            byte[] hash = SHA1.HashData(publicKey);
+            if (hash.Length < 8)
+            {
+                return string.Empty;
+            }
+
+            byte[] token = new byte[8];
+            for (int i = 0; i < token.Length; i++)
+            {
+                token[i] = hash[hash.Length - 1 - i];
+            }
+
+            return ToHex(token);
         }
 
         private static bool IsTargetFrameworkAttribute(MetadataReader reader, CustomAttribute attribute)

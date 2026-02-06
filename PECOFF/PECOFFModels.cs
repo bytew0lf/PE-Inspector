@@ -1471,7 +1471,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 3;
+        public const int CurrentSchemaVersion = 4;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -1832,6 +1832,8 @@ namespace PECoff
         public string Version { get; }
         public string Culture { get; }
         public string PublicKeyOrToken { get; }
+        public string PublicKeyToken { get; }
+        public bool IsPublicKey { get; }
         public int Token { get; }
         public int RowId { get; }
         public string FullName { get; }
@@ -1841,6 +1843,8 @@ namespace PECoff
             string version,
             string culture,
             string publicKeyOrToken,
+            string publicKeyToken,
+            bool isPublicKey,
             int token,
             int rowId,
             string fullName)
@@ -1849,6 +1853,8 @@ namespace PECoff
             Version = version ?? string.Empty;
             Culture = culture ?? string.Empty;
             PublicKeyOrToken = publicKeyOrToken ?? string.Empty;
+            PublicKeyToken = publicKeyToken ?? string.Empty;
+            IsPublicKey = isPublicKey;
             Token = token;
             RowId = rowId;
             FullName = fullName ?? string.Empty;
