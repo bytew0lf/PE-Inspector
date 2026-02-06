@@ -93,7 +93,7 @@ public class PECOFFTests
         string? fixtures = FindFixturesDirectory();
         Assert.False(string.IsNullOrWhiteSpace(fixtures));
 
-        string validPath = Path.Combine(fixtures!, "valid-pe.dll");
+        string validPath = Path.Combine(fixtures!, "minimal", "PE-Inspector.dll");
         Assert.True(File.Exists(validPath));
 
         PECOFF parser = new PECOFF(validPath);
@@ -121,7 +121,7 @@ public class PECOFFTests
         string? fixtures = FindFixturesDirectory();
         Assert.False(string.IsNullOrWhiteSpace(fixtures));
 
-        string validPath = Path.Combine(fixtures!, "valid-pe.dll");
+        string validPath = Path.Combine(fixtures!, "minimal", "minimal-x86.exe");
         Assert.True(File.Exists(validPath));
 
         byte[] data = File.ReadAllBytes(validPath);
@@ -142,7 +142,8 @@ public class PECOFFTests
                 StrictMode = true,
                 IssuePolicy = new System.Collections.Generic.Dictionary<ParseIssueCategory, ParseIssueSeverity>
                 {
-                    [ParseIssueCategory.OptionalHeader] = ParseIssueSeverity.Warning
+                    [ParseIssueCategory.OptionalHeader] = ParseIssueSeverity.Warning,
+                    [ParseIssueCategory.Sections] = ParseIssueSeverity.Warning
                 }
             };
             PECOFF parser = new PECOFF(tempFile, options);
@@ -258,4 +259,5 @@ public class PECOFFTests
         data[offset + 2] = (byte)((value >> 16) & 0xFF);
         data[offset + 3] = (byte)((value >> 24) & 0xFF);
     }
+
 }

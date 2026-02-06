@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 
@@ -651,7 +652,33 @@ namespace PECoff
             IMAGE_GUARD_RF_ENABLE = 0x00040000,
             IMAGE_GUARD_RF_STRICT = 0x00080000,
             IMAGE_GUARD_RETPOLINE_PRESENT = 0x00100000,
-            IMAGE_GUARD_EH_CONTINUATION_TABLE_PRESENT = 0x00400000
+            IMAGE_GUARD_EH_CONTINUATION_TABLE_PRESENT = 0x00400000,
+            IMAGE_GUARD_XFG_ENABLED = 0x00800000,
+            IMAGE_GUARD_XFG_TABLE_PRESENT = 0x01000000
+        }
+
+        [Flags]
+        private enum GlobalFlags : uint
+        {
+            FLG_STOP_ON_EXCEPTION = 0x00000001,
+            FLG_SHOW_LDR_SNAPS = 0x00000002,
+            FLG_DEBUG_INITIAL_COMMAND = 0x00000004,
+            FLG_STOP_ON_HUNG_GUI = 0x00000008,
+            FLG_HEAP_ENABLE_TAIL_CHECK = 0x00000010,
+            FLG_HEAP_ENABLE_FREE_CHECK = 0x00000020,
+            FLG_HEAP_VALIDATE_PARAMETERS = 0x00000040,
+            FLG_HEAP_VALIDATE_ALL = 0x00000080,
+            FLG_APPLICATION_VERIFIER = 0x00000100,
+            FLG_POOL_ENABLE_TAGGING = 0x00000400,
+            FLG_HEAP_ENABLE_TAGGING = 0x00000800,
+            FLG_USER_STACK_TRACE_DB = 0x00001000,
+            FLG_KERNEL_STACK_TRACE_DB = 0x00002000,
+            FLG_MAINTAIN_OBJECT_TYPELIST = 0x00004000,
+            FLG_HEAP_ENABLE_TAGGING_BY_DLL = 0x00008000,
+            FLG_DISABLE_STACK_EXTENSION = 0x00010000,
+            FLG_ENABLE_CSRDEBUG = 0x00020000,
+            FLG_ENABLE_KDEBUG_SYMBOL_LOAD = 0x00040000,
+            FLG_DISABLE_PAGE_KERNEL_STACKS = 0x00080000
         }
 
         [Flags]
@@ -1669,6 +1696,12 @@ namespace PECoff
             get { return _exceptionFunctions.ToArray(); }
         }
 
+        private readonly List<UnwindInfoDetail> _unwindInfoDetails = new List<UnwindInfoDetail>();
+        public UnwindInfoDetail[] UnwindInfoDetails
+        {
+            get { return _unwindInfoDetails.ToArray(); }
+        }
+
         private ExceptionDirectorySummary _exceptionSummary;
         public ExceptionDirectorySummary ExceptionSummary
         {
@@ -1969,6 +2002,7 @@ namespace PECoff
                 _baseRelocations.ToArray(),
                 _exceptionFunctions.ToArray(),
                 _exceptionSummary,
+                _unwindInfoDetails.ToArray(),
                 _richHeader,
                 _tlsInfo,
                 _loadConfig,
@@ -2087,6 +2121,8 @@ namespace PECoff
                     false,
                     false,
                     false,
+                    false,
+                    false,
                     false);
             }
 
@@ -2113,6 +2149,8 @@ namespace PECoff
             bool rfStrict = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_RF_STRICT) != 0;
             bool retpolinePresent = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_RETPOLINE_PRESENT) != 0;
             bool ehContinuationTablePresent = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_EH_CONTINUATION_TABLE_PRESENT) != 0;
+            bool xfgEnabled = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_XFG_ENABLED) != 0;
+            bool xfgTablePresent = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_XFG_TABLE_PRESENT) != 0;
 
             return new LoadConfigGuardFlagsInfo(
                 guardFlags,
@@ -2130,12 +2168,48 @@ namespace PECoff
                 rfEnable,
                 rfStrict,
                 retpolinePresent,
-                ehContinuationTablePresent);
+                ehContinuationTablePresent,
+                xfgEnabled,
+                xfgTablePresent);
         }
 
         internal static LoadConfigGuardFlagsInfo DecodeGuardFlagsForTest(uint guardFlags)
         {
             return DecodeGuardFlags(guardFlags);
+        }
+
+        private static LoadConfigGlobalFlagsInfo DecodeGlobalFlags(uint globalFlagsClear, uint globalFlagsSet)
+        {
+            uint effective = globalFlagsSet & ~globalFlagsClear;
+            if (effective == 0)
+            {
+                return new LoadConfigGlobalFlagsInfo(0, Array.Empty<string>());
+            }
+
+            List<string> names = new List<string>();
+            uint knownMask = 0;
+            foreach (GlobalFlags flag in Enum.GetValues(typeof(GlobalFlags)))
+            {
+                uint value = (uint)flag;
+                knownMask |= value;
+                if ((effective & value) != 0)
+                {
+                    names.Add(flag.ToString());
+                }
+            }
+
+            uint unknown = effective & ~knownMask;
+            if (unknown != 0)
+            {
+                names.Add("0x" + unknown.ToString("X8", CultureInfo.InvariantCulture));
+            }
+
+            return new LoadConfigGlobalFlagsInfo(effective, names.ToArray());
+        }
+
+        internal static LoadConfigGlobalFlagsInfo DecodeGlobalFlagsForTest(uint globalFlagsClear, uint globalFlagsSet)
+        {
+            return DecodeGlobalFlags(globalFlagsClear, globalFlagsSet);
         }
 
         private static int GetOptionalHeaderChecksumOffset(PEFormat magic)
@@ -3481,13 +3555,21 @@ namespace PECoff
                 ushort bitCount = ReadUInt16(groupData, offset + 6);
                 uint bytesInRes = ReadUInt32(groupData, offset + 8);
                 ushort resourceId = ReadUInt16(groupData, offset + 12);
-
-                entries.Add(new IconEntryInfo(width, height, colorCount, reservedEntry, planes, bitCount, bytesInRes, resourceId));
-
+                bool isPng = false;
+                uint pngWidth = 0;
+                uint pngHeight = 0;
                 ResourceEntry iconEntry = iconEntries.FirstOrDefault(r => r.NameId == resourceId);
                 if (iconEntry != null &&
                     TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, iconEntry.DataRva, iconEntry.Size, sections, out ReadOnlySpan<byte> iconSpan, out byte[] iconOwned))
                 {
+                    ReadOnlySpan<byte> iconData = iconOwned.Length > 0 ? iconOwned : iconSpan;
+                    if (TryParsePngIcon(iconData, out uint parsedWidth, out uint parsedHeight))
+                    {
+                        isPng = true;
+                        pngWidth = parsedWidth;
+                        pngHeight = parsedHeight;
+                    }
+
                     iconImages.Add(iconOwned.Length > 0 ? iconOwned : iconSpan.ToArray());
                 }
                 else
@@ -3495,6 +3577,19 @@ namespace PECoff
                     iconImages.Add(Array.Empty<byte>());
                     hasMissingIcons = true;
                 }
+
+                entries.Add(new IconEntryInfo(
+                    width,
+                    height,
+                    colorCount,
+                    reservedEntry,
+                    planes,
+                    bitCount,
+                    bytesInRes,
+                    resourceId,
+                    isPng,
+                    pngWidth,
+                    pngHeight));
             }
 
             byte[] icoData = BuildIconFile(entries, iconImages);
@@ -3547,6 +3642,56 @@ namespace PECoff
             }
 
             return result;
+        }
+
+        private static bool TryParsePngIcon(ReadOnlySpan<byte> data, out uint width, out uint height)
+        {
+            width = 0;
+            height = 0;
+            ReadOnlySpan<byte> signature = new byte[]
+            {
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A
+            };
+
+            if (data.Length < 24 || !data.StartsWith(signature))
+            {
+                return false;
+            }
+
+            // PNG IHDR chunk is expected at offset 8+4 (length) +4 (type)
+            int ihdrOffset = 8;
+            if (ihdrOffset + 8 > data.Length)
+            {
+                return false;
+            }
+
+            ReadOnlySpan<byte> chunkType = data.Slice(ihdrOffset + 4, 4);
+            if (!chunkType.SequenceEqual(new byte[] { (byte)'I', (byte)'H', (byte)'D', (byte)'R' }))
+            {
+                return false;
+            }
+
+            if (ihdrOffset + 16 > data.Length)
+            {
+                return false;
+            }
+
+            width = ReadUInt32BigEndian(data, ihdrOffset + 8);
+            height = ReadUInt32BigEndian(data, ihdrOffset + 12);
+            return width > 0 && height > 0;
+        }
+
+        internal static bool TryParsePngIconForTest(byte[] data, out uint width, out uint height)
+        {
+            return TryParsePngIcon(data, out width, out height);
+        }
+
+        private static uint ReadUInt32BigEndian(ReadOnlySpan<byte> data, int offset)
+        {
+            return ((uint)data[offset] << 24) |
+                   ((uint)data[offset + 1] << 16) |
+                   ((uint)data[offset + 2] << 8) |
+                   data[offset + 3];
         }
 
         private static void WriteUInt16(byte[] buffer, int offset, ushort value)
@@ -4250,9 +4395,22 @@ namespace PECoff
                 string identityVersion = assemblyIdentity?.Attribute("version")?.Value ?? string.Empty;
                 string identityArch = assemblyIdentity?.Attribute("processorArchitecture")?.Value ?? string.Empty;
                 string identityType = assemblyIdentity?.Attribute("type")?.Value ?? string.Empty;
+                string identityLanguage = assemblyIdentity?.Attribute("language")?.Value ?? string.Empty;
 
                 XElement requestedExecutionLevel = FindFirstElement(root, "requestedExecutionLevel");
                 string uiAccess = requestedExecutionLevel?.Attribute("uiAccess")?.Value ?? string.Empty;
+                string requestedLevel = requestedExecutionLevel?.Attribute("level")?.Value ?? string.Empty;
+
+                XElement dpiAwareElement = FindFirstElement(root, "dpiAware");
+                string dpiAware = dpiAwareElement?.Value ?? string.Empty;
+                XElement dpiAwarenessElement = FindFirstElement(root, "dpiAwareness");
+                string dpiAwareness = dpiAwarenessElement?.Value ?? string.Empty;
+                XElement uiLanguageElement = FindFirstElement(root, "uiLanguage");
+                string uiLanguage = uiLanguageElement?.Value ?? string.Empty;
+
+                dpiAware = dpiAware?.Trim() ?? string.Empty;
+                dpiAwareness = dpiAwareness?.Trim() ?? string.Empty;
+                uiLanguage = uiLanguage?.Trim() ?? string.Empty;
 
                 schema = new ManifestSchemaInfo(
                     rootElement,
@@ -4262,13 +4420,23 @@ namespace PECoff
                     identityVersion,
                     identityArch,
                     identityType,
-                    uiAccess);
+                    identityLanguage,
+                    requestedLevel,
+                    uiAccess,
+                    dpiAware,
+                    dpiAwareness,
+                    uiLanguage);
                 return true;
             }
             catch (Exception)
             {
                 return false;
             }
+        }
+
+        internal static bool TryParseManifestSchemaForTest(string content, out ManifestSchemaInfo schema)
+        {
+            return TryParseManifestSchema(content, out schema);
         }
 
         private static bool LooksLikeManifest(string content)
@@ -4992,6 +5160,7 @@ namespace PECoff
             int thunkSize = isPe32Plus ? 8 : 4;
             int maxIterations = 65536;
             bool terminated = false;
+            bool warnedNullThunks = false;
             for (int index = 0; index < maxIterations; index++)
             {
                 long entryOffset = thunkOffset + (index * thunkSize);
@@ -5004,8 +5173,36 @@ namespace PECoff
                 ulong value = isPe32Plus ? PEFile.ReadUInt64() : PEFile.ReadUInt32();
                 if (value == 0)
                 {
-                    terminated = true;
-                    break;
+                    bool foundNonZero = false;
+                    for (int lookahead = 1; lookahead <= 8; lookahead++)
+                    {
+                        long peekOffset = entryOffset + (lookahead * thunkSize);
+                        if (!TrySetPosition(peekOffset, thunkSize))
+                        {
+                            break;
+                        }
+
+                        ulong peek = isPe32Plus ? PEFile.ReadUInt64() : PEFile.ReadUInt32();
+                        if (peek != 0)
+                        {
+                            foundNonZero = true;
+                            break;
+                        }
+                    }
+
+                    if (!foundNonZero)
+                    {
+                        terminated = true;
+                        break;
+                    }
+
+                    if (!warnedNullThunks)
+                    {
+                        Warn(ParseIssueCategory.Imports, $"Null thunk entry encountered in {dllName} before list terminator.");
+                        warnedNullThunks = true;
+                    }
+
+                    continue;
                 }
 
                 ulong entryRva = (ulong)thunkTableRva + (ulong)(index * thunkSize);
@@ -5383,15 +5580,156 @@ namespace PECoff
             if (_exceptionFunctions.Count == 0)
             {
                 _exceptionSummary = null;
+                _unwindInfoDetails.Clear();
                 return;
             }
 
             bool isAmd64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_AMD64;
+            _unwindInfoDetails.Clear();
+            if (isAmd64)
+            {
+                ParseUnwindInfoDetails(sections);
+            }
+
             _exceptionSummary = BuildExceptionDirectorySummaryCore(
                 _exceptionFunctions,
                 _sizeOfImage,
                 isAmd64,
                 (uint rva, out byte version) => TryReadUnwindVersion(sections, rva, out version));
+        }
+
+        private void ParseUnwindInfoDetails(List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (_exceptionFunctions.Count == 0 || PEFileStream == null || PEFile == null)
+            {
+                return;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                foreach (ExceptionFunctionInfo func in _exceptionFunctions)
+                {
+                    if (func.UnwindInfoAddress == 0)
+                    {
+                        continue;
+                    }
+
+                    if (!TryGetFileOffset(sections, func.UnwindInfoAddress, out long offset))
+                    {
+                        Warn(ParseIssueCategory.Sections, "Unwind info RVA not mapped to a section.");
+                        continue;
+                    }
+
+                    if (!TrySetPosition(offset, 4))
+                    {
+                        Warn(ParseIssueCategory.Sections, "Unwind info header outside file bounds.");
+                        continue;
+                    }
+
+                    byte verFlags = (byte)PEFile.ReadByte();
+                    byte prologSize = (byte)PEFile.ReadByte();
+                    byte codeCount = (byte)PEFile.ReadByte();
+                    byte frame = (byte)PEFile.ReadByte();
+
+                    int totalBytes = 4 + (codeCount * 2);
+                    if (totalBytes < 4 || !TrySetPosition(offset, totalBytes))
+                    {
+                        Warn(ParseIssueCategory.Sections, "Unwind info size exceeds file bounds.");
+                        continue;
+                    }
+
+                    byte[] buffer = new byte[totalBytes];
+                    ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+                    if (TryParseUnwindInfoDetail(func, buffer, out UnwindInfoDetail detail))
+                    {
+                        _unwindInfoDetails.Add(detail);
+                        if (detail.PrologSizeExceedsFunction)
+                        {
+                            Warn(ParseIssueCategory.Sections, "Unwind prolog size exceeds function length.");
+                        }
+                    }
+                    else
+                    {
+                        Warn(ParseIssueCategory.Sections, "Unwind info could not be parsed.");
+                    }
+                }
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
+        private static bool TryParseUnwindInfoDetail(ExceptionFunctionInfo func, ReadOnlySpan<byte> data, out UnwindInfoDetail detail)
+        {
+            detail = null;
+            if (data.Length < 4)
+            {
+                return false;
+            }
+
+            byte verFlags = data[0];
+            byte version = (byte)(verFlags & 0x07);
+            byte flags = (byte)(verFlags >> 3);
+            byte prologSize = data[1];
+            byte codeCount = data[2];
+            byte frame = data[3];
+            byte frameRegister = (byte)(frame & 0x0F);
+            byte frameOffset = (byte)((frame >> 4) & 0x0F);
+
+            int needed = 4 + (codeCount * 2);
+            if (needed > data.Length)
+            {
+                return false;
+            }
+
+            UnwindCodeInfo[] codes = new UnwindCodeInfo[codeCount];
+            int cursor = 4;
+            for (int i = 0; i < codeCount; i++)
+            {
+                byte codeOffset = data[cursor];
+                byte opInfo = (byte)(data[cursor + 1] >> 4);
+                byte unwindOp = (byte)(data[cursor + 1] & 0x0F);
+                codes[i] = new UnwindCodeInfo(codeOffset, unwindOp, opInfo);
+                cursor += 2;
+            }
+
+            uint functionSize = func.EndAddress > func.BeginAddress
+                ? func.EndAddress - func.BeginAddress
+                : 0;
+            bool prologTooLarge = functionSize > 0 && prologSize > functionSize;
+            bool hasChained = (flags & 0x04) != 0;
+
+            detail = new UnwindInfoDetail(
+                func.BeginAddress,
+                func.EndAddress,
+                func.UnwindInfoAddress,
+                version,
+                flags,
+                prologSize,
+                codeCount,
+                frameRegister,
+                frameOffset,
+                hasChained,
+                prologTooLarge,
+                codes);
+            return true;
+        }
+
+        internal static UnwindInfoDetail BuildUnwindInfoDetailForTest(ExceptionFunctionInfo func, byte[] data)
+        {
+            if (data == null || func == null)
+            {
+                return null;
+            }
+
+            return TryParseUnwindInfoDetail(func, data, out UnwindInfoDetail detail)
+                ? detail
+                : null;
         }
 
         private bool TryReadUnwindVersion(List<IMAGE_SECTION_HEADER> sections, uint rva, out byte version)
@@ -5684,6 +6022,7 @@ namespace PECoff
             }
 
             ulong[] callbacks = Array.Empty<ulong>();
+            List<TlsCallbackInfo> callbackInfos = new List<TlsCallbackInfo>();
             if (callbacksAddr != 0 &&
                 TryGetFileOffsetFromVa(sections, callbacksAddr, imageBase, out long callbacksOffset))
             {
@@ -5710,6 +6049,25 @@ namespace PECoff
                 callbacks = callbackList.ToArray();
             }
 
+            if (callbacks.Length > 0)
+            {
+                foreach (ulong callback in callbacks)
+                {
+                    uint callbackRva = 0;
+                    string symbol = string.Empty;
+                    if (TryVaToRva(callback, imageBase, out uint resolvedRva))
+                    {
+                        callbackRva = resolvedRva;
+                        if (TryResolveExportName(callbackRva, out string resolved))
+                        {
+                            symbol = resolved;
+                        }
+                    }
+
+                    callbackInfos.Add(new TlsCallbackInfo(callback, callbackRva, symbol));
+                }
+            }
+
             _tlsInfo = new TlsInfo(
                 startRaw,
                 endRaw,
@@ -5717,7 +6075,8 @@ namespace PECoff
                 callbacksAddr,
                 zeroFill,
                 characteristics,
-                callbacks);
+                callbacks,
+                callbackInfos.ToArray());
         }
 
         private void ParseLoadConfigDirectory(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections, bool isPe32Plus)
@@ -5747,6 +6106,11 @@ namespace PECoff
             int offset = 0;
             uint size = ReadUInt32(span, offset);
             offset += 4;
+            int limit = span.Length;
+            if (size > 0 && size < (uint)limit)
+            {
+                limit = (int)size;
+            }
             uint timeDateStamp = ReadUInt32(span, offset);
             offset += 4;
             ushort major = ReadUInt16(span, offset);
@@ -5813,7 +6177,47 @@ namespace PECoff
             uint guardCfCount = isPe32Plus ? (uint)ReadUInt64(span, offset) : ReadUInt32(span, offset);
             offset += isPe32Plus ? 8 : 4;
             uint guardFlags = ReadUInt32(span, offset);
+            offset += 4;
             LoadConfigGuardFlagsInfo guardFlagsInfo = DecodeGuardFlags(guardFlags);
+            LoadConfigGlobalFlagsInfo globalFlagsInfo = DecodeGlobalFlags(globalFlagsClear, globalFlagsSet);
+
+            ulong chpeMetadataPointer = 0;
+            ulong guardEhContinuationTable = 0;
+            ulong guardEhContinuationCount = 0;
+            ulong guardXfgCheckFunctionPointer = 0;
+            ulong guardXfgDispatchFunctionPointer = 0;
+            ulong guardXfgTableDispatchFunctionPointer = 0;
+
+            if (TryAdvance(ref offset, limit, 12) && // CodeIntegrity
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardAddressTakenIatEntryTable
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardAddressTakenIatEntryCount
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardLongJumpTargetTable
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardLongJumpTargetCount
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // DynamicValueRelocTable
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out chpeMetadataPointer))
+            {
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _); // GuardRFFailureRoutine
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _); // GuardRFFailureRoutineFunctionPointer
+                if (TryReadUInt32Value(span, ref offset, limit, out _))
+                {
+                    TryReadUInt16Value(span, ref offset, limit, out _);
+                    TryReadUInt16Value(span, ref offset, limit, out _);
+                }
+
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _); // GuardRFVerifyStackPointerFunctionPointer
+                TryReadUInt32Value(span, ref offset, limit, out _); // HotPatchTableOffset
+                TryReadUInt32Value(span, ref offset, limit, out _); // Reserved3
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _); // EnclaveConfigurationPointer
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _); // VolatileMetadataPointer
+
+                if (TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardEhContinuationTable))
+                {
+                    TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardEhContinuationCount);
+                    TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgCheckFunctionPointer);
+                    TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgDispatchFunctionPointer);
+                    TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgTableDispatchFunctionPointer);
+                }
+            }
 
             _loadConfig = new LoadConfigInfo(
                 size,
@@ -5822,6 +6226,7 @@ namespace PECoff
                 minor,
                 globalFlagsClear,
                 globalFlagsSet,
+                globalFlagsInfo,
                 processHeapFlags,
                 csdVersion,
                 dependentLoadFlags,
@@ -5833,7 +6238,13 @@ namespace PECoff
                 guardCfTable,
                 guardCfCount,
                 guardFlags,
-                guardFlagsInfo);
+                guardFlagsInfo,
+                chpeMetadataPointer,
+                guardEhContinuationTable,
+                guardEhContinuationCount,
+                guardXfgCheckFunctionPointer,
+                guardXfgDispatchFunctionPointer,
+                guardXfgTableDispatchFunctionPointer);
         }
 
         private static ulong ReadPointer(ReadOnlySpan<byte> span, ref int offset, bool isPe32Plus)
@@ -5841,6 +6252,57 @@ namespace PECoff
             ulong value = isPe32Plus ? ReadUInt64(span, offset) : ReadUInt32(span, offset);
             offset += isPe32Plus ? 8 : 4;
             return value;
+        }
+
+        private static bool TryAdvance(ref int offset, int limit, int bytes)
+        {
+            if (offset + bytes > limit)
+            {
+                return false;
+            }
+
+            offset += bytes;
+            return true;
+        }
+
+        private static bool TryReadPointerValue(ReadOnlySpan<byte> span, ref int offset, int limit, bool isPe32Plus, out ulong value)
+        {
+            value = 0;
+            int bytes = isPe32Plus ? 8 : 4;
+            if (offset + bytes > limit)
+            {
+                return false;
+            }
+
+            value = isPe32Plus ? ReadUInt64(span, offset) : ReadUInt32(span, offset);
+            offset += bytes;
+            return true;
+        }
+
+        private static bool TryReadUInt32Value(ReadOnlySpan<byte> span, ref int offset, int limit, out uint value)
+        {
+            value = 0;
+            if (offset + 4 > limit)
+            {
+                return false;
+            }
+
+            value = ReadUInt32(span, offset);
+            offset += 4;
+            return true;
+        }
+
+        private static bool TryReadUInt16Value(ReadOnlySpan<byte> span, ref int offset, int limit, out ushort value)
+        {
+            value = 0;
+            if (offset + 2 > limit)
+            {
+                return false;
+            }
+
+            value = ReadUInt16(span, offset);
+            offset += 2;
+            return true;
         }
 
         private static bool TryVaToRva(ulong va, ulong imageBase, out uint rva)
@@ -5870,6 +6332,34 @@ namespace PECoff
             }
 
             return TryGetFileOffset(sections, rva, out fileOffset);
+        }
+
+        private bool TryResolveExportName(uint rva, out string name)
+        {
+            name = string.Empty;
+            if (rva == 0 || _exportEntries.Count == 0)
+            {
+                return false;
+            }
+
+            foreach (ExportEntry entry in _exportEntries)
+            {
+                if (entry == null || entry.IsForwarder || entry.AddressRva != rva)
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(entry.Name))
+                {
+                    name = entry.Name;
+                    return true;
+                }
+
+                name = "#" + entry.Ordinal.ToString(CultureInfo.InvariantCulture);
+                return true;
+            }
+
+            return false;
         }
 
         private static bool TryParseClrMetadata(byte[] buffer, int length, IMAGE_COR20_HEADER header, out ClrMetadataInfo info)
@@ -6877,6 +7367,7 @@ namespace PECoff
         {
             ParseIssueSeverity severity = ResolveSeverity(category, ParseIssueSeverity.Error);
             _parseResult.AddIssue(category, severity, message);
+            NotifyIssue(category, severity, message);
             if (severity == ParseIssueSeverity.Error && _options != null && _options.StrictMode)
             {
                 throw new PECOFFParseException(message);
@@ -6892,10 +7383,21 @@ namespace PECoff
 
             ParseIssueSeverity severity = ResolveSeverity(category, ParseIssueSeverity.Warning);
             _parseResult.AddIssue(category, severity, message);
+            NotifyIssue(category, severity, message);
             if (severity == ParseIssueSeverity.Error && _options != null && _options.StrictMode)
             {
                 throw new PECOFFParseException(message);
             }
+        }
+
+        private void NotifyIssue(ParseIssueCategory category, ParseIssueSeverity severity, string message)
+        {
+            if (_options?.IssueCallback == null || severity == ParseIssueSeverity.Ignore || string.IsNullOrWhiteSpace(message))
+            {
+                return;
+            }
+
+            _options.IssueCallback(new ParseIssue(category, severity, message));
         }
 
         private void WarnAt(ParseIssueCategory category, string message, long fileOffset)
@@ -6941,6 +7443,7 @@ namespace PECoff
                 _debugDirectories.Clear();
                 _baseRelocations.Clear();
                 _exceptionFunctions.Clear();
+                _unwindInfoDetails.Clear();
                 _exceptionSummary = null;
                 _richHeader = null;
                 _tlsInfo = null;
@@ -7449,7 +7952,7 @@ namespace PECoff
                                     if (_options.ParseCertificateSigners &&
                                         (typeKind == CertificateTypeKind.PkcsSignedData || typeKind == CertificateTypeKind.TsStackSigned))
                                     {
-                                        CertificateUtilities.TryGetPkcs7SignerInfos(certData, out pkcs7Signers, out pkcs7Error);
+                                        CertificateUtilities.TryGetPkcs7SignerInfos(certData, _options?.AuthenticodePolicy, out pkcs7Signers, out pkcs7Error);
                                         if (_options.ComputeAuthenticode &&
                                             CertificateUtilities.TryGetAuthenticodeDigests(certData, out AuthenticodeDigestInfo[] digests, out string _))
                                         {

@@ -7,42 +7,15 @@ public class CertificateUtilitiesTests
     [Fact]
     public void BuildAuthenticodeStatus_Summarizes_Signers_And_Timestamps()
     {
-        Pkcs7SignerInfo timestampSigner = new Pkcs7SignerInfo(
-            subject: "Timestamp",
-            issuer: "TimestampCA",
-            serialNumber: "01",
-            thumbprint: "TS",
-            digestAlgorithm: "SHA256",
-            signatureAlgorithm: "RSA",
-            signerIdentifierType: "IssuerAndSerialNumber",
-            signingTime: DateTimeOffset.UtcNow,
-            signatureValid: true,
-            signatureError: string.Empty,
-            chainValid: true,
-            chainStatus: new[] { "TimestampChainOK", "timestampchainok" },
-            isTimestampSigner: true,
+        Pkcs7SignerInfo timestampSigner = CreateSigner(
+            isTimestamp: true,
             hasCodeSigningEku: false,
             hasTimestampEku: true,
-            isWithinValidityPeriod: true,
-            counterSigners: Array.Empty<Pkcs7SignerInfo>());
-
-        Pkcs7SignerInfo primarySigner = new Pkcs7SignerInfo(
-            subject: "Signer",
-            issuer: "IssuerCA",
-            serialNumber: "02",
-            thumbprint: "SG",
-            digestAlgorithm: "SHA256",
-            signatureAlgorithm: "RSA",
-            signerIdentifierType: "IssuerAndSerialNumber",
-            signingTime: DateTimeOffset.UtcNow,
-            signatureValid: true,
-            signatureError: string.Empty,
-            chainValid: true,
-            chainStatus: new[] { "UntrustedRoot", "UntrustedRoot" },
-            isTimestampSigner: false,
+            chainStatus: new[] { "TimestampChainOK", "timestampchainok" });
+        Pkcs7SignerInfo primarySigner = CreateSigner(
+            isTimestamp: false,
             hasCodeSigningEku: true,
-            hasTimestampEku: false,
-            isWithinValidityPeriod: true,
+            chainStatus: new[] { "UntrustedRoot", "UntrustedRoot" },
             counterSigners: new[] { timestampSigner });
 
         AuthenticodeStatusInfo status = CertificateUtilities.BuildAuthenticodeStatus(new[] { primarySigner });
@@ -63,24 +36,7 @@ public class CertificateUtilitiesTests
     [Fact]
     public void BuildAuthenticodeStatus_Enforces_Policy()
     {
-        Pkcs7SignerInfo signer = new Pkcs7SignerInfo(
-            subject: "Signer",
-            issuer: "Issuer",
-            serialNumber: "01",
-            thumbprint: "TP",
-            digestAlgorithm: "SHA256",
-            signatureAlgorithm: "RSA",
-            signerIdentifierType: "IssuerAndSerialNumber",
-            signingTime: DateTimeOffset.UtcNow,
-            signatureValid: true,
-            signatureError: string.Empty,
-            chainValid: false,
-            chainStatus: new[] { "UntrustedRoot" },
-            isTimestampSigner: false,
-            hasCodeSigningEku: false,
-            hasTimestampEku: false,
-            isWithinValidityPeriod: true,
-            counterSigners: Array.Empty<Pkcs7SignerInfo>());
+        Pkcs7SignerInfo signer = CreateSigner(isTimestamp: false, chainValid: false, hasCodeSigningEku: false);
 
         AuthenticodePolicy policy = new AuthenticodePolicy
         {
@@ -93,5 +49,52 @@ public class CertificateUtilitiesTests
         Assert.False(status.PolicyCompliant);
         Assert.Contains(status.PolicyFailures, f => f.Contains("chain", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(status.PolicyFailures, f => f.Contains("code signing", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void BuildAuthenticodeStatus_Counts_Nested_Timestamps()
+    {
+        Pkcs7SignerInfo nestedTimestamp = CreateSigner(isTimestamp: true, hasCodeSigningEku: false, hasTimestampEku: true, nestingLevel: 1);
+        Pkcs7SignerInfo primarySigner = CreateSigner(isTimestamp: false, hasCodeSigningEku: true, nestedSigners: new[] { nestedTimestamp });
+
+        AuthenticodeStatusInfo status = CertificateUtilities.BuildAuthenticodeStatus(new[] { primarySigner });
+
+        Assert.Equal(1, status.SignerCount);
+        Assert.Equal(1, status.TimestampSignerCount);
+        Assert.True(status.HasTimestamp);
+    }
+
+    private static Pkcs7SignerInfo CreateSigner(
+        bool isTimestamp,
+        bool chainValid = true,
+        bool hasCodeSigningEku = true,
+        bool hasTimestampEku = false,
+        int nestingLevel = 0,
+        Pkcs7SignerInfo[]? counterSigners = null,
+        Pkcs7SignerInfo[]? nestedSigners = null,
+        string[]? chainStatus = null)
+    {
+        string[] status = chainStatus ?? (chainValid ? Array.Empty<string>() : new[] { "UntrustedRoot" });
+        return new Pkcs7SignerInfo(
+            subject: "Signer",
+            issuer: "Issuer",
+            serialNumber: "01",
+            thumbprint: "TP",
+            digestAlgorithm: "SHA256",
+            signatureAlgorithm: "RSA",
+            signerIdentifierType: "IssuerAndSerialNumber",
+            signingTime: DateTimeOffset.UtcNow,
+            signatureValid: true,
+            signatureError: string.Empty,
+            chainValid: chainValid,
+            chainStatus: status,
+            isTimestampSigner: isTimestamp,
+            hasCodeSigningEku: hasCodeSigningEku,
+            hasTimestampEku: hasTimestampEku,
+            isWithinValidityPeriod: true,
+            nestingLevel: nestingLevel,
+            counterSigners: counterSigners ?? Array.Empty<Pkcs7SignerInfo>(),
+            nestedSigners: nestedSigners ?? Array.Empty<Pkcs7SignerInfo>(),
+            rfc3161Timestamps: Array.Empty<Pkcs7TimestampInfo>());
     }
 }

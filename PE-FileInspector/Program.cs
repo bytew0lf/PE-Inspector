@@ -770,6 +770,40 @@ namespace PE_FileInspector
                     }
                 }
 
+                if (pe.UnwindInfoDetails.Count > 0)
+                {
+                    sb.AppendLine("  Unwind Details:");
+                    foreach (UnwindInfoDetail detail in pe.UnwindInfoDetails.Take(20))
+                    {
+                        string line = "    - Function: 0x" + detail.FunctionBegin.ToString("X8", CultureInfo.InvariantCulture) +
+                                      "-0x" + detail.FunctionEnd.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Unwind: 0x" + detail.UnwindInfoAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Prolog: " + detail.PrologSize.ToString(CultureInfo.InvariantCulture) +
+                                      " | Frame: " + detail.FrameRegister.ToString(CultureInfo.InvariantCulture) +
+                                      "/" + detail.FrameOffset.ToString(CultureInfo.InvariantCulture);
+                        if (detail.PrologSizeExceedsFunction)
+                        {
+                            line += " (prolog > size)";
+                        }
+                        sb.AppendLine(line);
+
+                        if (detail.UnwindCodes.Count > 0)
+                        {
+                            string codes = string.Join(", ",
+                                detail.UnwindCodes.Select(c =>
+                                    c.CodeOffset.ToString(CultureInfo.InvariantCulture) +
+                                    ":" + c.UnwindOp.ToString(CultureInfo.InvariantCulture) +
+                                    "/" + c.OpInfo.ToString(CultureInfo.InvariantCulture)));
+                            sb.AppendLine("      Codes: " + codes);
+                        }
+                    }
+
+                    if (pe.UnwindInfoDetails.Count > 20)
+                    {
+                        sb.AppendLine("    (truncated)");
+                    }
+                }
+
                 sb.AppendLine("  Functions: " + pe.ExceptionFunctions.Length.ToString(CultureInfo.InvariantCulture));
                 foreach (ExceptionFunctionInfo func in pe.ExceptionFunctions.Take(50))
                 {
@@ -854,7 +888,26 @@ namespace PE_FileInspector
                 sb.AppendLine("  AddressOfCallbacks: 0x" + pe.TlsInfo.AddressOfCallbacks.ToString("X", CultureInfo.InvariantCulture));
                 sb.AppendLine("  SizeOfZeroFill: " + pe.TlsInfo.SizeOfZeroFill.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Characteristics: 0x" + pe.TlsInfo.Characteristics.ToString("X8", CultureInfo.InvariantCulture));
-                if (pe.TlsInfo.CallbackAddresses.Count == 0)
+                if (pe.TlsInfo.CallbackInfos.Count > 0)
+                {
+                    sb.AppendLine("  Callbacks:");
+                    foreach (TlsCallbackInfo callback in pe.TlsInfo.CallbackInfos)
+                    {
+                        string line = "    - 0x" + callback.Address.ToString("X", CultureInfo.InvariantCulture);
+                        if (callback.Rva != 0)
+                        {
+                            line += " (RVA 0x" + callback.Rva.ToString("X8", CultureInfo.InvariantCulture) + ")";
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(callback.SymbolName))
+                        {
+                            line += " " + callback.SymbolName;
+                        }
+
+                        sb.AppendLine(line);
+                    }
+                }
+                else if (pe.TlsInfo.CallbackAddresses.Count == 0)
                 {
                     sb.AppendLine("  Callbacks: (none)");
                 }
@@ -878,6 +931,19 @@ namespace PE_FileInspector
             {
                 sb.AppendLine("  Size: " + pe.LoadConfig.Size.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  TimeDateStamp: 0x" + pe.LoadConfig.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                if (pe.LoadConfig.GlobalFlagsInfo != null)
+                {
+                    sb.AppendLine("  GlobalFlags: 0x" + pe.LoadConfig.GlobalFlagsInfo.Value.ToString("X8", CultureInfo.InvariantCulture));
+                    if (pe.LoadConfig.GlobalFlagsInfo.Flags.Count > 0)
+                    {
+                        sb.AppendLine("  Global Flags Decoded:");
+                        foreach (string flag in pe.LoadConfig.GlobalFlagsInfo.Flags)
+                        {
+                            sb.AppendLine("    - " + flag);
+                        }
+                    }
+                }
+
                 sb.AppendLine("  SecurityCookie: 0x" + pe.LoadConfig.SecurityCookie.ToString("X", CultureInfo.InvariantCulture));
                 sb.AppendLine("  SEHandlerCount: " + pe.LoadConfig.SeHandlerCount.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  GuardFlags: 0x" + pe.LoadConfig.GuardFlags.ToString("X8", CultureInfo.InvariantCulture));
@@ -888,6 +954,26 @@ namespace PE_FileInspector
                     {
                         sb.AppendLine("    - " + flag);
                     }
+                }
+
+                if (pe.LoadConfig.ChpeMetadataPointer != 0)
+                {
+                    sb.AppendLine("  CHPE Metadata Pointer: 0x" + pe.LoadConfig.ChpeMetadataPointer.ToString("X", CultureInfo.InvariantCulture));
+                }
+
+                if (pe.LoadConfig.GuardEhContinuationTable != 0 || pe.LoadConfig.GuardEhContinuationCount != 0)
+                {
+                    sb.AppendLine("  GuardEH Continuation Table: 0x" + pe.LoadConfig.GuardEhContinuationTable.ToString("X", CultureInfo.InvariantCulture));
+                    sb.AppendLine("  GuardEH Continuation Count: " + pe.LoadConfig.GuardEhContinuationCount.ToString(CultureInfo.InvariantCulture));
+                }
+
+                if (pe.LoadConfig.GuardXfgCheckFunctionPointer != 0 ||
+                    pe.LoadConfig.GuardXfgDispatchFunctionPointer != 0 ||
+                    pe.LoadConfig.GuardXfgTableDispatchFunctionPointer != 0)
+                {
+                    sb.AppendLine("  GuardXFG Check Function: 0x" + pe.LoadConfig.GuardXfgCheckFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
+                    sb.AppendLine("  GuardXFG Dispatch Function: 0x" + pe.LoadConfig.GuardXfgDispatchFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
+                    sb.AppendLine("  GuardXFG Table Dispatch: 0x" + pe.LoadConfig.GuardXfgTableDispatchFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
                 }
             }
             sb.AppendLine();
@@ -950,6 +1036,28 @@ namespace PE_FileInspector
                                   " | Lang: 0x" + group.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
                                   " | Entries: " + group.Entries.Count.ToString(CultureInfo.InvariantCulture) +
                                   " | IcoBytes: " + group.IcoData.Length.ToString(CultureInfo.InvariantCulture));
+                    if (group.Entries.Count > 0)
+                    {
+                        foreach (IconEntryInfo entry in group.Entries.Take(10))
+                        {
+                            string line = "    - " + entry.Width.ToString(CultureInfo.InvariantCulture) +
+                                          "x" + entry.Height.ToString(CultureInfo.InvariantCulture) +
+                                          " | Bits: " + entry.BitCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | ResId: " + entry.ResourceId.ToString(CultureInfo.InvariantCulture);
+                            if (entry.IsPng)
+                            {
+                                line += " | PNG: " + entry.PngWidth.ToString(CultureInfo.InvariantCulture) +
+                                        "x" + entry.PngHeight.ToString(CultureInfo.InvariantCulture);
+                            }
+
+                            sb.AppendLine(line);
+                        }
+
+                        if (group.Entries.Count > 10)
+                        {
+                            sb.AppendLine("    (truncated)");
+                        }
+                    }
                 }
             }
             sb.AppendLine();
@@ -1199,9 +1307,29 @@ namespace PE_FileInspector
                         {
                             sb.AppendLine("      AssemblyType: " + Safe(manifest.Schema.AssemblyIdentityType));
                         }
+                        if (!string.IsNullOrWhiteSpace(manifest.Schema.AssemblyIdentityLanguage))
+                        {
+                            sb.AppendLine("      AssemblyLanguage: " + Safe(manifest.Schema.AssemblyIdentityLanguage));
+                        }
+                        if (!string.IsNullOrWhiteSpace(manifest.Schema.RequestedExecutionLevel))
+                        {
+                            sb.AppendLine("      RequestedExecutionLevel: " + Safe(manifest.Schema.RequestedExecutionLevel));
+                        }
                         if (!string.IsNullOrWhiteSpace(manifest.Schema.UiAccess))
                         {
                             sb.AppendLine("      UiAccess: " + Safe(manifest.Schema.UiAccess));
+                        }
+                        if (!string.IsNullOrWhiteSpace(manifest.Schema.DpiAware))
+                        {
+                            sb.AppendLine("      DpiAware: " + Safe(manifest.Schema.DpiAware));
+                        }
+                        if (!string.IsNullOrWhiteSpace(manifest.Schema.DpiAwareness))
+                        {
+                            sb.AppendLine("      DpiAwareness: " + Safe(manifest.Schema.DpiAwareness));
+                        }
+                        if (!string.IsNullOrWhiteSpace(manifest.Schema.UiLanguage))
+                        {
+                            sb.AppendLine("      UiLanguage: " + Safe(manifest.Schema.UiLanguage));
                         }
                     }
                     if (!string.IsNullOrWhiteSpace(manifest.Content))
@@ -1251,6 +1379,10 @@ namespace PE_FileInspector
             sb.AppendLine(prefix + "  Code Signing EKU: " + signer.HasCodeSigningEku);
             sb.AppendLine(prefix + "  Timestamp EKU: " + signer.HasTimestampEku);
             sb.AppendLine(prefix + "  Within Validity: " + signer.IsWithinValidityPeriod);
+            if (signer.NestingLevel > 0)
+            {
+                sb.AppendLine(prefix + "  Nesting Level: " + signer.NestingLevel.ToString(CultureInfo.InvariantCulture));
+            }
             if (signer.ChainStatus != null && signer.ChainStatus.Length > 0)
             {
                 sb.AppendLine(prefix + "  Chain Status:");
@@ -1263,12 +1395,40 @@ namespace PE_FileInspector
             {
                 sb.AppendLine(prefix + "  Timestamp Signer: true");
             }
+            if (signer.Rfc3161Timestamps != null && signer.Rfc3161Timestamps.Count > 0)
+            {
+                sb.AppendLine(prefix + "  RFC3161 Timestamps:");
+                foreach (Pkcs7TimestampInfo info in signer.Rfc3161Timestamps)
+                {
+                    sb.AppendLine(prefix + "    - Policy: " + Safe(info.Policy));
+                    if (!string.IsNullOrWhiteSpace(info.SerialNumber))
+                    {
+                        sb.AppendLine(prefix + "      Serial: " + Safe(info.SerialNumber));
+                    }
+                    if (!string.IsNullOrWhiteSpace(info.TsaName))
+                    {
+                        sb.AppendLine(prefix + "      TSA: " + Safe(info.TsaName));
+                    }
+                    if (info.GeneratedTime.HasValue)
+                    {
+                        sb.AppendLine(prefix + "      Time: " + info.GeneratedTime.Value.ToString("u", CultureInfo.InvariantCulture));
+                    }
+                }
+            }
             if (signer.CounterSigners != null && signer.CounterSigners.Length > 0)
             {
                 sb.AppendLine(prefix + "  Counter Signers:");
                 foreach (Pkcs7SignerInfo counter in signer.CounterSigners)
                 {
                     WriteSignerInfo(sb, counter, prefix + "    ");
+                }
+            }
+            if (signer.NestedSigners != null && signer.NestedSigners.Length > 0)
+            {
+                sb.AppendLine(prefix + "  Nested Signatures:");
+                foreach (Pkcs7SignerInfo nested in signer.NestedSigners)
+                {
+                    WriteSignerInfo(sb, nested, prefix + "    ");
                 }
             }
         }

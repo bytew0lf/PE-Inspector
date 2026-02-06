@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Formats.Asn1;
+using System.Numerics;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
@@ -27,7 +28,10 @@ namespace PECoff
         public bool HasCodeSigningEku { get; }
         public bool HasTimestampEku { get; }
         public bool IsWithinValidityPeriod { get; }
+        public int NestingLevel { get; }
         public Pkcs7SignerInfo[] CounterSigners { get; }
+        public Pkcs7SignerInfo[] NestedSigners { get; }
+        public IReadOnlyList<Pkcs7TimestampInfo> Rfc3161Timestamps { get; }
 
         public Pkcs7SignerInfo(
             string subject,
@@ -46,7 +50,10 @@ namespace PECoff
             bool hasCodeSigningEku,
             bool hasTimestampEku,
             bool isWithinValidityPeriod,
-            Pkcs7SignerInfo[] counterSigners)
+            int nestingLevel,
+            Pkcs7SignerInfo[] counterSigners,
+            Pkcs7SignerInfo[] nestedSigners,
+            Pkcs7TimestampInfo[] rfc3161Timestamps)
         {
             Subject = subject ?? string.Empty;
             Issuer = issuer ?? string.Empty;
@@ -64,7 +71,26 @@ namespace PECoff
             HasCodeSigningEku = hasCodeSigningEku;
             HasTimestampEku = hasTimestampEku;
             IsWithinValidityPeriod = isWithinValidityPeriod;
+            NestingLevel = nestingLevel;
             CounterSigners = counterSigners ?? Array.Empty<Pkcs7SignerInfo>();
+            NestedSigners = nestedSigners ?? Array.Empty<Pkcs7SignerInfo>();
+            Rfc3161Timestamps = Array.AsReadOnly(rfc3161Timestamps ?? Array.Empty<Pkcs7TimestampInfo>());
+        }
+    }
+
+    public sealed class Pkcs7TimestampInfo
+    {
+        public string Policy { get; }
+        public string SerialNumber { get; }
+        public string TsaName { get; }
+        public DateTimeOffset? GeneratedTime { get; }
+
+        public Pkcs7TimestampInfo(string policy, string serialNumber, string tsaName, DateTimeOffset? generatedTime)
+        {
+            Policy = policy ?? string.Empty;
+            SerialNumber = serialNumber ?? string.Empty;
+            TsaName = tsaName ?? string.Empty;
+            GeneratedTime = generatedTime;
         }
     }
 
@@ -229,24 +255,47 @@ namespace PECoff
 
         private static IEnumerable<Pkcs7SignerInfo> FlattenSigners(Pkcs7SignerInfo[] signers)
         {
+            if (signers == null)
+            {
+                yield break;
+            }
+
             foreach (Pkcs7SignerInfo signer in signers)
             {
-                if (signer == null)
+                foreach (Pkcs7SignerInfo item in FlattenSigner(signer))
                 {
-                    continue;
+                    yield return item;
                 }
+            }
+        }
 
-                yield return signer;
-                if (signer.CounterSigners == null)
-                {
-                    continue;
-                }
+        private static IEnumerable<Pkcs7SignerInfo> FlattenSigner(Pkcs7SignerInfo signer)
+        {
+            if (signer == null)
+            {
+                yield break;
+            }
 
+            yield return signer;
+
+            if (signer.CounterSigners != null)
+            {
                 foreach (Pkcs7SignerInfo counter in signer.CounterSigners)
                 {
-                    if (counter != null)
+                    foreach (Pkcs7SignerInfo item in FlattenSigner(counter))
                     {
-                        yield return counter;
+                        yield return item;
+                    }
+                }
+            }
+
+            if (signer.NestedSigners != null)
+            {
+                foreach (Pkcs7SignerInfo nested in signer.NestedSigners)
+                {
+                    foreach (Pkcs7SignerInfo item in FlattenSigner(nested))
+                    {
+                        yield return item;
                     }
                 }
             }
@@ -330,6 +379,15 @@ namespace PECoff
             out Pkcs7SignerInfo[] signerInfos,
             out string error)
         {
+            return TryGetPkcs7SignerInfos(data, null, out signerInfos, out error);
+        }
+
+        public static bool TryGetPkcs7SignerInfos(
+            byte[] data,
+            AuthenticodePolicy policy,
+            out Pkcs7SignerInfo[] signerInfos,
+            out string error)
+        {
             signerInfos = Array.Empty<Pkcs7SignerInfo>();
             error = string.Empty;
 
@@ -352,7 +410,7 @@ namespace PECoff
                 List<Pkcs7SignerInfo> infos = new List<Pkcs7SignerInfo>();
                 foreach (SignerInfo signer in cms.SignerInfos)
                 {
-                    infos.Add(BuildSignerInfo(signer, false));
+                    infos.Add(BuildSignerInfo(signer, false, policy, 0));
                 }
 
                 signerInfos = infos.ToArray();
@@ -481,7 +539,7 @@ namespace PECoff
             }
         }
 
-        private static Pkcs7SignerInfo BuildSignerInfo(SignerInfo signer, bool isTimestamp)
+        private static Pkcs7SignerInfo BuildSignerInfo(SignerInfo signer, bool isTimestamp, AuthenticodePolicy policy, int nestingLevel)
         {
             string subject = string.Empty;
             string issuer = string.Empty;
@@ -546,9 +604,20 @@ namespace PECoff
                 {
                     using (X509Chain chain = new X509Chain())
                     {
-                        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-                        chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
-                        chain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
+                        if (policy != null)
+                        {
+                            chain.ChainPolicy.RevocationMode = policy.RevocationMode;
+                            chain.ChainPolicy.RevocationFlag = policy.RevocationFlag;
+                            chain.ChainPolicy.VerificationFlags = policy.EnableTrustStoreCheck
+                                ? X509VerificationFlags.NoFlag
+                                : X509VerificationFlags.AllowUnknownCertificateAuthority;
+                        }
+                        else
+                        {
+                            chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                            chain.ChainPolicy.RevocationFlag = X509RevocationFlag.ExcludeRoot;
+                            chain.ChainPolicy.VerificationFlags = X509VerificationFlags.NoFlag;
+                        }
                         chain.ChainPolicy.VerificationTime = DateTime.UtcNow;
 
                         chainValid = chain.Build(signer.Certificate);
@@ -574,9 +643,17 @@ namespace PECoff
             {
                 foreach (SignerInfo counter in signer.CounterSignerInfos)
                 {
-                    countersigners.Add(BuildSignerInfo(counter, true));
+                    countersigners.Add(BuildSignerInfo(counter, true, policy, nestingLevel));
                 }
             }
+
+            List<Pkcs7SignerInfo> nestedSigners = new List<Pkcs7SignerInfo>();
+            if (nestingLevel < 3)
+            {
+                nestedSigners.AddRange(BuildNestedSigners(signer, policy, nestingLevel));
+            }
+
+            List<Pkcs7TimestampInfo> rfc3161Timestamps = TryGetRfc3161Timestamps(signer);
 
             return new Pkcs7SignerInfo(
                 subject,
@@ -595,7 +672,223 @@ namespace PECoff
                 hasCodeSigningEku,
                 hasTimestampEku,
                 isWithinValidity,
-                countersigners.ToArray());
+                nestingLevel,
+                countersigners.ToArray(),
+                nestedSigners.ToArray(),
+                rfc3161Timestamps.ToArray());
+        }
+
+        private static List<Pkcs7SignerInfo> BuildNestedSigners(SignerInfo signer, AuthenticodePolicy policy, int nestingLevel)
+        {
+            List<Pkcs7SignerInfo> nested = new List<Pkcs7SignerInfo>();
+            if (signer == null || signer.UnsignedAttributes == null)
+            {
+                return nested;
+            }
+
+            foreach (CryptographicAttributeObject attr in signer.UnsignedAttributes)
+            {
+                if (attr?.Oid == null || attr.Oid.Value != "1.3.6.1.4.1.311.2.4.1")
+                {
+                    continue;
+                }
+
+                if (attr.Values == null || attr.Values.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (AsnEncodedData value in attr.Values)
+                {
+                    if (value?.RawData == null || value.RawData.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        SignedCms nestedCms = new SignedCms();
+                        nestedCms.Decode(value.RawData);
+                        if (nestedCms.SignerInfos == null || nestedCms.SignerInfos.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        foreach (SignerInfo nestedSigner in nestedCms.SignerInfos)
+                        {
+                            nested.Add(BuildSignerInfo(nestedSigner, false, policy, nestingLevel + 1));
+                        }
+                    }
+                    catch (CryptographicException)
+                    {
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+            }
+
+            return nested;
+        }
+
+        private static List<Pkcs7TimestampInfo> TryGetRfc3161Timestamps(SignerInfo signer)
+        {
+            List<Pkcs7TimestampInfo> timestamps = new List<Pkcs7TimestampInfo>();
+            if (signer == null || signer.UnsignedAttributes == null)
+            {
+                return timestamps;
+            }
+
+            foreach (CryptographicAttributeObject attr in signer.UnsignedAttributes)
+            {
+                if (attr?.Oid == null || attr.Oid.Value != "1.2.840.113549.1.9.16.2.14")
+                {
+                    continue;
+                }
+
+                if (attr.Values == null || attr.Values.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (AsnEncodedData value in attr.Values)
+                {
+                    if (value?.RawData == null || value.RawData.Length == 0)
+                    {
+                        continue;
+                    }
+
+                    if (TryParseRfc3161TimestampInfo(value.RawData, out Pkcs7TimestampInfo info))
+                    {
+                        timestamps.Add(info);
+                    }
+                }
+            }
+
+            return timestamps;
+        }
+
+        private static bool TryParseRfc3161TimestampInfo(byte[] data, out Pkcs7TimestampInfo info)
+        {
+            info = null;
+            if (data == null || data.Length == 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                SignedCms cms = new SignedCms();
+                cms.Decode(data);
+                byte[] content = cms.ContentInfo?.Content;
+                if (content == null || content.Length == 0)
+                {
+                    return false;
+                }
+
+                AsnReader reader = new AsnReader(content, AsnEncodingRules.BER);
+                AsnReader sequence = reader.ReadSequence();
+                if (!sequence.HasData)
+                {
+                    return false;
+                }
+
+                sequence.ReadInteger();
+                if (!sequence.HasData)
+                {
+                    return false;
+                }
+
+                string policy = sequence.ReadObjectIdentifier();
+                if (!sequence.HasData)
+                {
+                    info = new Pkcs7TimestampInfo(policy, string.Empty, string.Empty, null);
+                    return true;
+                }
+
+                AsnReader messageImprint = sequence.ReadSequence();
+                if (messageImprint.HasData)
+                {
+                    AsnReader algorithm = messageImprint.ReadSequence();
+                    if (algorithm.HasData)
+                    {
+                        algorithm.ReadObjectIdentifier();
+                        if (algorithm.HasData)
+                        {
+                            algorithm.ReadEncodedValue();
+                        }
+                    }
+
+                    if (messageImprint.HasData)
+                    {
+                        messageImprint.ReadOctetString();
+                    }
+                }
+
+                string serial = string.Empty;
+                if (sequence.HasData)
+                {
+                    BigInteger serialNumber = sequence.ReadInteger();
+                    serial = serialNumber.ToString(CultureInfo.InvariantCulture);
+                }
+
+                DateTimeOffset? genTime = null;
+                if (sequence.HasData)
+                {
+                    try
+                    {
+                        genTime = sequence.ReadGeneralizedTime();
+                    }
+                    catch (AsnContentException)
+                    {
+                    }
+                }
+
+                string tsaName = string.Empty;
+                while (sequence.HasData)
+                {
+                    Asn1Tag tag = sequence.PeekTag();
+                    if (tag.TagClass == TagClass.ContextSpecific && tag.TagValue == 0)
+                    {
+                        AsnReader tsa = sequence.ReadSequence(new Asn1Tag(TagClass.ContextSpecific, 0));
+                        if (tsa.HasData)
+                        {
+                            Asn1Tag nameTag = tsa.PeekTag();
+                            if (nameTag.TagClass == TagClass.ContextSpecific && nameTag.TagValue == 4)
+                            {
+                                AsnReader directoryName = tsa.ReadSequence(new Asn1Tag(TagClass.ContextSpecific, 4));
+                                if (directoryName.HasData)
+                                {
+                                    ReadOnlyMemory<byte> nameBytes = directoryName.ReadEncodedValue();
+                                    try
+                                    {
+                                        X500DistinguishedName name = new X500DistinguishedName(nameBytes.ToArray());
+                                        tsaName = name.Name ?? string.Empty;
+                                    }
+                                    catch (CryptographicException)
+                                    {
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                tsa.ReadEncodedValue();
+                            }
+                        }
+                    }
+                    else
+                    {
+                        sequence.ReadEncodedValue();
+                    }
+                }
+
+                info = new Pkcs7TimestampInfo(policy, serial, tsaName, genTime);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         private static bool HasEku(X509Certificate2 certificate, string oid)

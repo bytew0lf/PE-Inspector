@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Security.Cryptography.X509Certificates;
 
 namespace PECoff
 {
@@ -60,6 +61,50 @@ namespace PECoff
         public bool UseMemoryMappedFile { get; init; }
         public AuthenticodePolicy AuthenticodePolicy { get; init; } = new AuthenticodePolicy();
         public Dictionary<ParseIssueCategory, ParseIssueSeverity> IssuePolicy { get; init; } = new Dictionary<ParseIssueCategory, ParseIssueSeverity>();
+        public Action<ParseIssue> IssueCallback { get; init; }
+
+        public static PECOFFOptions PresetFast()
+        {
+            return new PECOFFOptions
+            {
+                EnableAssemblyAnalysis = false,
+                ComputeHash = false,
+                ComputeImportHash = false,
+                ComputeChecksum = false,
+                ComputeSectionEntropy = false,
+                ParseCertificateSigners = false,
+                ComputeAuthenticode = false,
+                UseMemoryMappedFile = true
+            };
+        }
+
+        public static PECOFFOptions PresetDefault()
+        {
+            return new PECOFFOptions();
+        }
+
+        public static PECOFFOptions PresetStrictSecurity()
+        {
+            return new PECOFFOptions
+            {
+                StrictMode = true,
+                ParseCertificateSigners = true,
+                ComputeAuthenticode = true,
+                ComputeChecksum = true,
+                AuthenticodePolicy = new AuthenticodePolicy
+                {
+                    RequireSignature = true,
+                    RequireSignatureValid = true,
+                    RequireChainValid = true,
+                    RequireTimestamp = true,
+                    RequireTimestampValid = true,
+                    RequireCodeSigningEku = true,
+                    EnableTrustStoreCheck = true,
+                    RevocationMode = X509RevocationMode.Online,
+                    RevocationFlag = X509RevocationFlag.ExcludeRoot
+                }
+            };
+        }
     }
 
     public sealed class AuthenticodePolicy
@@ -70,6 +115,9 @@ namespace PECoff
         public bool RequireTimestamp { get; init; }
         public bool RequireTimestampValid { get; init; }
         public bool RequireCodeSigningEku { get; init; }
+        public bool EnableTrustStoreCheck { get; init; } = true;
+        public X509RevocationMode RevocationMode { get; init; } = X509RevocationMode.NoCheck;
+        public X509RevocationFlag RevocationFlag { get; init; } = X509RevocationFlag.ExcludeRoot;
     }
 
     public sealed class PECOFFParseException : Exception
@@ -224,6 +272,64 @@ namespace PECoff
         }
     }
 
+    public sealed class UnwindCodeInfo
+    {
+        public byte CodeOffset { get; }
+        public byte UnwindOp { get; }
+        public byte OpInfo { get; }
+
+        public UnwindCodeInfo(byte codeOffset, byte unwindOp, byte opInfo)
+        {
+            CodeOffset = codeOffset;
+            UnwindOp = unwindOp;
+            OpInfo = opInfo;
+        }
+    }
+
+    public sealed class UnwindInfoDetail
+    {
+        public uint FunctionBegin { get; }
+        public uint FunctionEnd { get; }
+        public uint UnwindInfoAddress { get; }
+        public byte Version { get; }
+        public byte Flags { get; }
+        public byte PrologSize { get; }
+        public byte CodeCount { get; }
+        public byte FrameRegister { get; }
+        public byte FrameOffset { get; }
+        public bool HasChainedInfo { get; }
+        public bool PrologSizeExceedsFunction { get; }
+        public IReadOnlyList<UnwindCodeInfo> UnwindCodes { get; }
+
+        public UnwindInfoDetail(
+            uint functionBegin,
+            uint functionEnd,
+            uint unwindInfoAddress,
+            byte version,
+            byte flags,
+            byte prologSize,
+            byte codeCount,
+            byte frameRegister,
+            byte frameOffset,
+            bool hasChainedInfo,
+            bool prologSizeExceedsFunction,
+            UnwindCodeInfo[] unwindCodes)
+        {
+            FunctionBegin = functionBegin;
+            FunctionEnd = functionEnd;
+            UnwindInfoAddress = unwindInfoAddress;
+            Version = version;
+            Flags = flags;
+            PrologSize = prologSize;
+            CodeCount = codeCount;
+            FrameRegister = frameRegister;
+            FrameOffset = frameOffset;
+            HasChainedInfo = hasChainedInfo;
+            PrologSizeExceedsFunction = prologSizeExceedsFunction;
+            UnwindCodes = Array.AsReadOnly(unwindCodes ?? Array.Empty<UnwindCodeInfo>());
+        }
+    }
+
     public sealed class UnwindInfoVersionCount
     {
         public byte Version { get; }
@@ -287,6 +393,7 @@ namespace PECoff
         public uint SizeOfZeroFill { get; }
         public uint Characteristics { get; }
         public IReadOnlyList<ulong> CallbackAddresses { get; }
+        public IReadOnlyList<TlsCallbackInfo> CallbackInfos { get; }
 
         public TlsInfo(
             ulong startAddressOfRawData,
@@ -295,7 +402,8 @@ namespace PECoff
             ulong addressOfCallbacks,
             uint sizeOfZeroFill,
             uint characteristics,
-            ulong[] callbackAddresses)
+            ulong[] callbackAddresses,
+            TlsCallbackInfo[] callbackInfos)
         {
             StartAddressOfRawData = startAddressOfRawData;
             EndAddressOfRawData = endAddressOfRawData;
@@ -304,6 +412,21 @@ namespace PECoff
             SizeOfZeroFill = sizeOfZeroFill;
             Characteristics = characteristics;
             CallbackAddresses = Array.AsReadOnly(callbackAddresses ?? Array.Empty<ulong>());
+            CallbackInfos = Array.AsReadOnly(callbackInfos ?? Array.Empty<TlsCallbackInfo>());
+        }
+    }
+
+    public sealed class TlsCallbackInfo
+    {
+        public ulong Address { get; }
+        public uint Rva { get; }
+        public string SymbolName { get; }
+
+        public TlsCallbackInfo(ulong address, uint rva, string symbolName)
+        {
+            Address = address;
+            Rva = rva;
+            SymbolName = symbolName ?? string.Empty;
         }
     }
 
@@ -325,6 +448,8 @@ namespace PECoff
         public bool RfStrict { get; }
         public bool RetpolinePresent { get; }
         public bool EhContinuationTablePresent { get; }
+        public bool XfgEnabled { get; }
+        public bool XfgTablePresent { get; }
 
         public LoadConfigGuardFlagsInfo(
             uint value,
@@ -342,7 +467,9 @@ namespace PECoff
             bool rfEnable,
             bool rfStrict,
             bool retpolinePresent,
-            bool ehContinuationTablePresent)
+            bool ehContinuationTablePresent,
+            bool xfgEnabled,
+            bool xfgTablePresent)
         {
             Value = value;
             Flags = Array.AsReadOnly(flags ?? Array.Empty<string>());
@@ -360,6 +487,20 @@ namespace PECoff
             RfStrict = rfStrict;
             RetpolinePresent = retpolinePresent;
             EhContinuationTablePresent = ehContinuationTablePresent;
+            XfgEnabled = xfgEnabled;
+            XfgTablePresent = xfgTablePresent;
+        }
+    }
+
+    public sealed class LoadConfigGlobalFlagsInfo
+    {
+        public uint Value { get; }
+        public IReadOnlyList<string> Flags { get; }
+
+        public LoadConfigGlobalFlagsInfo(uint value, string[] flags)
+        {
+            Value = value;
+            Flags = Array.AsReadOnly(flags ?? Array.Empty<string>());
         }
     }
 
@@ -371,6 +512,7 @@ namespace PECoff
         public ushort MinorVersion { get; }
         public uint GlobalFlagsClear { get; }
         public uint GlobalFlagsSet { get; }
+        public LoadConfigGlobalFlagsInfo GlobalFlagsInfo { get; }
         public uint ProcessHeapFlags { get; }
         public uint CsdVersion { get; }
         public uint DependentLoadFlags { get; }
@@ -383,6 +525,12 @@ namespace PECoff
         public uint GuardCfFunctionCount { get; }
         public uint GuardFlags { get; }
         public LoadConfigGuardFlagsInfo GuardFlagsInfo { get; }
+        public ulong ChpeMetadataPointer { get; }
+        public ulong GuardEhContinuationTable { get; }
+        public ulong GuardEhContinuationCount { get; }
+        public ulong GuardXfgCheckFunctionPointer { get; }
+        public ulong GuardXfgDispatchFunctionPointer { get; }
+        public ulong GuardXfgTableDispatchFunctionPointer { get; }
 
         public LoadConfigInfo(
             uint size,
@@ -391,6 +539,7 @@ namespace PECoff
             ushort minorVersion,
             uint globalFlagsClear,
             uint globalFlagsSet,
+            LoadConfigGlobalFlagsInfo globalFlagsInfo,
             uint processHeapFlags,
             uint csdVersion,
             uint dependentLoadFlags,
@@ -402,7 +551,13 @@ namespace PECoff
             ulong guardCfFunctionTable,
             uint guardCfFunctionCount,
             uint guardFlags,
-            LoadConfigGuardFlagsInfo guardFlagsInfo)
+            LoadConfigGuardFlagsInfo guardFlagsInfo,
+            ulong chpeMetadataPointer,
+            ulong guardEhContinuationTable,
+            ulong guardEhContinuationCount,
+            ulong guardXfgCheckFunctionPointer,
+            ulong guardXfgDispatchFunctionPointer,
+            ulong guardXfgTableDispatchFunctionPointer)
         {
             Size = size;
             TimeDateStamp = timeDateStamp;
@@ -410,6 +565,7 @@ namespace PECoff
             MinorVersion = minorVersion;
             GlobalFlagsClear = globalFlagsClear;
             GlobalFlagsSet = globalFlagsSet;
+            GlobalFlagsInfo = globalFlagsInfo;
             ProcessHeapFlags = processHeapFlags;
             CsdVersion = csdVersion;
             DependentLoadFlags = dependentLoadFlags;
@@ -422,6 +578,12 @@ namespace PECoff
             GuardCfFunctionCount = guardCfFunctionCount;
             GuardFlags = guardFlags;
             GuardFlagsInfo = guardFlagsInfo;
+            ChpeMetadataPointer = chpeMetadataPointer;
+            GuardEhContinuationTable = guardEhContinuationTable;
+            GuardEhContinuationCount = guardEhContinuationCount;
+            GuardXfgCheckFunctionPointer = guardXfgCheckFunctionPointer;
+            GuardXfgDispatchFunctionPointer = guardXfgDispatchFunctionPointer;
+            GuardXfgTableDispatchFunctionPointer = guardXfgTableDispatchFunctionPointer;
         }
     }
 
@@ -490,8 +652,22 @@ namespace PECoff
         public ushort BitCount { get; }
         public uint BytesInRes { get; }
         public ushort ResourceId { get; }
+        public bool IsPng { get; }
+        public uint PngWidth { get; }
+        public uint PngHeight { get; }
 
-        public IconEntryInfo(byte width, byte height, byte colorCount, byte reserved, ushort planes, ushort bitCount, uint bytesInRes, ushort resourceId)
+        public IconEntryInfo(
+            byte width,
+            byte height,
+            byte colorCount,
+            byte reserved,
+            ushort planes,
+            ushort bitCount,
+            uint bytesInRes,
+            ushort resourceId,
+            bool isPng,
+            uint pngWidth,
+            uint pngHeight)
         {
             Width = width;
             Height = height;
@@ -501,6 +677,9 @@ namespace PECoff
             BitCount = bitCount;
             BytesInRes = bytesInRes;
             ResourceId = resourceId;
+            IsPng = isPng;
+            PngWidth = pngWidth;
+            PngHeight = pngHeight;
         }
     }
 
@@ -1023,7 +1202,12 @@ namespace PECoff
         public string AssemblyIdentityVersion { get; }
         public string AssemblyIdentityArchitecture { get; }
         public string AssemblyIdentityType { get; }
+        public string AssemblyIdentityLanguage { get; }
+        public string RequestedExecutionLevel { get; }
         public string UiAccess { get; }
+        public string DpiAware { get; }
+        public string DpiAwareness { get; }
+        public string UiLanguage { get; }
 
         public ManifestSchemaInfo(
             string rootElement,
@@ -1033,7 +1217,12 @@ namespace PECoff
             string assemblyIdentityVersion,
             string assemblyIdentityArchitecture,
             string assemblyIdentityType,
-            string uiAccess)
+            string assemblyIdentityLanguage,
+            string requestedExecutionLevel,
+            string uiAccess,
+            string dpiAware,
+            string dpiAwareness,
+            string uiLanguage)
         {
             RootElement = rootElement ?? string.Empty;
             Namespace = schemaNamespace ?? string.Empty;
@@ -1042,12 +1231,20 @@ namespace PECoff
             AssemblyIdentityVersion = assemblyIdentityVersion ?? string.Empty;
             AssemblyIdentityArchitecture = assemblyIdentityArchitecture ?? string.Empty;
             AssemblyIdentityType = assemblyIdentityType ?? string.Empty;
+            AssemblyIdentityLanguage = assemblyIdentityLanguage ?? string.Empty;
+            RequestedExecutionLevel = requestedExecutionLevel ?? string.Empty;
             UiAccess = uiAccess ?? string.Empty;
+            DpiAware = dpiAware ?? string.Empty;
+            DpiAwareness = dpiAwareness ?? string.Empty;
+            UiLanguage = uiLanguage ?? string.Empty;
         }
     }
 
     public sealed class PECOFFResult
     {
+        public const int CurrentSchemaVersion = 1;
+
+        public int SchemaVersion { get; }
         public string FilePath { get; }
         public ParseResultSnapshot ParseResult { get; }
         public string Hash { get; }
@@ -1113,6 +1310,7 @@ namespace PECoff
         public IReadOnlyList<BaseRelocationBlockInfo> BaseRelocations { get; }
         public IReadOnlyList<ExceptionFunctionInfo> ExceptionFunctions { get; }
         public ExceptionDirectorySummary ExceptionSummary { get; }
+        public IReadOnlyList<UnwindInfoDetail> UnwindInfoDetails { get; }
         public RichHeaderInfo RichHeader { get; }
         public TlsInfo TlsInfo { get; }
         public LoadConfigInfo LoadConfig { get; }
@@ -1185,12 +1383,14 @@ namespace PECoff
             BaseRelocationBlockInfo[] baseRelocations,
             ExceptionFunctionInfo[] exceptionFunctions,
             ExceptionDirectorySummary exceptionSummary,
+            UnwindInfoDetail[] unwindInfoDetails,
             RichHeaderInfo richHeader,
             TlsInfo tlsInfo,
             LoadConfigInfo loadConfig,
             string[] assemblyReferences,
             AssemblyReferenceInfo[] assemblyReferenceInfos)
         {
+            SchemaVersion = CurrentSchemaVersion;
             FilePath = filePath ?? string.Empty;
             ParseResult = parseResult ?? new ParseResultSnapshot(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<ParseIssue>());
             Hash = hash ?? string.Empty;
@@ -1256,6 +1456,7 @@ namespace PECoff
             BaseRelocations = Array.AsReadOnly(baseRelocations ?? Array.Empty<BaseRelocationBlockInfo>());
             ExceptionFunctions = Array.AsReadOnly(exceptionFunctions ?? Array.Empty<ExceptionFunctionInfo>());
             ExceptionSummary = exceptionSummary;
+            UnwindInfoDetails = Array.AsReadOnly(unwindInfoDetails ?? Array.Empty<UnwindInfoDetail>());
             RichHeader = richHeader;
             TlsInfo = tlsInfo;
             LoadConfig = loadConfig;
