@@ -58,7 +58,18 @@ namespace PECoff
         public bool ParseCertificateSigners { get; init; } = true;
         public bool ComputeAuthenticode { get; init; } = true;
         public bool UseMemoryMappedFile { get; init; }
+        public AuthenticodePolicy AuthenticodePolicy { get; init; } = new AuthenticodePolicy();
         public Dictionary<ParseIssueCategory, ParseIssueSeverity> IssuePolicy { get; init; } = new Dictionary<ParseIssueCategory, ParseIssueSeverity>();
+    }
+
+    public sealed class AuthenticodePolicy
+    {
+        public bool RequireSignature { get; init; }
+        public bool RequireSignatureValid { get; init; }
+        public bool RequireChainValid { get; init; }
+        public bool RequireTimestamp { get; init; }
+        public bool RequireTimestampValid { get; init; }
+        public bool RequireCodeSigningEku { get; init; }
     }
 
     public sealed class PECOFFParseException : Exception
@@ -213,6 +224,44 @@ namespace PECoff
         }
     }
 
+    public sealed class UnwindInfoVersionCount
+    {
+        public byte Version { get; }
+        public int Count { get; }
+
+        public UnwindInfoVersionCount(byte version, int count)
+        {
+            Version = version;
+            Count = count;
+        }
+    }
+
+    public sealed class ExceptionDirectorySummary
+    {
+        public int FunctionCount { get; }
+        public int InvalidRangeCount { get; }
+        public int OutOfRangeCount { get; }
+        public int UnwindInfoCount { get; }
+        public int UnwindInfoParseFailures { get; }
+        public IReadOnlyList<UnwindInfoVersionCount> UnwindInfoVersions { get; }
+
+        public ExceptionDirectorySummary(
+            int functionCount,
+            int invalidRangeCount,
+            int outOfRangeCount,
+            int unwindInfoCount,
+            int unwindInfoParseFailures,
+            UnwindInfoVersionCount[] unwindInfoVersions)
+        {
+            FunctionCount = functionCount;
+            InvalidRangeCount = invalidRangeCount;
+            OutOfRangeCount = outOfRangeCount;
+            UnwindInfoCount = unwindInfoCount;
+            UnwindInfoParseFailures = unwindInfoParseFailures;
+            UnwindInfoVersions = Array.AsReadOnly(unwindInfoVersions ?? Array.Empty<UnwindInfoVersionCount>());
+        }
+    }
+
     public sealed class BaseRelocationBlockInfo
     {
         public uint PageRva { get; }
@@ -258,6 +307,62 @@ namespace PECoff
         }
     }
 
+    public sealed class LoadConfigGuardFlagsInfo
+    {
+        public uint Value { get; }
+        public IReadOnlyList<string> Flags { get; }
+        public bool CfInstrumented { get; }
+        public bool CfwInstrumented { get; }
+        public bool CfFunctionTablePresent { get; }
+        public bool SecurityCookieUnused { get; }
+        public bool ProtectDelayLoadIat { get; }
+        public bool DelayLoadIatInItsOwnSection { get; }
+        public bool CfExportSuppressionInfoPresent { get; }
+        public bool CfEnableExportSuppression { get; }
+        public bool CfLongjumpTablePresent { get; }
+        public bool RfInstrumented { get; }
+        public bool RfEnable { get; }
+        public bool RfStrict { get; }
+        public bool RetpolinePresent { get; }
+        public bool EhContinuationTablePresent { get; }
+
+        public LoadConfigGuardFlagsInfo(
+            uint value,
+            string[] flags,
+            bool cfInstrumented,
+            bool cfwInstrumented,
+            bool cfFunctionTablePresent,
+            bool securityCookieUnused,
+            bool protectDelayLoadIat,
+            bool delayLoadIatInItsOwnSection,
+            bool cfExportSuppressionInfoPresent,
+            bool cfEnableExportSuppression,
+            bool cfLongjumpTablePresent,
+            bool rfInstrumented,
+            bool rfEnable,
+            bool rfStrict,
+            bool retpolinePresent,
+            bool ehContinuationTablePresent)
+        {
+            Value = value;
+            Flags = Array.AsReadOnly(flags ?? Array.Empty<string>());
+            CfInstrumented = cfInstrumented;
+            CfwInstrumented = cfwInstrumented;
+            CfFunctionTablePresent = cfFunctionTablePresent;
+            SecurityCookieUnused = securityCookieUnused;
+            ProtectDelayLoadIat = protectDelayLoadIat;
+            DelayLoadIatInItsOwnSection = delayLoadIatInItsOwnSection;
+            CfExportSuppressionInfoPresent = cfExportSuppressionInfoPresent;
+            CfEnableExportSuppression = cfEnableExportSuppression;
+            CfLongjumpTablePresent = cfLongjumpTablePresent;
+            RfInstrumented = rfInstrumented;
+            RfEnable = rfEnable;
+            RfStrict = rfStrict;
+            RetpolinePresent = retpolinePresent;
+            EhContinuationTablePresent = ehContinuationTablePresent;
+        }
+    }
+
     public sealed class LoadConfigInfo
     {
         public uint Size { get; }
@@ -277,6 +382,7 @@ namespace PECoff
         public ulong GuardCfFunctionTable { get; }
         public uint GuardCfFunctionCount { get; }
         public uint GuardFlags { get; }
+        public LoadConfigGuardFlagsInfo GuardFlagsInfo { get; }
 
         public LoadConfigInfo(
             uint size,
@@ -295,7 +401,8 @@ namespace PECoff
             ulong guardCfDispatchFunctionPointer,
             ulong guardCfFunctionTable,
             uint guardCfFunctionCount,
-            uint guardFlags)
+            uint guardFlags,
+            LoadConfigGuardFlagsInfo guardFlagsInfo)
         {
             Size = size;
             TimeDateStamp = timeDateStamp;
@@ -314,6 +421,7 @@ namespace PECoff
             GuardCfFunctionTable = guardCfFunctionTable;
             GuardCfFunctionCount = guardCfFunctionCount;
             GuardFlags = guardFlags;
+            GuardFlagsInfo = guardFlagsInfo;
         }
     }
 
@@ -539,6 +647,8 @@ namespace PECoff
         public bool TimestampValid { get; }
         public IReadOnlyList<string> ChainStatus { get; }
         public IReadOnlyList<string> TimestampChainStatus { get; }
+        public bool PolicyCompliant { get; }
+        public IReadOnlyList<string> PolicyFailures { get; }
 
         public AuthenticodeStatusInfo(
             int signerCount,
@@ -549,7 +659,9 @@ namespace PECoff
             bool hasTimestamp,
             bool timestampValid,
             string[] chainStatus,
-            string[] timestampChainStatus)
+            string[] timestampChainStatus,
+            bool policyCompliant,
+            string[] policyFailures)
         {
             SignerCount = signerCount;
             TimestampSignerCount = timestampSignerCount;
@@ -560,6 +672,8 @@ namespace PECoff
             TimestampValid = timestampValid;
             ChainStatus = Array.AsReadOnly(chainStatus ?? Array.Empty<string>());
             TimestampChainStatus = Array.AsReadOnly(timestampChainStatus ?? Array.Empty<string>());
+            PolicyCompliant = policyCompliant;
+            PolicyFailures = Array.AsReadOnly(policyFailures ?? Array.Empty<string>());
         }
     }
 
@@ -587,6 +701,50 @@ namespace PECoff
             Name = name ?? string.Empty;
             RawSize = rawSize;
             Entropy = entropy;
+        }
+    }
+
+    public sealed class SectionSlackInfo
+    {
+        public string SectionName { get; }
+        public long FileOffset { get; }
+        public int Size { get; }
+        public int NonZeroCount { get; }
+        public int SampledBytes { get; }
+
+        public SectionSlackInfo(string sectionName, long fileOffset, int size, int nonZeroCount, int sampledBytes)
+        {
+            SectionName = sectionName ?? string.Empty;
+            FileOffset = fileOffset;
+            Size = size;
+            NonZeroCount = nonZeroCount;
+            SampledBytes = sampledBytes;
+        }
+    }
+
+    public sealed class SectionGapInfo
+    {
+        public string PreviousSection { get; }
+        public string NextSection { get; }
+        public long FileOffset { get; }
+        public int Size { get; }
+        public int NonZeroCount { get; }
+        public int SampledBytes { get; }
+
+        public SectionGapInfo(
+            string previousSection,
+            string nextSection,
+            long fileOffset,
+            int size,
+            int nonZeroCount,
+            int sampledBytes)
+        {
+            PreviousSection = previousSection ?? string.Empty;
+            NextSection = nextSection ?? string.Empty;
+            FileOffset = fileOffset;
+            Size = size;
+            NonZeroCount = nonZeroCount;
+            SampledBytes = sampledBytes;
         }
     }
 
@@ -668,6 +826,9 @@ namespace PECoff
         public ushort MajorVersion { get; }
         public ushort MinorVersion { get; }
         public uint Flags { get; }
+        public int SectionCount { get; }
+        public int EntryPointSectionCount { get; }
+        public uint EntryPointSectionTotalSize { get; }
         public IReadOnlyList<ReadyToRunSectionInfo> Sections { get; }
 
         public ReadyToRunInfo(
@@ -676,6 +837,9 @@ namespace PECoff
             ushort majorVersion,
             ushort minorVersion,
             uint flags,
+            int sectionCount,
+            int entryPointSectionCount,
+            uint entryPointSectionTotalSize,
             ReadyToRunSectionInfo[] sections)
         {
             Signature = signature;
@@ -683,6 +847,9 @@ namespace PECoff
             MajorVersion = majorVersion;
             MinorVersion = minorVersion;
             Flags = flags;
+            SectionCount = sectionCount;
+            EntryPointSectionCount = entryPointSectionCount;
+            EntryPointSectionTotalSize = entryPointSectionTotalSize;
             Sections = Array.AsReadOnly(sections ?? Array.Empty<ReadyToRunSectionInfo>());
         }
     }
@@ -908,6 +1075,8 @@ namespace PECoff
         public uint SizeOfHeaders { get; }
         public OverlayInfo OverlayInfo { get; }
         public IReadOnlyList<SectionEntropyInfo> SectionEntropies { get; }
+        public IReadOnlyList<SectionSlackInfo> SectionSlacks { get; }
+        public IReadOnlyList<SectionGapInfo> SectionGaps { get; }
         public uint OptionalHeaderChecksum { get; }
         public uint ComputedChecksum { get; }
         public bool IsChecksumValid { get; }
@@ -943,6 +1112,7 @@ namespace PECoff
         public IReadOnlyList<DebugDirectoryEntry> DebugDirectories { get; }
         public IReadOnlyList<BaseRelocationBlockInfo> BaseRelocations { get; }
         public IReadOnlyList<ExceptionFunctionInfo> ExceptionFunctions { get; }
+        public ExceptionDirectorySummary ExceptionSummary { get; }
         public RichHeaderInfo RichHeader { get; }
         public TlsInfo TlsInfo { get; }
         public LoadConfigInfo LoadConfig { get; }
@@ -977,6 +1147,8 @@ namespace PECoff
             uint sizeOfHeaders,
             OverlayInfo overlayInfo,
             SectionEntropyInfo[] sectionEntropies,
+            SectionSlackInfo[] sectionSlacks,
+            SectionGapInfo[] sectionGaps,
             uint optionalHeaderChecksum,
             uint computedChecksum,
             bool isChecksumValid,
@@ -1012,6 +1184,7 @@ namespace PECoff
             DebugDirectoryEntry[] debugDirectories,
             BaseRelocationBlockInfo[] baseRelocations,
             ExceptionFunctionInfo[] exceptionFunctions,
+            ExceptionDirectorySummary exceptionSummary,
             RichHeaderInfo richHeader,
             TlsInfo tlsInfo,
             LoadConfigInfo loadConfig,
@@ -1045,6 +1218,8 @@ namespace PECoff
             SizeOfHeaders = sizeOfHeaders;
             OverlayInfo = overlayInfo ?? new OverlayInfo(0, 0);
             SectionEntropies = Array.AsReadOnly(sectionEntropies ?? Array.Empty<SectionEntropyInfo>());
+            SectionSlacks = Array.AsReadOnly(sectionSlacks ?? Array.Empty<SectionSlackInfo>());
+            SectionGaps = Array.AsReadOnly(sectionGaps ?? Array.Empty<SectionGapInfo>());
             OptionalHeaderChecksum = optionalHeaderChecksum;
             ComputedChecksum = computedChecksum;
             IsChecksumValid = isChecksumValid;
@@ -1080,6 +1255,7 @@ namespace PECoff
             DebugDirectories = Array.AsReadOnly(debugDirectories ?? Array.Empty<DebugDirectoryEntry>());
             BaseRelocations = Array.AsReadOnly(baseRelocations ?? Array.Empty<BaseRelocationBlockInfo>());
             ExceptionFunctions = Array.AsReadOnly(exceptionFunctions ?? Array.Empty<ExceptionFunctionInfo>());
+            ExceptionSummary = exceptionSummary;
             RichHeader = richHeader;
             TlsInfo = tlsInfo;
             LoadConfig = loadConfig;

@@ -70,11 +70,26 @@ namespace PECoff
 
     public static class CertificateUtilities
     {
-        public static AuthenticodeStatusInfo BuildAuthenticodeStatus(Pkcs7SignerInfo[] signers)
+        public static AuthenticodeStatusInfo BuildAuthenticodeStatus(Pkcs7SignerInfo[] signers, AuthenticodePolicy policy = null)
         {
+            policy ??= new AuthenticodePolicy();
             if (signers == null || signers.Length == 0)
             {
-                return new AuthenticodeStatusInfo(0, 0, false, false, false, false, false, Array.Empty<string>(), Array.Empty<string>());
+                bool isPolicyCompliant = !policy.RequireSignature && !policy.RequireSignatureValid &&
+                                         !policy.RequireChainValid && !policy.RequireTimestamp &&
+                                         !policy.RequireTimestampValid && !policy.RequireCodeSigningEku;
+                return new AuthenticodeStatusInfo(
+                    0,
+                    0,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    Array.Empty<string>(),
+                    Array.Empty<string>(),
+                    isPolicyCompliant,
+                    isPolicyCompliant ? Array.Empty<string>() : new[] { "Missing signature." });
             }
 
             List<string> chainStatus = new List<string>();
@@ -84,6 +99,10 @@ namespace PECoff
             bool signatureValid = false;
             bool chainValid = false;
             bool timestampValid = false;
+            bool allSignatureValid = true;
+            bool allChainValid = true;
+            bool allCodeSigningEku = true;
+            bool allTimestampValid = true;
 
             foreach (Pkcs7SignerInfo signer in FlattenSigners(signers))
             {
@@ -98,6 +117,10 @@ namespace PECoff
                     if (signer.SignatureValid && signer.ChainValid)
                     {
                         timestampValid = true;
+                    }
+                    if (!signer.SignatureValid || !signer.ChainValid)
+                    {
+                        allTimestampValid = false;
                     }
 
                     if (signer.ChainStatus != null)
@@ -115,10 +138,23 @@ namespace PECoff
                     {
                         signatureValid = true;
                     }
+                    else
+                    {
+                        allSignatureValid = false;
+                    }
 
                     if (signer.ChainValid)
                     {
                         chainValid = true;
+                    }
+                    else
+                    {
+                        allChainValid = false;
+                    }
+
+                    if (!signer.HasCodeSigningEku)
+                    {
+                        allCodeSigningEku = false;
                     }
 
                     if (signer.ChainStatus != null)
@@ -133,6 +169,50 @@ namespace PECoff
 
             bool hasSignature = signerCount > 0;
             bool hasTimestamp = timestampCount > 0;
+            if (!hasSignature)
+            {
+                allSignatureValid = false;
+                allChainValid = false;
+                allCodeSigningEku = false;
+            }
+            if (!hasTimestamp)
+            {
+                allTimestampValid = false;
+            }
+
+            List<string> policyFailures = new List<string>();
+            bool policyCompliant = true;
+            if (policy.RequireSignature && !hasSignature)
+            {
+                policyCompliant = false;
+                policyFailures.Add("Missing signature.");
+            }
+            if (policy.RequireSignatureValid && !allSignatureValid)
+            {
+                policyCompliant = false;
+                policyFailures.Add("Signature validation failed.");
+            }
+            if (policy.RequireChainValid && !allChainValid)
+            {
+                policyCompliant = false;
+                policyFailures.Add("Certificate chain validation failed.");
+            }
+            if (policy.RequireCodeSigningEku && !allCodeSigningEku)
+            {
+                policyCompliant = false;
+                policyFailures.Add("Missing code signing EKU.");
+            }
+            if (policy.RequireTimestamp && !hasTimestamp)
+            {
+                policyCompliant = false;
+                policyFailures.Add("Missing timestamp.");
+            }
+            if (policy.RequireTimestampValid && !allTimestampValid)
+            {
+                policyCompliant = false;
+                policyFailures.Add("Timestamp validation failed.");
+            }
+
             return new AuthenticodeStatusInfo(
                 signerCount,
                 timestampCount,
@@ -142,7 +222,9 @@ namespace PECoff
                 hasTimestamp,
                 timestampValid,
                 chainStatus.ToArray(),
-                timestampStatus.ToArray());
+                timestampStatus.ToArray(),
+                policyCompliant,
+                policyFailures.ToArray());
         }
 
         private static IEnumerable<Pkcs7SignerInfo> FlattenSigners(Pkcs7SignerInfo[] signers)

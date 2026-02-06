@@ -272,6 +272,41 @@ namespace PE_FileInspector
             }
             sb.AppendLine();
 
+            sb.AppendLine("Section Padding:");
+            if (pe.SectionSlacks.Length == 0 && pe.SectionGaps.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                if (pe.SectionSlacks.Length > 0)
+                {
+                    sb.AppendLine("  Trailing Slack:");
+                    foreach (SectionSlackInfo slack in pe.SectionSlacks)
+                    {
+                        sb.AppendLine("    - " + slack.SectionName +
+                                      " | Offset: 0x" + slack.FileOffset.ToString("X", CultureInfo.InvariantCulture) +
+                                      " | Size: " + slack.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | NonZero: " + slack.NonZeroCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Sampled: " + slack.SampledBytes.ToString(CultureInfo.InvariantCulture));
+                    }
+                }
+
+                if (pe.SectionGaps.Length > 0)
+                {
+                    sb.AppendLine("  Gaps:");
+                    foreach (SectionGapInfo gap in pe.SectionGaps)
+                    {
+                        sb.AppendLine("    - " + Safe(gap.PreviousSection) + " -> " + Safe(gap.NextSection) +
+                                      " | Offset: 0x" + gap.FileOffset.ToString("X", CultureInfo.InvariantCulture) +
+                                      " | Size: " + gap.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | NonZero: " + gap.NonZeroCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Sampled: " + gap.SampledBytes.ToString(CultureInfo.InvariantCulture));
+                    }
+                }
+            }
+            sb.AppendLine();
+
             sb.AppendLine("Certificate Signer Information:");
             CertificateEntry[] certEntries = pe.CertificateEntries;
             if (certEntries.Length == 0)
@@ -293,6 +328,15 @@ namespace PE_FileInspector
                                       " | ChainValid=" + entry.AuthenticodeStatus.ChainValid +
                                       " | Timestamp=" + entry.AuthenticodeStatus.HasTimestamp +
                                       " | TimestampValid=" + entry.AuthenticodeStatus.TimestampValid);
+                        sb.AppendLine("    Policy Compliant: " + entry.AuthenticodeStatus.PolicyCompliant);
+                        if (entry.AuthenticodeStatus.PolicyFailures.Count > 0)
+                        {
+                            sb.AppendLine("    Policy Failures:");
+                            foreach (string failure in entry.AuthenticodeStatus.PolicyFailures)
+                            {
+                                sb.AppendLine("      - " + Safe(failure));
+                            }
+                        }
                     }
 
                     if (entry.Pkcs7SignerInfos == null || entry.Pkcs7SignerInfos.Length == 0)
@@ -448,6 +492,9 @@ namespace PE_FileInspector
                 sb.AppendLine("  Signature: " + pe.ReadyToRun.SignatureText + " (0x" + pe.ReadyToRun.Signature.ToString("X8", CultureInfo.InvariantCulture) + ")");
                 sb.AppendLine("  Version: " + pe.ReadyToRun.MajorVersion.ToString(CultureInfo.InvariantCulture) + "." + pe.ReadyToRun.MinorVersion.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Flags: 0x" + pe.ReadyToRun.Flags.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  Section Count: " + pe.ReadyToRun.SectionCount.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  EntryPoint Sections: " + pe.ReadyToRun.EntryPointSectionCount.ToString(CultureInfo.InvariantCulture) +
+                              " | Total Size: " + pe.ReadyToRun.EntryPointSectionTotalSize.ToString(CultureInfo.InvariantCulture));
                 if (pe.ReadyToRun.Sections.Count == 0)
                 {
                     sb.AppendLine("  Sections: (none)");
@@ -678,8 +725,21 @@ namespace PE_FileInspector
                     if (entry.IsForwarder)
                     {
                         line += ", Forwarder: " + Safe(entry.Forwarder);
+                        if (entry.ForwarderChain.Count > 0)
+                        {
+                            line += ", ForwarderTarget: " + Safe(entry.ForwarderTarget);
+                        }
                     }
                     sb.AppendLine(line);
+                    if (entry.IsForwarder && entry.ForwarderChain.Count > 0)
+                    {
+                        string chain = string.Join(" -> ", entry.ForwarderChain);
+                        if (entry.ForwarderHasCycle)
+                        {
+                            chain += " (cycle)";
+                        }
+                        sb.AppendLine("    ForwarderChain: " + chain);
+                    }
                 }
             }
             sb.AppendLine();
@@ -691,6 +751,25 @@ namespace PE_FileInspector
             }
             else
             {
+                if (pe.ExceptionSummary != null)
+                {
+                    sb.AppendLine("  Summary:");
+                    sb.AppendLine("    Functions: " + pe.ExceptionSummary.FunctionCount.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("    Invalid Ranges: " + pe.ExceptionSummary.InvalidRangeCount.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("    Out Of Range: " + pe.ExceptionSummary.OutOfRangeCount.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("    Unwind Infos: " + pe.ExceptionSummary.UnwindInfoCount.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("    Unwind Parse Failures: " + pe.ExceptionSummary.UnwindInfoParseFailures.ToString(CultureInfo.InvariantCulture));
+                    if (pe.ExceptionSummary.UnwindInfoVersions.Count > 0)
+                    {
+                        sb.AppendLine("    Unwind Versions:");
+                        foreach (UnwindInfoVersionCount version in pe.ExceptionSummary.UnwindInfoVersions)
+                        {
+                            sb.AppendLine("      - v" + version.Version.ToString(CultureInfo.InvariantCulture) +
+                                          ": " + version.Count.ToString(CultureInfo.InvariantCulture));
+                        }
+                    }
+                }
+
                 sb.AppendLine("  Functions: " + pe.ExceptionFunctions.Length.ToString(CultureInfo.InvariantCulture));
                 foreach (ExceptionFunctionInfo func in pe.ExceptionFunctions.Take(50))
                 {
@@ -802,6 +881,14 @@ namespace PE_FileInspector
                 sb.AppendLine("  SecurityCookie: 0x" + pe.LoadConfig.SecurityCookie.ToString("X", CultureInfo.InvariantCulture));
                 sb.AppendLine("  SEHandlerCount: " + pe.LoadConfig.SeHandlerCount.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  GuardFlags: 0x" + pe.LoadConfig.GuardFlags.ToString("X8", CultureInfo.InvariantCulture));
+                if (pe.LoadConfig.GuardFlagsInfo != null && pe.LoadConfig.GuardFlagsInfo.Flags.Count > 0)
+                {
+                    sb.AppendLine("  Guard Flags Decoded:");
+                    foreach (string flag in pe.LoadConfig.GuardFlagsInfo.Flags)
+                    {
+                        sb.AppendLine("    - " + flag);
+                    }
+                }
             }
             sb.AppendLine();
 

@@ -168,14 +168,46 @@ namespace PECoff
         public uint AddressRva { get; }
         public bool IsForwarder { get; }
         public string Forwarder { get; }
+        public string ForwarderTarget { get; }
+        public IReadOnlyList<string> ForwarderChain { get; }
+        public bool ForwarderHasCycle { get; }
 
-        public ExportEntry(string name, uint ordinal, uint addressRva, bool isForwarder, string forwarder)
+        public ExportEntry(
+            string name,
+            uint ordinal,
+            uint addressRva,
+            bool isForwarder,
+            string forwarder,
+            string forwarderTarget = "",
+            string[] forwarderChain = null,
+            bool forwarderHasCycle = false)
         {
             Name = name ?? string.Empty;
             Ordinal = ordinal;
             AddressRva = addressRva;
             IsForwarder = isForwarder;
             Forwarder = forwarder ?? string.Empty;
+            ForwarderTarget = forwarderTarget ?? string.Empty;
+            ForwarderChain = Array.AsReadOnly(forwarderChain ?? Array.Empty<string>());
+            ForwarderHasCycle = forwarderHasCycle;
+        }
+    }
+
+    internal sealed class SectionRange
+    {
+        public string Name { get; }
+        public uint VirtualAddress { get; }
+        public uint VirtualSize { get; }
+        public uint RawPointer { get; }
+        public uint RawSize { get; }
+
+        public SectionRange(string name, uint virtualAddress, uint virtualSize, uint rawPointer, uint rawSize)
+        {
+            Name = name ?? string.Empty;
+            VirtualAddress = virtualAddress;
+            VirtualSize = virtualSize;
+            RawPointer = rawPointer;
+            RawSize = rawSize;
         }
     }
 
@@ -379,6 +411,7 @@ namespace PECoff
         private Stream PEFileStream;
         private MemoryMappedFile _memoryMappedFile;
         private MemoryMappedViewStream _memoryMappedStream;
+        private MemoryMappedViewAccessor _memoryMappedAccessor;
         private readonly ParseResult _parseResult = new ParseResult();
         private readonly PECOFFOptions _options;
         private readonly string _filePath;
@@ -420,6 +453,7 @@ namespace PECoff
                 {
                     _memoryMappedFile = MemoryMappedFile.CreateFromFile(FileName, FileMode.Open, null, 0, MemoryMappedFileAccess.Read);
                     _memoryMappedStream = _memoryMappedFile.CreateViewStream(0, 0, MemoryMappedFileAccess.Read);
+                    _memoryMappedAccessor = _memoryMappedFile.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
                     PEFileStream = _memoryMappedStream;
                 }
                 else
@@ -465,6 +499,11 @@ namespace PECoff
             if (_memoryMappedStream != null)
             {
                 _memoryMappedStream.Dispose();
+            }
+
+            if (_memoryMappedAccessor != null)
+            {
+                _memoryMappedAccessor.Dispose();
             }
 
             if (_memoryMappedFile != null)
@@ -594,6 +633,25 @@ namespace PECoff
             IMAGE_DLLCHARACTERISTICS_WDM_DRIVER = 0x2000,
             IMAGE_DLLCHARACTERISTICS_GUARD_CF = 0x4000,
             IMAGE_DLLCHARACTERISTICS_TERMINAL_SERVER_AWARE = 0x8000
+        }
+
+        [Flags]
+        private enum GuardFlags : uint
+        {
+            IMAGE_GUARD_CF_INSTRUMENTED = 0x00000100,
+            IMAGE_GUARD_CFW_INSTRUMENTED = 0x00000200,
+            IMAGE_GUARD_CF_FUNCTION_TABLE_PRESENT = 0x00000400,
+            IMAGE_GUARD_SECURITY_COOKIE_UNUSED = 0x00000800,
+            IMAGE_GUARD_PROTECT_DELAYLOAD_IAT = 0x00001000,
+            IMAGE_GUARD_DELAYLOAD_IAT_IN_ITS_OWN_SECTION = 0x00002000,
+            IMAGE_GUARD_CF_EXPORT_SUPPRESSION_INFO_PRESENT = 0x00004000,
+            IMAGE_GUARD_CF_ENABLE_EXPORT_SUPPRESSION = 0x00008000,
+            IMAGE_GUARD_CF_LONGJUMP_TABLE_PRESENT = 0x00010000,
+            IMAGE_GUARD_RF_INSTRUMENTED = 0x00020000,
+            IMAGE_GUARD_RF_ENABLE = 0x00040000,
+            IMAGE_GUARD_RF_STRICT = 0x00080000,
+            IMAGE_GUARD_RETPOLINE_PRESENT = 0x00100000,
+            IMAGE_GUARD_EH_CONTINUATION_TABLE_PRESENT = 0x00400000
         }
 
         [Flags]
@@ -1289,6 +1347,8 @@ namespace PECoff
             get { return _fileAlignment; }
         }
 
+        private MachineTypes _machineType;
+
         private uint _sectionAlignment;
         public uint SectionAlignment
         {
@@ -1335,6 +1395,18 @@ namespace PECoff
         public SectionEntropyInfo[] SectionEntropies
         {
             get { return _sectionEntropies.ToArray(); }
+        }
+
+        private readonly List<SectionSlackInfo> _sectionSlacks = new List<SectionSlackInfo>();
+        public SectionSlackInfo[] SectionSlacks
+        {
+            get { return _sectionSlacks.ToArray(); }
+        }
+
+        private readonly List<SectionGapInfo> _sectionGaps = new List<SectionGapInfo>();
+        public SectionGapInfo[] SectionGaps
+        {
+            get { return _sectionGaps.ToArray(); }
         }
 
         private SubsystemInfo _subsystemInfo;
@@ -1561,6 +1633,12 @@ namespace PECoff
             get { return exports.ToArray(); }
         }
 
+        private string _exportDllName;
+        public string ExportDllName
+        {
+            get { return _exportDllName; }
+        }
+
         private readonly List<ExportEntry> _exportEntries = new List<ExportEntry>();
         public ExportEntry[] ExportEntries
         {
@@ -1589,6 +1667,12 @@ namespace PECoff
         public ExceptionFunctionInfo[] ExceptionFunctions
         {
             get { return _exceptionFunctions.ToArray(); }
+        }
+
+        private ExceptionDirectorySummary _exceptionSummary;
+        public ExceptionDirectorySummary ExceptionSummary
+        {
+            get { return _exceptionSummary; }
         }
 
         private RichHeaderInfo _richHeader;
@@ -1653,6 +1737,41 @@ namespace PECoff
             }
         }
 
+        private unsafe bool TryWithMappedSpan(long offset, int size, Action<ReadOnlySpan<byte>> action)
+        {
+            if (_memoryMappedAccessor == null || size <= 0 || offset < 0 || size > int.MaxValue)
+            {
+                return false;
+            }
+
+            long capacity = _memoryMappedAccessor.Capacity;
+            if (offset > capacity || capacity - offset < size)
+            {
+                return false;
+            }
+
+            byte* pointer = null;
+            try
+            {
+                _memoryMappedAccessor.SafeMemoryMappedViewHandle.AcquirePointer(ref pointer);
+                if (pointer == null)
+                {
+                    return false;
+                }
+
+                ReadOnlySpan<byte> span = new ReadOnlySpan<byte>(pointer + offset, size);
+                action(span);
+                return true;
+            }
+            finally
+            {
+                if (pointer != null)
+                {
+                    _memoryMappedAccessor.SafeMemoryMappedViewHandle.ReleasePointer();
+                }
+            }
+        }
+
         private bool TrySetPosition(long position, int requiredBytes = 0)
         {
             if (PEFileStream == null || position < 0)
@@ -1680,19 +1799,55 @@ namespace PECoff
             fileOffset = -1;
             foreach (IMAGE_SECTION_HEADER section in sections)
             {
-                uint sectionSize = Math.Max(section.VirtualSize, section.SizeOfRawData);
-                if (sectionSize == 0)
+                if (TryMapRvaToFileOffset(directoryVA, section.VirtualAddress, section.VirtualSize, section.PointerToRawData, section.SizeOfRawData, PEFileStream.Length, out fileOffset))
                 {
-                    continue;
+                    return true;
                 }
+            }
 
-                ulong sectionStart = section.VirtualAddress;
-                ulong sectionEnd = sectionStart + sectionSize;
-                ulong rva = directoryVA;
-                if (rva >= sectionStart && rva < sectionEnd)
+            return false;
+        }
+
+        private static bool TryMapRvaToFileOffset(
+            uint rva,
+            uint sectionVirtualAddress,
+            uint sectionVirtualSize,
+            uint sectionRawPointer,
+            uint sectionRawSize,
+            long fileLength,
+            out long fileOffset)
+        {
+            fileOffset = -1;
+            uint sectionSize = Math.Max(sectionVirtualSize, sectionRawSize);
+            if (sectionSize == 0)
+            {
+                return false;
+            }
+
+            ulong sectionStart = sectionVirtualAddress;
+            ulong sectionEnd = sectionStart + sectionSize;
+            if (rva < sectionStart || rva >= sectionEnd)
+            {
+                return false;
+            }
+
+            fileOffset = (long)(rva - sectionVirtualAddress) + sectionRawPointer;
+            return fileOffset >= 0 && fileOffset <= fileLength;
+        }
+
+        internal static bool TryGetFileOffsetForTest(IReadOnlyList<SectionRange> sections, uint rva, long fileLength, out long fileOffset)
+        {
+            fileOffset = -1;
+            if (sections == null)
+            {
+                return false;
+            }
+
+            foreach (SectionRange section in sections)
+            {
+                if (TryMapRvaToFileOffset(rva, section.VirtualAddress, section.VirtualSize, section.RawPointer, section.RawSize, fileLength, out fileOffset))
                 {
-                    fileOffset = (directoryVA - section.VirtualAddress) + section.PointerToRawData;
-                    return fileOffset <= PEFileStream.Length;
+                    return true;
                 }
             }
 
@@ -1776,6 +1931,8 @@ namespace PECoff
                 _sizeOfHeaders,
                 _overlayInfo,
                 _sectionEntropies.ToArray(),
+                _sectionSlacks.ToArray(),
+                _sectionGaps.ToArray(),
                 _optionalHeaderChecksum,
                 _computedChecksum,
                 IsChecksumValid,
@@ -1811,6 +1968,7 @@ namespace PECoff
                 _debugDirectories.ToArray(),
                 _baseRelocations.ToArray(),
                 _exceptionFunctions.ToArray(),
+                _exceptionSummary,
                 _richHeader,
                 _tlsInfo,
                 _loadConfig,
@@ -1907,6 +2065,77 @@ namespace PECoff
                 aslrEnabled,
                 guardCf,
                 highEntropyVa);
+        }
+
+        private static LoadConfigGuardFlagsInfo DecodeGuardFlags(uint guardFlags)
+        {
+            if (guardFlags == 0)
+            {
+                return new LoadConfigGuardFlagsInfo(
+                    guardFlags,
+                    Array.Empty<string>(),
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false);
+            }
+
+            List<string> names = new List<string>();
+            foreach (GuardFlags flag in Enum.GetValues(typeof(GuardFlags)))
+            {
+                if ((guardFlags & (uint)flag) != 0)
+                {
+                    names.Add(flag.ToString());
+                }
+            }
+
+            bool cfInstrumented = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_CF_INSTRUMENTED) != 0;
+            bool cfwInstrumented = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_CFW_INSTRUMENTED) != 0;
+            bool cfFunctionTablePresent = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_CF_FUNCTION_TABLE_PRESENT) != 0;
+            bool securityCookieUnused = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_SECURITY_COOKIE_UNUSED) != 0;
+            bool protectDelayLoadIat = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_PROTECT_DELAYLOAD_IAT) != 0;
+            bool delayLoadIatInOwnSection = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_DELAYLOAD_IAT_IN_ITS_OWN_SECTION) != 0;
+            bool exportSuppressionInfoPresent = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_CF_EXPORT_SUPPRESSION_INFO_PRESENT) != 0;
+            bool enableExportSuppression = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_CF_ENABLE_EXPORT_SUPPRESSION) != 0;
+            bool longjumpTablePresent = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_CF_LONGJUMP_TABLE_PRESENT) != 0;
+            bool rfInstrumented = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_RF_INSTRUMENTED) != 0;
+            bool rfEnable = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_RF_ENABLE) != 0;
+            bool rfStrict = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_RF_STRICT) != 0;
+            bool retpolinePresent = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_RETPOLINE_PRESENT) != 0;
+            bool ehContinuationTablePresent = (guardFlags & (uint)GuardFlags.IMAGE_GUARD_EH_CONTINUATION_TABLE_PRESENT) != 0;
+
+            return new LoadConfigGuardFlagsInfo(
+                guardFlags,
+                names.ToArray(),
+                cfInstrumented,
+                cfwInstrumented,
+                cfFunctionTablePresent,
+                securityCookieUnused,
+                protectDelayLoadIat,
+                delayLoadIatInOwnSection,
+                exportSuppressionInfoPresent,
+                enableExportSuppression,
+                longjumpTablePresent,
+                rfInstrumented,
+                rfEnable,
+                rfStrict,
+                retpolinePresent,
+                ehContinuationTablePresent);
+        }
+
+        internal static LoadConfigGuardFlagsInfo DecodeGuardFlagsForTest(uint guardFlags)
+        {
+            return DecodeGuardFlags(guardFlags);
         }
 
         private static int GetOptionalHeaderChecksumOffset(PEFormat magic)
@@ -3107,6 +3336,108 @@ namespace PECoff
             }
         }
 
+        private void ParseResourceSection(
+            ReadOnlySpan<byte> resourceSpan,
+            int resourceSize,
+            uint resourceDirectoryRva,
+            IMAGE_SECTION_HEADER resourceSection,
+            List<IMAGE_SECTION_HEADER> sections,
+            byte[] resourceBuffer)
+        {
+            int rootOffset = 0;
+            if (resourceDirectoryRva >= resourceSection.VirtualAddress)
+            {
+                uint delta = resourceDirectoryRva - resourceSection.VirtualAddress;
+                if (delta <= int.MaxValue && delta < (uint)resourceSize)
+                {
+                    rootOffset = (int)delta;
+                }
+                else
+                {
+                    Warn(ParseIssueCategory.Resources, "Resource directory root offset outside section bounds.");
+                }
+            }
+            else
+            {
+                Warn(ParseIssueCategory.Resources, "Resource directory RVA does not map to resource section.");
+            }
+
+            ParseResourceDirectory(resourceSpan, rootOffset, 0, 0, string.Empty, 0, string.Empty, sections, new HashSet<int>());
+            DecodeResourceStringTables(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceMessageTables(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceDialogs(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceAccelerators(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceMenus(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceToolbars(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceManifests(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceIconGroups(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceVersionInfo(resourceSpan, resourceSection.VirtualAddress, sections);
+
+            FileVersionInfo fvi;
+            ResourceEntry versionEntry = _resources.FirstOrDefault(r => r.TypeId == (uint)ResourceType.Version);
+            byte[] fallbackBuffer = resourceBuffer;
+            if (versionEntry != null &&
+                TryGetResourceData(resourceSpan, resourceSection.VirtualAddress, versionEntry.DataRva, versionEntry.Size, sections, out byte[] versionData))
+            {
+                fvi = new FileVersionInfo(versionData);
+                if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
+                {
+                    if (fallbackBuffer == null)
+                    {
+                        fallbackBuffer = resourceSpan.ToArray();
+                    }
+
+                    FileVersionInfo fallback = new FileVersionInfo(fallbackBuffer, resourceSize);
+                    if (!(fallback.ProductVersion.Equals("0.0.0.0") && fallback.FileVersion.Equals("0.0.0.0")))
+                    {
+                        fvi = fallback;
+                    }
+                }
+            }
+            else
+            {
+                if (fallbackBuffer == null)
+                {
+                    fallbackBuffer = resourceSpan.ToArray();
+                }
+
+                fvi = new FileVersionInfo(fallbackBuffer, resourceSize);
+            }
+
+            _versionInfoDetails = fvi.ToVersionInfoDetails();
+            _fileversion = fvi.FileVersion;
+            _productversion = fvi.ProductVersion;
+            _companyName = fvi.CompanyName;
+            _fileDescription = fvi.FileDescription;
+            _internalName = fvi.InternalName;
+            _originalFilename = fvi.OriginalFilename;
+            _productName = fvi.ProductName;
+            _comments = fvi.Comments;
+            _legalCopyright = fvi.LegalCopyright;
+            _legalTrademarks = fvi.LegalTrademarks;
+            _privateBuild = fvi.PrivateBuild;
+            _specialBuild = fvi.SpecialBuild;
+            _language = fvi.Language;
+
+            if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
+            {
+                System.Diagnostics.FileVersionInfo versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(_filePath);
+                _fileversion = versionInfo.FileVersion;
+                _productversion = versionInfo.ProductVersion;
+                SetIfEmpty(ref _companyName, versionInfo.CompanyName);
+                SetIfEmpty(ref _fileDescription, versionInfo.FileDescription);
+                SetIfEmpty(ref _internalName, versionInfo.InternalName);
+                SetIfEmpty(ref _originalFilename, versionInfo.OriginalFilename);
+                SetIfEmpty(ref _productName, versionInfo.ProductName);
+                SetIfEmpty(ref _comments, versionInfo.Comments);
+                SetIfEmpty(ref _legalCopyright, versionInfo.LegalCopyright);
+                SetIfEmpty(ref _legalTrademarks, versionInfo.LegalTrademarks);
+                SetIfEmpty(ref _privateBuild, versionInfo.PrivateBuild);
+                SetIfEmpty(ref _specialBuild, versionInfo.SpecialBuild);
+                SetIfEmpty(ref _language, versionInfo.Language);
+            }
+        }
+
         private bool TryParseGroupIcon(
             ResourceEntry entry,
             byte[] groupData,
@@ -3759,6 +4090,28 @@ namespace PECoff
             return true;
         }
 
+        internal static bool TryParseMenuTemplateBytes(byte[] data, out ResourceMenuInfo menu)
+        {
+            if (data == null)
+            {
+                menu = null;
+                return false;
+            }
+
+            return TryParseMenuTemplate(data, out menu);
+        }
+
+        internal static bool TryParseToolbarResourceBytes(byte[] data, out ResourceToolbarInfo toolbar)
+        {
+            if (data == null)
+            {
+                toolbar = null;
+                return false;
+            }
+
+            return TryParseToolbarResource(data, out toolbar);
+        }
+
         private static string[] DecodeAcceleratorFlags(byte flags)
         {
             List<string> names = new List<string>();
@@ -4304,6 +4657,292 @@ namespace PECoff
                     }
                 }
             }
+
+            AnalyzeSectionPadding(sections, sizeOfHeaders);
+        }
+
+        private void AnalyzeSectionPadding(List<IMAGE_SECTION_HEADER> sections, uint sizeOfHeaders)
+        {
+            _sectionSlacks.Clear();
+            _sectionGaps.Clear();
+
+            if (PEFileStream == null || sections == null || sections.Count == 0)
+            {
+                return;
+            }
+
+            SectionRange[] ranges = BuildSectionRanges(sections);
+            AnalyzeSectionPaddingCore(
+                ranges,
+                sizeOfHeaders,
+                PEFileStream.Length,
+                CountNonZeroBytes,
+                _sectionGaps,
+                _sectionSlacks);
+
+            foreach (SectionSlackInfo slack in _sectionSlacks)
+            {
+                if (slack.NonZeroCount > 0)
+                {
+                    Warn(ParseIssueCategory.Sections, $"Section {slack.SectionName} contains non-zero padding in trailing slack.");
+                }
+            }
+
+            foreach (SectionGapInfo gap in _sectionGaps)
+            {
+                if (gap.NonZeroCount > 0)
+                {
+                    Warn(ParseIssueCategory.Sections, $"Gap between {gap.PreviousSection} and {gap.NextSection} contains non-zero padding.");
+                }
+            }
+        }
+
+        private static SectionRange[] BuildSectionRanges(List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (sections == null || sections.Count == 0)
+            {
+                return Array.Empty<SectionRange>();
+            }
+
+            SectionRange[] ranges = new SectionRange[sections.Count];
+            for (int i = 0; i < sections.Count; i++)
+            {
+                IMAGE_SECTION_HEADER section = sections[i];
+                string name = section.Section.TrimEnd('\0');
+                ranges[i] = new SectionRange(
+                    name,
+                    section.VirtualAddress,
+                    section.VirtualSize,
+                    section.PointerToRawData,
+                    section.SizeOfRawData);
+            }
+
+            return ranges;
+        }
+
+        private const int PaddingScanLimit = 256 * 1024;
+
+        private (int NonZero, int Sampled) CountNonZeroBytes(long offset, int size)
+        {
+            if (PEFileStream == null || size <= 0)
+            {
+                return (0, 0);
+            }
+
+            if (offset < 0 || offset >= PEFileStream.Length)
+            {
+                return (0, 0);
+            }
+
+            int toScan = Math.Min(size, PaddingScanLimit);
+            long available = PEFileStream.Length - offset;
+            if (available <= 0)
+            {
+                return (0, 0);
+            }
+
+            if (toScan > available)
+            {
+                toScan = (int)Math.Min(available, int.MaxValue);
+            }
+
+            if (toScan <= 0)
+            {
+                return (0, 0);
+            }
+
+            long originalPosition = PEFileStream.Position;
+            int nonZero = 0;
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(Math.Min(8192, toScan));
+            try
+            {
+                if (!TrySetPosition(offset, toScan))
+                {
+                    return (0, 0);
+                }
+
+                int remaining = toScan;
+                while (remaining > 0)
+                {
+                    int chunk = Math.Min(buffer.Length, remaining);
+                    int read = PEFileStream.Read(buffer, 0, chunk);
+                    if (read <= 0)
+                    {
+                        break;
+                    }
+
+                    for (int i = 0; i < read; i++)
+                    {
+                        if (buffer[i] != 0)
+                        {
+                            nonZero++;
+                        }
+                    }
+
+                    remaining -= read;
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+
+            return (nonZero, toScan);
+        }
+
+        private static void AnalyzeSectionPaddingCore(
+            IReadOnlyList<SectionRange> sections,
+            uint sizeOfHeaders,
+            long fileLength,
+            Func<long, int, (int NonZero, int Sampled)> countNonZero,
+            List<SectionGapInfo> gaps,
+            List<SectionSlackInfo> slacks)
+        {
+            if (sections == null || sections.Count == 0)
+            {
+                return;
+            }
+
+            List<SectionRange> ordered = sections
+                .Where(section => section.RawSize > 0)
+                .OrderBy(section => section.RawPointer)
+                .ToList();
+
+            if (ordered.Count == 0)
+            {
+                return;
+            }
+
+            if (sizeOfHeaders > 0 && ordered[0].RawPointer > sizeOfHeaders)
+            {
+                long gapOffset = sizeOfHeaders;
+                int gapSize = (int)Math.Min(ordered[0].RawPointer - sizeOfHeaders, int.MaxValue);
+                if (gapSize > 0)
+                {
+                    if (fileLength > 0 && gapOffset + gapSize > fileLength)
+                    {
+                        gapSize = (int)Math.Max(0, fileLength - gapOffset);
+                    }
+
+                    (int nonZero, int sampled) = countNonZero(gapOffset, gapSize);
+                    gaps.Add(new SectionGapInfo("Headers", ordered[0].Name, gapOffset, gapSize, nonZero, sampled));
+                }
+            }
+
+            foreach (SectionRange section in ordered)
+            {
+                if (section.VirtualSize == 0 || section.RawSize <= section.VirtualSize)
+                {
+                    continue;
+                }
+
+                long slackOffset = section.RawPointer + section.VirtualSize;
+                int slackSize = (int)Math.Min(section.RawSize - section.VirtualSize, int.MaxValue);
+                if (slackSize <= 0)
+                {
+                    continue;
+                }
+
+                if (fileLength > 0 && slackOffset + slackSize > fileLength)
+                {
+                    slackSize = (int)Math.Max(0, fileLength - slackOffset);
+                }
+
+                if (slackSize <= 0)
+                {
+                    continue;
+                }
+
+                (int nonZero, int sampled) = countNonZero(slackOffset, slackSize);
+                slacks.Add(new SectionSlackInfo(section.Name, slackOffset, slackSize, nonZero, sampled));
+            }
+
+            for (int i = 1; i < ordered.Count; i++)
+            {
+                SectionRange previous = ordered[i - 1];
+                SectionRange current = ordered[i];
+                long previousEnd = previous.RawPointer + previous.RawSize;
+                if (current.RawPointer <= previousEnd)
+                {
+                    continue;
+                }
+
+                long gapOffset = previousEnd;
+                int gapSize = (int)Math.Min(current.RawPointer - previousEnd, int.MaxValue);
+                if (gapSize <= 0)
+                {
+                    continue;
+                }
+
+                if (fileLength > 0 && gapOffset + gapSize > fileLength)
+                {
+                    gapSize = (int)Math.Max(0, fileLength - gapOffset);
+                }
+
+                if (gapSize <= 0)
+                {
+                    continue;
+                }
+
+                (int nonZero, int sampled) = countNonZero(gapOffset, gapSize);
+                gaps.Add(new SectionGapInfo(previous.Name, current.Name, gapOffset, gapSize, nonZero, sampled));
+            }
+        }
+
+        internal static void AnalyzeSectionPaddingForTest(
+            byte[] data,
+            SectionRange[] sections,
+            uint sizeOfHeaders,
+            out SectionGapInfo[] gaps,
+            out SectionSlackInfo[] slacks)
+        {
+            List<SectionGapInfo> gapList = new List<SectionGapInfo>();
+            List<SectionSlackInfo> slackList = new List<SectionSlackInfo>();
+            long length = data == null ? 0 : data.Length;
+
+            (int NonZero, int Sampled) CountFromBuffer(long offset, int size)
+            {
+                if (data == null || size <= 0)
+                {
+                    return (0, 0);
+                }
+
+                if (offset < 0 || offset >= data.Length)
+                {
+                    return (0, 0);
+                }
+
+                int toScan = Math.Min(size, PaddingScanLimit);
+                int available = (int)Math.Min(data.Length - offset, int.MaxValue);
+                if (toScan > available)
+                {
+                    toScan = available;
+                }
+
+                if (toScan <= 0)
+                {
+                    return (0, 0);
+                }
+
+                int nonZero = 0;
+                for (int i = 0; i < toScan; i++)
+                {
+                    if (data[(int)offset + i] != 0)
+                    {
+                        nonZero++;
+                    }
+                }
+
+                return (nonZero, toScan);
+            }
+
+            AnalyzeSectionPaddingCore(sections ?? Array.Empty<SectionRange>(), sizeOfHeaders, length, CountFromBuffer, gapList, slackList);
+            gaps = gapList.ToArray();
+            slacks = slackList.ToArray();
         }
 
         private bool TryReadImportByName(List<IMAGE_SECTION_HEADER> sections, uint nameRva, out ushort hint, out string name)
@@ -4739,6 +5378,155 @@ namespace PECoff
             }
         }
 
+        private void BuildExceptionDirectorySummary(List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (_exceptionFunctions.Count == 0)
+            {
+                _exceptionSummary = null;
+                return;
+            }
+
+            bool isAmd64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_AMD64;
+            _exceptionSummary = BuildExceptionDirectorySummaryCore(
+                _exceptionFunctions,
+                _sizeOfImage,
+                isAmd64,
+                (uint rva, out byte version) => TryReadUnwindVersion(sections, rva, out version));
+        }
+
+        private bool TryReadUnwindVersion(List<IMAGE_SECTION_HEADER> sections, uint rva, out byte version)
+        {
+            version = 0;
+            if (rva == 0 || PEFileStream == null || PEFile == null)
+            {
+                return false;
+            }
+
+            if (!TryGetFileOffset(sections, rva, out long offset))
+            {
+                return false;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                if (!TrySetPosition(offset, 1))
+                {
+                    return false;
+                }
+
+                int value = PEFile.ReadByte();
+                if (value < 0)
+                {
+                    return false;
+                }
+
+                version = (byte)(value & 0x07);
+                return true;
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
+        private delegate bool TryGetUnwindVersion(uint rva, out byte version);
+
+        private static ExceptionDirectorySummary BuildExceptionDirectorySummaryCore(
+            IReadOnlyList<ExceptionFunctionInfo> functions,
+            uint sizeOfImage,
+            bool parseUnwindInfo,
+            TryGetUnwindVersion tryGetUnwindVersion)
+        {
+            if (functions == null || functions.Count == 0)
+            {
+                return new ExceptionDirectorySummary(0, 0, 0, 0, 0, Array.Empty<UnwindInfoVersionCount>());
+            }
+
+            int invalidRange = 0;
+            int outOfRange = 0;
+            int unwindCount = 0;
+            int unwindFailures = 0;
+            Dictionary<byte, int> versionCounts = new Dictionary<byte, int>();
+            HashSet<uint> seenUnwind = new HashSet<uint>();
+
+            foreach (ExceptionFunctionInfo entry in functions)
+            {
+                if (entry.EndAddress <= entry.BeginAddress)
+                {
+                    invalidRange++;
+                }
+
+                if (sizeOfImage > 0 &&
+                    (entry.BeginAddress > sizeOfImage || entry.EndAddress > sizeOfImage))
+                {
+                    outOfRange++;
+                }
+
+                if (!parseUnwindInfo || entry.UnwindInfoAddress == 0)
+                {
+                    continue;
+                }
+
+                if (!seenUnwind.Add(entry.UnwindInfoAddress))
+                {
+                    continue;
+                }
+
+                if (tryGetUnwindVersion != null && tryGetUnwindVersion(entry.UnwindInfoAddress, out byte version))
+                {
+                    unwindCount++;
+                    if (!versionCounts.TryGetValue(version, out int count))
+                    {
+                        count = 0;
+                    }
+
+                    versionCounts[version] = count + 1;
+                }
+                else
+                {
+                    unwindFailures++;
+                }
+            }
+
+            UnwindInfoVersionCount[] versions = versionCounts
+                .OrderBy(kvp => kvp.Key)
+                .Select(kvp => new UnwindInfoVersionCount(kvp.Key, kvp.Value))
+                .ToArray();
+
+            return new ExceptionDirectorySummary(
+                functions.Count,
+                invalidRange,
+                outOfRange,
+                unwindCount,
+                unwindFailures,
+                versions);
+        }
+
+        internal static ExceptionDirectorySummary BuildExceptionDirectorySummaryForTest(
+            ExceptionFunctionInfo[] functions,
+            uint sizeOfImage,
+            bool parseUnwindInfo,
+            Dictionary<uint, byte[]> unwindInfo)
+        {
+            bool TryGetVersion(uint rva, out byte version)
+            {
+                version = 0;
+                if (unwindInfo == null || !unwindInfo.TryGetValue(rva, out byte[] data) || data == null || data.Length == 0)
+                {
+                    return false;
+                }
+
+                version = (byte)(data[0] & 0x07);
+                return true;
+            }
+
+            return BuildExceptionDirectorySummaryCore(functions ?? Array.Empty<ExceptionFunctionInfo>(), sizeOfImage, parseUnwindInfo, TryGetVersion);
+        }
+
         private void ParseDebugDirectory(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
         {
             if (!TryGetFileOffset(sections, directory.VirtualAddress, out long tableOffset))
@@ -5025,6 +5813,7 @@ namespace PECoff
             uint guardCfCount = isPe32Plus ? (uint)ReadUInt64(span, offset) : ReadUInt32(span, offset);
             offset += isPe32Plus ? 8 : 4;
             uint guardFlags = ReadUInt32(span, offset);
+            LoadConfigGuardFlagsInfo guardFlagsInfo = DecodeGuardFlags(guardFlags);
 
             _loadConfig = new LoadConfigInfo(
                 size,
@@ -5043,7 +5832,8 @@ namespace PECoff
                 guardCfDispatch,
                 guardCfTable,
                 guardCfCount,
-                guardFlags);
+                guardFlags,
+                guardFlagsInfo);
         }
 
         private static ulong ReadPointer(ReadOnlySpan<byte> span, ref int offset, bool isPe32Plus)
@@ -5266,7 +6056,26 @@ namespace PECoff
             }
 
             string signatureText = GetSignatureText(signature);
-            _readyToRun = new ReadyToRunInfo(signature, signatureText, major, minor, flags, sectionsInfo.ToArray());
+            int entryPointSectionCount = sectionsInfo.Count(section => IsReadyToRunEntryPointSection(section.Type));
+            uint entryPointTotalSize = 0;
+            foreach (ReadyToRunSectionInfo section in sectionsInfo)
+            {
+                if (IsReadyToRunEntryPointSection(section.Type))
+                {
+                    entryPointTotalSize += section.Size;
+                }
+            }
+
+            _readyToRun = new ReadyToRunInfo(
+                signature,
+                signatureText,
+                major,
+                minor,
+                flags,
+                sectionsInfo.Count,
+                entryPointSectionCount,
+                entryPointTotalSize,
+                sectionsInfo.ToArray());
         }
 
         private static string GetSignatureText(uint signature)
@@ -5307,6 +6116,11 @@ namespace PECoff
                 default:
                     return string.Empty;
             }
+        }
+
+        private static bool IsReadyToRunEntryPointSection(uint type)
+        {
+            return type == 0x00000006;
         }
 
         private static bool TryParseMetadataDetails(
@@ -5601,6 +6415,194 @@ namespace PECoff
             }
 
             return hex + " (" + string.Join(", ", labels) + ")";
+        }
+
+        private void ResolveExportForwarderChains()
+        {
+            if (_exportEntries.Count == 0)
+            {
+                return;
+            }
+
+            ExportEntry[] resolved = ResolveExportForwarderChains(_exportEntries.ToArray(), _exportDllName, _filePath);
+            _exportEntries.Clear();
+            _exportEntries.AddRange(resolved);
+        }
+
+        private static ExportEntry[] ResolveExportForwarderChains(
+            ExportEntry[] entries,
+            string exportName,
+            string filePath)
+        {
+            if (entries == null || entries.Length == 0)
+            {
+                return Array.Empty<ExportEntry>();
+            }
+
+            string moduleName = NormalizeModuleName(exportName);
+            if (string.IsNullOrWhiteSpace(moduleName))
+            {
+                moduleName = NormalizeModuleName(Path.GetFileNameWithoutExtension(filePath ?? string.Empty));
+            }
+
+            Dictionary<string, ExportEntry> byName = new Dictionary<string, ExportEntry>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<uint, ExportEntry> byOrdinal = new Dictionary<uint, ExportEntry>();
+            foreach (ExportEntry entry in entries)
+            {
+                if (!string.IsNullOrWhiteSpace(entry.Name))
+                {
+                    byName[entry.Name] = entry;
+                }
+
+                byOrdinal[entry.Ordinal] = entry;
+            }
+
+            ExportEntry[] resolved = new ExportEntry[entries.Length];
+            for (int i = 0; i < entries.Length; i++)
+            {
+                ExportEntry entry = entries[i];
+                if (!entry.IsForwarder || string.IsNullOrWhiteSpace(entry.Forwarder))
+                {
+                    resolved[i] = entry;
+                    continue;
+                }
+
+                ResolveForwarderChain(entry.Forwarder, moduleName, byName, byOrdinal, out string target, out string[] chain, out bool hasCycle);
+                resolved[i] = new ExportEntry(
+                    entry.Name,
+                    entry.Ordinal,
+                    entry.AddressRva,
+                    entry.IsForwarder,
+                    entry.Forwarder,
+                    target,
+                    chain,
+                    hasCycle);
+            }
+
+            return resolved;
+        }
+
+        internal static ExportEntry[] ResolveExportForwarderChainsForTest(
+            ExportEntry[] entries,
+            string exportName,
+            string filePath)
+        {
+            return ResolveExportForwarderChains(entries, exportName, filePath);
+        }
+
+        private static void ResolveForwarderChain(
+            string forwarder,
+            string moduleName,
+            Dictionary<string, ExportEntry> byName,
+            Dictionary<uint, ExportEntry> byOrdinal,
+            out string target,
+            out string[] chain,
+            out bool hasCycle)
+        {
+            List<string> steps = new List<string>();
+            HashSet<string> visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            hasCycle = false;
+            target = forwarder ?? string.Empty;
+
+            string currentForwarder = forwarder;
+            int maxDepth = 16;
+            for (int depth = 0; depth < maxDepth; depth++)
+            {
+                if (!TryParseForwarderTarget(currentForwarder, out string module, out string symbol))
+                {
+                    break;
+                }
+
+                string normalizedModule = NormalizeModuleName(module);
+                string step = normalizedModule.Length == 0 ? symbol : normalizedModule + "!" + symbol;
+                if (!visited.Add(step))
+                {
+                    hasCycle = true;
+                    break;
+                }
+
+                steps.Add(step);
+                target = step;
+
+                if (string.IsNullOrWhiteSpace(moduleName) ||
+                    !string.Equals(normalizedModule, moduleName, StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+
+                ExportEntry next;
+                if (TryParseForwarderOrdinal(symbol, out uint ordinal))
+                {
+                    if (!byOrdinal.TryGetValue(ordinal, out next))
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    if (!byName.TryGetValue(symbol, out next))
+                    {
+                        break;
+                    }
+                }
+
+                if (!next.IsForwarder || string.IsNullOrWhiteSpace(next.Forwarder))
+                {
+                    break;
+                }
+
+                currentForwarder = next.Forwarder;
+            }
+
+            chain = steps.ToArray();
+        }
+
+        private static bool TryParseForwarderTarget(string forwarder, out string module, out string symbol)
+        {
+            module = string.Empty;
+            symbol = string.Empty;
+            if (string.IsNullOrWhiteSpace(forwarder))
+            {
+                return false;
+            }
+
+            int dot = forwarder.LastIndexOf('.');
+            if (dot <= 0 || dot >= forwarder.Length - 1)
+            {
+                return false;
+            }
+
+            module = forwarder.Substring(0, dot);
+            symbol = forwarder.Substring(dot + 1);
+            return true;
+        }
+
+        private static bool TryParseForwarderOrdinal(string symbol, out uint ordinal)
+        {
+            ordinal = 0;
+            if (string.IsNullOrWhiteSpace(symbol) || symbol.Length < 2 || symbol[0] != '#')
+            {
+                return false;
+            }
+
+            return uint.TryParse(symbol.Substring(1), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out ordinal);
+        }
+
+        private static string NormalizeModuleName(string module)
+        {
+            if (string.IsNullOrWhiteSpace(module))
+            {
+                return string.Empty;
+            }
+
+            string trimmed = module.Trim();
+            string fileName = Path.GetFileNameWithoutExtension(trimmed);
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                fileName = trimmed;
+            }
+
+            return fileName;
         }
 
         private void ValidateImportExportConsistency()
@@ -5922,6 +6924,8 @@ namespace PECoff
                 _iconGroups.Clear();
                 _versionInfoDetails = null;
                 _sectionEntropies.Clear();
+                _sectionSlacks.Clear();
+                _sectionGaps.Clear();
                 _overlayInfo = new OverlayInfo(0, 0);
                 _securityFeaturesInfo = null;
                 imports.Clear();
@@ -5932,10 +6936,12 @@ namespace PECoff
                 _delayImportEntries.Clear();
                 _delayImportDescriptors.Clear();
                 _exportEntries.Clear();
+                _exportDllName = string.Empty;
                 _boundImports.Clear();
                 _debugDirectories.Clear();
                 _baseRelocations.Clear();
                 _exceptionFunctions.Clear();
+                _exceptionSummary = null;
                 _richHeader = null;
                 _tlsInfo = null;
                 _loadConfig = null;
@@ -5993,6 +6999,7 @@ namespace PECoff
 
                     // Set the position to the PE-Header
                     IMAGE_NT_HEADERS peHeader = new IMAGE_NT_HEADERS(PEFile);
+                    _machineType = peHeader.FileHeader.Machine;
                     if (peHeader.Signature != IMAGE_NT_SIGNATURE )
                     {
                         Fail(ParseIssueCategory.Header, "Invalid PE signature.");
@@ -6116,6 +7123,15 @@ namespace PECoff
 
                                 ReadExactly(PEFileStream, buffer, 0, buffer.Length);
                                 edt = (ByteArrayToStructure<EXPORT_DIRECTORY_TABLE>(buffer));
+
+                                _exportDllName = string.Empty;
+                                if (edt.NameRVA != 0 &&
+                                    TryGetFileOffset(sections, edt.NameRVA, out long exportTableNameOffset) &&
+                                    TryReadNullTerminatedString(exportTableNameOffset, out string exportTableName) &&
+                                    !string.IsNullOrWhiteSpace(exportTableName))
+                                {
+                                    _exportDllName = exportTableName;
+                                }
 
                                 Dictionary<uint, string> exportNamesByIndex = new Dictionary<uint, string>();
                                 if (edt.NumberOfNamePointers > 0)
@@ -6334,100 +7350,32 @@ namespace PECoff
                                     Warn(ParseIssueCategory.Resources, "Resource section offset outside file bounds.");
                                     break;
                                 }
-
-                                byte[] resourceBuffer = ArrayPool<byte>.Shared.Rent(rsrcSize);
-                                ReadOnlySpan<byte> resourceSpan;
-                                try
+                                bool parsedResource = false;
+                                if (_memoryMappedAccessor != null)
                                 {
-                                    ReadExactly(PEFileStream, resourceBuffer, 0, rsrcSize);
-                                    resourceSpan = new ReadOnlySpan<byte>(resourceBuffer, 0, rsrcSize);
-
-                                    int rootOffset = 0;
-                                    if (dataDirectory[i].VirtualAddress >= resourceSection.VirtualAddress)
+                                    long resourceOffset = resourceSection.PointerToRawData;
+                                    if (TryWithMappedSpan(resourceOffset, rsrcSize, span =>
                                     {
-                                        uint delta = dataDirectory[i].VirtualAddress - resourceSection.VirtualAddress;
-                                        if (delta <= int.MaxValue && delta < (uint)rsrcSize)
-                                        {
-                                            rootOffset = (int)delta;
-                                        }
-                                        else
-                                        {
-                                            Warn(ParseIssueCategory.Resources, "Resource directory root offset outside section bounds.");
-                                        }
-                                    }
-                                    else
+                                        ParseResourceSection(span, rsrcSize, dataDirectory[i].VirtualAddress, resourceSection, sections, null);
+                                    }))
                                     {
-                                        Warn(ParseIssueCategory.Resources, "Resource directory RVA does not map to resource section.");
-                                    }
-
-                                    ParseResourceDirectory(resourceSpan, rootOffset, 0, 0, string.Empty, 0, string.Empty, sections, new HashSet<int>());
-                                    DecodeResourceStringTables(resourceSpan, resourceSection.VirtualAddress, sections);
-                                    DecodeResourceMessageTables(resourceSpan, resourceSection.VirtualAddress, sections);
-                                    DecodeResourceDialogs(resourceSpan, resourceSection.VirtualAddress, sections);
-                                    DecodeResourceAccelerators(resourceSpan, resourceSection.VirtualAddress, sections);
-                                    DecodeResourceMenus(resourceSpan, resourceSection.VirtualAddress, sections);
-                                    DecodeResourceToolbars(resourceSpan, resourceSection.VirtualAddress, sections);
-                                    DecodeResourceManifests(resourceSpan, resourceSection.VirtualAddress, sections);
-                                    DecodeResourceIconGroups(resourceSpan, resourceSection.VirtualAddress, sections);
-                                    DecodeResourceVersionInfo(resourceSpan, resourceSection.VirtualAddress, sections);
-
-                                    FileVersionInfo fvi;
-                                    ResourceEntry versionEntry = _resources.FirstOrDefault(r => r.TypeId == (uint)ResourceType.Version);
-                                    if (versionEntry != null &&
-                                        TryGetResourceData(resourceSpan, resourceSection.VirtualAddress, versionEntry.DataRva, versionEntry.Size, sections, out byte[] versionData))
-                                    {
-                                        fvi = new FileVersionInfo(versionData);
-                                        if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
-                                        {
-                                            FileVersionInfo fallback = new FileVersionInfo(resourceBuffer, rsrcSize);
-                                            if (!(fallback.ProductVersion.Equals("0.0.0.0") && fallback.FileVersion.Equals("0.0.0.0")))
-                                            {
-                                                fvi = fallback;
-                                            }
-                                        }
-                                    }
-                                    else
-                                    {
-                                        fvi = new FileVersionInfo(resourceBuffer, rsrcSize);
-                                    }
-
-                                    _versionInfoDetails = fvi.ToVersionInfoDetails();
-
-                                    _fileversion = fvi.FileVersion;
-                                    _productversion = fvi.ProductVersion;
-                                    _companyName = fvi.CompanyName;
-                                    _fileDescription = fvi.FileDescription;
-                                    _internalName = fvi.InternalName;
-                                    _originalFilename = fvi.OriginalFilename;
-                                    _productName = fvi.ProductName;
-                                    _comments = fvi.Comments;
-                                    _legalCopyright = fvi.LegalCopyright;
-                                    _legalTrademarks = fvi.LegalTrademarks;
-                                    _privateBuild = fvi.PrivateBuild;
-                                    _specialBuild = fvi.SpecialBuild;
-                                    _language = fvi.Language;
-
-                                    if (fvi.ProductVersion.Equals("0.0.0.0") && fvi.FileVersion.Equals("0.0.0.0"))
-                                    {
-                                        System.Diagnostics.FileVersionInfo versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(_filePath);
-                                        _fileversion = versionInfo.FileVersion;
-                                        _productversion = versionInfo.ProductVersion;
-                                        SetIfEmpty(ref _companyName, versionInfo.CompanyName);
-                                        SetIfEmpty(ref _fileDescription, versionInfo.FileDescription);
-                                        SetIfEmpty(ref _internalName, versionInfo.InternalName);
-                                        SetIfEmpty(ref _originalFilename, versionInfo.OriginalFilename);
-                                        SetIfEmpty(ref _productName, versionInfo.ProductName);
-                                        SetIfEmpty(ref _comments, versionInfo.Comments);
-                                        SetIfEmpty(ref _legalCopyright, versionInfo.LegalCopyright);
-                                        SetIfEmpty(ref _legalTrademarks, versionInfo.LegalTrademarks);
-                                        SetIfEmpty(ref _privateBuild, versionInfo.PrivateBuild);
-                                        SetIfEmpty(ref _specialBuild, versionInfo.SpecialBuild);
-                                        SetIfEmpty(ref _language, versionInfo.Language);
+                                        parsedResource = true;
                                     }
                                 }
-                                finally
+
+                                if (!parsedResource)
                                 {
-                                    ArrayPool<byte>.Shared.Return(resourceBuffer);
+                                    byte[] resourceBuffer = ArrayPool<byte>.Shared.Rent(rsrcSize);
+                                    try
+                                    {
+                                        ReadExactly(PEFileStream, resourceBuffer, 0, rsrcSize);
+                                        ReadOnlySpan<byte> resourceSpan = new ReadOnlySpan<byte>(resourceBuffer, 0, rsrcSize);
+                                        ParseResourceSection(resourceSpan, rsrcSize, dataDirectory[i].VirtualAddress, resourceSection, sections, resourceBuffer);
+                                    }
+                                    finally
+                                    {
+                                        ArrayPool<byte>.Shared.Return(resourceBuffer);
+                                    }
                                 }
 
                                 break;
@@ -6530,7 +7478,7 @@ namespace PECoff
                                         }
                                     }
 
-                                    AuthenticodeStatusInfo statusInfo = CertificateUtilities.BuildAuthenticodeStatus(pkcs7Signers);
+                                    AuthenticodeStatusInfo statusInfo = CertificateUtilities.BuildAuthenticodeStatus(pkcs7Signers, _options?.AuthenticodePolicy);
                                     _certificateEntries.Add(new CertificateEntry(typeKind, certData, pkcs7Signers, pkcs7Error, authenticodeResults, statusInfo));
 
                                     int aligned = Align8(entryLength);
@@ -6681,12 +7629,14 @@ namespace PECoff
                     }
 
                     BuildImportDescriptorInfos();
+                    ResolveExportForwarderChains();
                     ValidateImportExportConsistency();
                     ValidateRelocationHints();
                     ComputeDotNetRuntimeHint();
                     ComputeImportHash();
                     ComputeOverlayInfo(sections);
                     ComputeSectionEntropies(sections);
+                    BuildExceptionDirectorySummary(sections);
                     ComputeSecurityFeatures(isPe32Plus);
                     
                 }
