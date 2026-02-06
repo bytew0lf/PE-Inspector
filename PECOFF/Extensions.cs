@@ -216,6 +216,8 @@ namespace PECoff
         private MemoryStream _ms;
         private VS_VERSIONINFO vi;
         private readonly Dictionary<string, string> _stringValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, Dictionary<string, string>> _stringTables = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<uint> _translations = new List<uint>();
         private uint? _translation;
 
         #region enums
@@ -587,10 +589,19 @@ namespace PECoff
         public VersionInfoDetails ToVersionInfoDetails()
         {
             VersionFixedFileInfo fixedInfo = FixedFileInfo;
+            VersionStringTableInfo[] stringTables = _stringTables
+                .Select(kvp => new VersionStringTableInfo(kvp.Key, new ReadOnlyDictionary<string, string>(kvp.Value)))
+                .ToArray();
+            VersionTranslationInfo[] translations = _translations
+                .Distinct()
+                .Select(BuildTranslationInfo)
+                .ToArray();
             return new VersionInfoDetails(
                 fixedInfo,
                 new ReadOnlyDictionary<string, string>(_stringValues),
+                stringTables,
                 _translation,
+                translations,
                 GetLanguage());
         }
         #endregion
@@ -638,6 +649,24 @@ namespace PECoff
             }
 
             return string.Empty;
+        }
+
+        private VersionTranslationInfo BuildTranslationInfo(uint translationValue)
+        {
+            ushort langId = (ushort)(translationValue & 0xFFFF);
+            ushort codePage = (ushort)((translationValue >> 16) & 0xFFFF);
+            string cultureName = ResolveCultureName(langId);
+            string displayName;
+            if (!string.IsNullOrWhiteSpace(cultureName))
+            {
+                displayName = string.Format("{0} ({1:X4}-{2:X4})", cultureName, langId, codePage);
+            }
+            else
+            {
+                displayName = string.Format("{0:X4}-{1:X4}", langId, codePage);
+            }
+
+            return new VersionTranslationInfo(langId, codePage, translationValue, cultureName, displayName);
         }
 
         private static string ResolveCultureName(ushort langId)
@@ -825,10 +854,10 @@ namespace PECoff
                 return;
             }
 
-            ParseBlock(buffer, offset, buffer.Length);
+            ParseBlock(buffer, offset, buffer.Length, string.Empty, string.Empty);
         }
 
-        private int ParseBlock(byte[] buffer, int offset, int maxOffset)
+        private int ParseBlock(byte[] buffer, int offset, int maxOffset, string parentKey, string stringTableKey)
         {
             if (offset + 6 > buffer.Length || offset >= maxOffset)
             {
@@ -860,6 +889,17 @@ namespace PECoff
             int cursor = keyOffset + keyBytes;
             cursor = Align4(cursor);
 
+            string currentTableKey = stringTableKey;
+            if (string.Equals(parentKey, "StringFileInfo", StringComparison.OrdinalIgnoreCase) &&
+                !string.IsNullOrWhiteSpace(key))
+            {
+                currentTableKey = key.Trim();
+                if (!_stringTables.ContainsKey(currentTableKey))
+                {
+                    _stringTables[currentTableKey] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                }
+            }
+
             int valueByteLength = 0;
             if (wValueLength > 0)
             {
@@ -875,10 +915,46 @@ namespace PECoff
                     {
                         _stringValues[key] = value;
                     }
+
+                    if (!string.IsNullOrWhiteSpace(currentTableKey) &&
+                        !string.Equals(parentKey, "StringFileInfo", StringComparison.OrdinalIgnoreCase) &&
+                        !string.Equals(key, "StringFileInfo", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!_stringTables.TryGetValue(currentTableKey, out Dictionary<string, string> table))
+                        {
+                            table = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            _stringTables[currentTableKey] = table;
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            table[key] = value;
+                        }
+                    }
                 }
                 else if (string.Equals(key, "Translation", StringComparison.OrdinalIgnoreCase) && valueByteLength >= 4)
                 {
-                    _translation = BitConverter.ToUInt32(buffer, cursor);
+                    int count = valueByteLength / 4;
+                    for (int i = 0; i < count; i++)
+                    {
+                        int entryOffset = cursor + (i * 4);
+                        if (entryOffset + 4 > buffer.Length)
+                        {
+                            break;
+                        }
+
+                        uint translation = BitConverter.ToUInt32(buffer, entryOffset);
+                        if (translation == 0)
+                        {
+                            continue;
+                        }
+
+                        _translations.Add(translation);
+                        if (!_translation.HasValue)
+                        {
+                            _translation = translation;
+                        }
+                    }
                 }
             }
 
@@ -887,7 +963,7 @@ namespace PECoff
 
             while (cursor < blockEnd)
             {
-                int next = ParseBlock(buffer, cursor, blockEnd);
+                int next = ParseBlock(buffer, cursor, blockEnd, key, currentTableKey);
                 if (next <= cursor)
                 {
                     break;

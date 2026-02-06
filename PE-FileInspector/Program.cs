@@ -174,6 +174,26 @@ namespace PE_FileInspector
             sb.AppendLine("  Comments: " + Safe(pe.Comments));
             sb.AppendLine("  Private Build: " + Safe(pe.PrivateBuild));
             sb.AppendLine("  Special Build: " + Safe(pe.SpecialBuild));
+            if (pe.VersionInfoDetails != null)
+            {
+                if (pe.VersionInfoDetails.Translations.Count > 0)
+                {
+                    sb.AppendLine("  Translations:");
+                    foreach (VersionTranslationInfo translation in pe.VersionInfoDetails.Translations)
+                    {
+                        sb.AppendLine("    - " + translation.DisplayName);
+                    }
+                }
+
+                if (pe.VersionInfoDetails.StringTables.Count > 0)
+                {
+                    sb.AppendLine("  String Tables:");
+                    foreach (VersionStringTableInfo table in pe.VersionInfoDetails.StringTables)
+                    {
+                        sb.AppendLine("    - " + table.Key + " (" + table.Values.Count.ToString(CultureInfo.InvariantCulture) + " entries)");
+                    }
+                }
+            }
             sb.AppendLine();
 
             sb.AppendLine("PE Analysis:");
@@ -188,6 +208,18 @@ namespace PE_FileInspector
             {
                 sb.AppendLine("  Overlay Start: 0x" + pe.OverlayInfo.StartOffset.ToString("X", CultureInfo.InvariantCulture));
                 sb.AppendLine("  Overlay Size: " + pe.OverlayInfo.Size.ToString(CultureInfo.InvariantCulture));
+            }
+            if (pe.PackingHints.Count > 0)
+            {
+                sb.AppendLine("  Packing Hints:");
+                foreach (PackingHintInfo hint in pe.PackingHints)
+                {
+                    sb.AppendLine("    - " + hint.Kind + ": " + Safe(hint.Name) + " | " + Safe(hint.Evidence));
+                }
+            }
+            else
+            {
+                sb.AppendLine("  Packing Hints: (none)");
             }
             sb.AppendLine("  Optional Header Checksum: 0x" + pe.OptionalHeaderChecksum.ToString("X8", CultureInfo.InvariantCulture));
             sb.AppendLine("  Computed Checksum: 0x" + pe.ComputedChecksum.ToString("X8", CultureInfo.InvariantCulture));
@@ -592,6 +624,14 @@ namespace PE_FileInspector
                                   " | IAT: " + descriptor.IatCount.ToString(CultureInfo.InvariantCulture) +
                                   " | Bound: " + descriptor.IsBound +
                                   " | Stale: " + descriptor.IsBoundStale);
+                    if (descriptor.ApiSetResolution != null && descriptor.ApiSetResolution.IsApiSet)
+                    {
+                        string targets = descriptor.ApiSetResolution.Targets.Count > 0
+                            ? string.Join(", ", descriptor.ApiSetResolution.Targets)
+                            : "(unresolved)";
+                        string source = descriptor.ApiSetResolution.UsedFallback ? " (heuristic)" : string.Empty;
+                        sb.AppendLine("    ApiSet: " + Safe(descriptor.ApiSetResolution.ApiSetName) + " -> " + targets + source);
+                    }
                     if (descriptor.IntOnlyFunctions.Count > 0)
                     {
                         sb.AppendLine("    INT-only: " + string.Join(", ", descriptor.IntOnlyFunctions.Take(10)));
@@ -658,6 +698,14 @@ namespace PE_FileInspector
                                   " | Uses RVA: " + descriptor.UsesRva +
                                   " | Bound: " + descriptor.IsBound +
                                   " | TimeDateStamp: 0x" + descriptor.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                    if (descriptor.ApiSetResolution != null && descriptor.ApiSetResolution.IsApiSet)
+                    {
+                        string targets = descriptor.ApiSetResolution.Targets.Count > 0
+                            ? string.Join(", ", descriptor.ApiSetResolution.Targets)
+                            : "(unresolved)";
+                        string source = descriptor.ApiSetResolution.UsedFallback ? " (heuristic)" : string.Empty;
+                        sb.AppendLine("    ApiSet: " + Safe(descriptor.ApiSetResolution.ApiSetName) + " -> " + targets + source);
+                    }
                     sb.AppendLine("    ModuleHandle RVA: 0x" + descriptor.ModuleHandleRva.ToString("X8", CultureInfo.InvariantCulture));
                     sb.AppendLine("    IAT RVA: 0x" + descriptor.ImportAddressTableRva.ToString("X8", CultureInfo.InvariantCulture));
                     sb.AppendLine("    INT RVA: 0x" + descriptor.ImportNameTableRva.ToString("X8", CultureInfo.InvariantCulture));
@@ -843,6 +891,14 @@ namespace PE_FileInspector
                         {
                             sb.AppendLine("    PDB: " + entry.CodeView.PdbPath);
                         }
+                        if (!string.IsNullOrWhiteSpace(entry.CodeView.PdbFileName))
+                        {
+                            sb.AppendLine("    PDB File: " + entry.CodeView.PdbFileName);
+                        }
+                        if (!string.IsNullOrWhiteSpace(entry.CodeView.PdbId))
+                        {
+                            sb.AppendLine("    PDB Id: " + entry.CodeView.PdbId);
+                        }
                         if (entry.CodeView.Guid != Guid.Empty)
                         {
                             sb.AppendLine("    GUID: " + entry.CodeView.Guid.ToString());
@@ -852,6 +908,11 @@ namespace PE_FileInspector
                             sb.AppendLine("    PDB TimeDateStamp: 0x" + entry.CodeView.PdbTimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
                             sb.AppendLine("    Timestamp Match: " + entry.CodeView.TimeDateStampMatches);
                         }
+                        sb.AppendLine("    RSDS: " + entry.CodeView.IsRsds +
+                                      " | NB10: " + entry.CodeView.IsNb10 +
+                                      " | Valid GUID: " + entry.CodeView.HasValidGuid +
+                                      " | Valid Age: " + entry.CodeView.HasValidAge);
+                        sb.AppendLine("    PDB Path OK: " + entry.CodeView.PdbPathEndsWithPdb);
                     }
                 }
             }
@@ -870,7 +931,25 @@ namespace PE_FileInspector
                 foreach (BaseRelocationBlockInfo block in pe.BaseRelocations)
                 {
                     sb.AppendLine("  - Page RVA: 0x" + block.PageRva.ToString("X8", CultureInfo.InvariantCulture) +
-                                  " | Entries: " + block.EntryCount.ToString(CultureInfo.InvariantCulture));
+                                  " | Entries: " + block.EntryCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Reserved: " + block.ReservedTypeCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | OutOfRange: " + block.OutOfRangeCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Unmapped: " + block.UnmappedCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | PageAligned: " + block.IsPageAligned);
+                }
+
+                if (pe.BaseRelocationSections.Length > 0)
+                {
+                    sb.AppendLine("  By Section:");
+                    foreach (BaseRelocationSectionSummary summary in pe.BaseRelocationSections.OrderBy(s => s.SectionName, StringComparer.OrdinalIgnoreCase))
+                    {
+                        sb.AppendLine("    - " + Safe(summary.SectionName) +
+                                      " | Blocks: " + summary.BlockCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Entries: " + summary.EntryCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Reserved: " + summary.ReservedTypeCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | OutOfRange: " + summary.OutOfRangeCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Unmapped: " + summary.UnmappedCount.ToString(CultureInfo.InvariantCulture));
+                    }
                 }
             }
             sb.AppendLine();

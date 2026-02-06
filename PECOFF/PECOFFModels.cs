@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Linq;
+using System.Text.Json;
 using System.Security.Cryptography.X509Certificates;
 
 namespace PECoff
@@ -34,6 +36,14 @@ namespace PECoff
         Authenticode = 17
     }
 
+    public enum ValidationProfile
+    {
+        Default = 0,
+        Compatibility = 1,
+        Strict = 2,
+        Forensic = 3
+    }
+
     public sealed class ParseIssue
     {
         public ParseIssueCategory Category { get; }
@@ -51,6 +61,7 @@ namespace PECoff
     public sealed class PECOFFOptions
     {
         public bool StrictMode { get; init; }
+        public ValidationProfile ValidationProfile { get; init; }
         public bool EnableAssemblyAnalysis { get; init; } = true;
         public bool ComputeHash { get; init; } = true;
         public bool ComputeImportHash { get; init; } = true;
@@ -59,6 +70,7 @@ namespace PECoff
         public bool ParseCertificateSigners { get; init; } = true;
         public bool ComputeAuthenticode { get; init; } = true;
         public bool UseMemoryMappedFile { get; init; }
+        public string ApiSetSchemaPath { get; init; } = string.Empty;
         public AuthenticodePolicy AuthenticodePolicy { get; init; } = new AuthenticodePolicy();
         public Dictionary<ParseIssueCategory, ParseIssueSeverity> IssuePolicy { get; init; } = new Dictionary<ParseIssueCategory, ParseIssueSeverity>();
         public Action<ParseIssue> IssueCallback { get; init; }
@@ -166,29 +178,53 @@ namespace PECoff
         public Guid Guid { get; }
         public uint Age { get; }
         public string PdbPath { get; }
+        public string PdbFileName { get; }
+        public string PdbId { get; }
         public uint PdbSignature { get; }
         public uint PdbTimeDateStamp { get; }
         public bool HasPdbTimeDateStamp { get; }
         public bool TimeDateStampMatches { get; }
+        public bool IsRsds { get; }
+        public bool IsNb10 { get; }
+        public bool HasValidGuid { get; }
+        public bool HasValidAge { get; }
+        public bool HasPdbPath { get; }
+        public bool PdbPathEndsWithPdb { get; }
 
         public DebugCodeViewInfo(
             string signature,
             Guid guid,
             uint age,
             string pdbPath,
+            string pdbFileName,
+            string pdbId,
             uint pdbSignature,
             uint pdbTimeDateStamp,
             bool hasPdbTimeDateStamp,
-            bool timeDateStampMatches)
+            bool timeDateStampMatches,
+            bool isRsds,
+            bool isNb10,
+            bool hasValidGuid,
+            bool hasValidAge,
+            bool hasPdbPath,
+            bool pdbPathEndsWithPdb)
         {
             Signature = signature ?? string.Empty;
             Guid = guid;
             Age = age;
             PdbPath = pdbPath ?? string.Empty;
+            PdbFileName = pdbFileName ?? string.Empty;
+            PdbId = pdbId ?? string.Empty;
             PdbSignature = pdbSignature;
             PdbTimeDateStamp = pdbTimeDateStamp;
             HasPdbTimeDateStamp = hasPdbTimeDateStamp;
             TimeDateStampMatches = timeDateStampMatches;
+            IsRsds = isRsds;
+            IsNb10 = isNb10;
+            HasValidGuid = hasValidGuid;
+            HasValidAge = hasValidAge;
+            HasPdbPath = hasPdbPath;
+            PdbPathEndsWithPdb = pdbPathEndsWithPdb;
         }
     }
 
@@ -374,13 +410,64 @@ namespace PECoff
         public uint BlockSize { get; }
         public int EntryCount { get; }
         public IReadOnlyList<int> TypeCounts { get; }
+        public int ReservedTypeCount { get; }
+        public int OutOfRangeCount { get; }
+        public int UnmappedCount { get; }
+        public bool IsPageAligned { get; }
 
-        public BaseRelocationBlockInfo(uint pageRva, uint blockSize, int entryCount, int[] typeCounts)
+        public BaseRelocationBlockInfo(
+            uint pageRva,
+            uint blockSize,
+            int entryCount,
+            int[] typeCounts,
+            int reservedTypeCount,
+            int outOfRangeCount,
+            int unmappedCount,
+            bool isPageAligned)
         {
             PageRva = pageRva;
             BlockSize = blockSize;
             EntryCount = entryCount;
             TypeCounts = typeCounts ?? Array.Empty<int>();
+            ReservedTypeCount = reservedTypeCount;
+            OutOfRangeCount = outOfRangeCount;
+            UnmappedCount = unmappedCount;
+            IsPageAligned = isPageAligned;
+        }
+    }
+
+    public sealed class BaseRelocationSectionSummary
+    {
+        public string SectionName { get; }
+        public uint SectionRva { get; }
+        public uint SectionSize { get; }
+        public int BlockCount { get; }
+        public int EntryCount { get; }
+        public IReadOnlyList<int> TypeCounts { get; }
+        public int ReservedTypeCount { get; }
+        public int OutOfRangeCount { get; }
+        public int UnmappedCount { get; }
+
+        public BaseRelocationSectionSummary(
+            string sectionName,
+            uint sectionRva,
+            uint sectionSize,
+            int blockCount,
+            int entryCount,
+            int[] typeCounts,
+            int reservedTypeCount,
+            int outOfRangeCount,
+            int unmappedCount)
+        {
+            SectionName = sectionName ?? string.Empty;
+            SectionRva = sectionRva;
+            SectionSize = sectionSize;
+            BlockCount = blockCount;
+            EntryCount = entryCount;
+            TypeCounts = Array.AsReadOnly(typeCounts ?? Array.Empty<int>());
+            ReservedTypeCount = reservedTypeCount;
+            OutOfRangeCount = outOfRangeCount;
+            UnmappedCount = unmappedCount;
         }
     }
 
@@ -626,19 +713,55 @@ namespace PECoff
     {
         public VersionFixedFileInfo FixedFileInfo { get; }
         public IReadOnlyDictionary<string, string> StringValues { get; }
+        public IReadOnlyList<VersionStringTableInfo> StringTables { get; }
         public uint? Translation { get; }
+        public IReadOnlyList<VersionTranslationInfo> Translations { get; }
         public string TranslationText { get; }
 
         public VersionInfoDetails(
             VersionFixedFileInfo fixedFileInfo,
             IReadOnlyDictionary<string, string> stringValues,
+            VersionStringTableInfo[] stringTables,
             uint? translation,
+            VersionTranslationInfo[] translations,
             string translationText)
         {
             FixedFileInfo = fixedFileInfo;
             StringValues = stringValues ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            StringTables = Array.AsReadOnly(stringTables ?? Array.Empty<VersionStringTableInfo>());
             Translation = translation;
+            Translations = Array.AsReadOnly(translations ?? Array.Empty<VersionTranslationInfo>());
             TranslationText = translationText ?? string.Empty;
+        }
+    }
+
+    public sealed class VersionStringTableInfo
+    {
+        public string Key { get; }
+        public IReadOnlyDictionary<string, string> Values { get; }
+
+        public VersionStringTableInfo(string key, IReadOnlyDictionary<string, string> values)
+        {
+            Key = key ?? string.Empty;
+            Values = values ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    public sealed class VersionTranslationInfo
+    {
+        public ushort LanguageId { get; }
+        public ushort CodePage { get; }
+        public uint Value { get; }
+        public string CultureName { get; }
+        public string DisplayName { get; }
+
+        public VersionTranslationInfo(ushort languageId, ushort codePage, uint value, string cultureName, string displayName)
+        {
+            LanguageId = languageId;
+            CodePage = codePage;
+            Value = value;
+            CultureName = cultureName ?? string.Empty;
+            DisplayName = displayName ?? string.Empty;
         }
     }
 
@@ -869,6 +992,20 @@ namespace PECoff
         }
     }
 
+    public sealed class PackingHintInfo
+    {
+        public string Kind { get; }
+        public string Name { get; }
+        public string Evidence { get; }
+
+        public PackingHintInfo(string kind, string name, string evidence)
+        {
+            Kind = kind ?? string.Empty;
+            Name = name ?? string.Empty;
+            Evidence = evidence ?? string.Empty;
+        }
+    }
+
     public sealed class SectionEntropyInfo
     {
         public string Name { get; }
@@ -927,6 +1064,24 @@ namespace PECoff
         }
     }
 
+    public sealed class ApiSetResolutionInfo
+    {
+        public bool IsApiSet { get; }
+        public bool IsResolved { get; }
+        public bool UsedFallback { get; }
+        public string ApiSetName { get; }
+        public IReadOnlyList<string> Targets { get; }
+
+        public ApiSetResolutionInfo(bool isApiSet, bool isResolved, bool usedFallback, string apiSetName, string[] targets)
+        {
+            IsApiSet = isApiSet;
+            IsResolved = isResolved;
+            UsedFallback = usedFallback;
+            ApiSetName = apiSetName ?? string.Empty;
+            Targets = Array.AsReadOnly(targets ?? Array.Empty<string>());
+        }
+    }
+
     public sealed class ImportDescriptorInfo
     {
         public string DllName { get; }
@@ -940,6 +1095,7 @@ namespace PECoff
         public int IatCount { get; }
         public IReadOnlyList<string> IntOnlyFunctions { get; }
         public IReadOnlyList<string> IatOnlyFunctions { get; }
+        public ApiSetResolutionInfo ApiSetResolution { get; }
 
         public ImportDescriptorInfo(
             string dllName,
@@ -952,7 +1108,8 @@ namespace PECoff
             int intCount,
             int iatCount,
             string[] intOnlyFunctions,
-            string[] iatOnlyFunctions)
+            string[] iatOnlyFunctions,
+            ApiSetResolutionInfo apiSetResolution)
         {
             DllName = dllName ?? string.Empty;
             TimeDateStamp = timeDateStamp;
@@ -965,6 +1122,7 @@ namespace PECoff
             IatCount = iatCount;
             IntOnlyFunctions = Array.AsReadOnly(intOnlyFunctions ?? Array.Empty<string>());
             IatOnlyFunctions = Array.AsReadOnly(iatOnlyFunctions ?? Array.Empty<string>());
+            ApiSetResolution = apiSetResolution ?? new ApiSetResolutionInfo(false, false, false, string.Empty, Array.Empty<string>());
         }
     }
 
@@ -1242,7 +1400,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 1;
+        public const int CurrentSchemaVersion = 2;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -1271,6 +1429,7 @@ namespace PECoff
         public uint SectionAlignment { get; }
         public uint SizeOfHeaders { get; }
         public OverlayInfo OverlayInfo { get; }
+        public IReadOnlyList<PackingHintInfo> PackingHints { get; }
         public IReadOnlyList<SectionEntropyInfo> SectionEntropies { get; }
         public IReadOnlyList<SectionSlackInfo> SectionSlacks { get; }
         public IReadOnlyList<SectionGapInfo> SectionGaps { get; }
@@ -1308,6 +1467,7 @@ namespace PECoff
         public IReadOnlyList<BoundImportEntry> BoundImports { get; }
         public IReadOnlyList<DebugDirectoryEntry> DebugDirectories { get; }
         public IReadOnlyList<BaseRelocationBlockInfo> BaseRelocations { get; }
+        public IReadOnlyList<BaseRelocationSectionSummary> BaseRelocationSections { get; }
         public IReadOnlyList<ExceptionFunctionInfo> ExceptionFunctions { get; }
         public ExceptionDirectorySummary ExceptionSummary { get; }
         public IReadOnlyList<UnwindInfoDetail> UnwindInfoDetails { get; }
@@ -1344,6 +1504,7 @@ namespace PECoff
             uint sectionAlignment,
             uint sizeOfHeaders,
             OverlayInfo overlayInfo,
+            PackingHintInfo[] packingHints,
             SectionEntropyInfo[] sectionEntropies,
             SectionSlackInfo[] sectionSlacks,
             SectionGapInfo[] sectionGaps,
@@ -1381,6 +1542,7 @@ namespace PECoff
             BoundImportEntry[] boundImports,
             DebugDirectoryEntry[] debugDirectories,
             BaseRelocationBlockInfo[] baseRelocations,
+            BaseRelocationSectionSummary[] baseRelocationSections,
             ExceptionFunctionInfo[] exceptionFunctions,
             ExceptionDirectorySummary exceptionSummary,
             UnwindInfoDetail[] unwindInfoDetails,
@@ -1417,6 +1579,7 @@ namespace PECoff
             SectionAlignment = sectionAlignment;
             SizeOfHeaders = sizeOfHeaders;
             OverlayInfo = overlayInfo ?? new OverlayInfo(0, 0);
+            PackingHints = Array.AsReadOnly(packingHints ?? Array.Empty<PackingHintInfo>());
             SectionEntropies = Array.AsReadOnly(sectionEntropies ?? Array.Empty<SectionEntropyInfo>());
             SectionSlacks = Array.AsReadOnly(sectionSlacks ?? Array.Empty<SectionSlackInfo>());
             SectionGaps = Array.AsReadOnly(sectionGaps ?? Array.Empty<SectionGapInfo>());
@@ -1454,6 +1617,7 @@ namespace PECoff
             BoundImports = Array.AsReadOnly(boundImports ?? Array.Empty<BoundImportEntry>());
             DebugDirectories = Array.AsReadOnly(debugDirectories ?? Array.Empty<DebugDirectoryEntry>());
             BaseRelocations = Array.AsReadOnly(baseRelocations ?? Array.Empty<BaseRelocationBlockInfo>());
+            BaseRelocationSections = Array.AsReadOnly(baseRelocationSections ?? Array.Empty<BaseRelocationSectionSummary>());
             ExceptionFunctions = Array.AsReadOnly(exceptionFunctions ?? Array.Empty<ExceptionFunctionInfo>());
             ExceptionSummary = exceptionSummary;
             UnwindInfoDetails = Array.AsReadOnly(unwindInfoDetails ?? Array.Empty<UnwindInfoDetail>());
@@ -1462,6 +1626,120 @@ namespace PECoff
             LoadConfig = loadConfig;
             AssemblyReferences = Array.AsReadOnly(assemblyReferences ?? Array.Empty<string>());
             AssemblyReferenceInfos = Array.AsReadOnly(assemblyReferenceInfos ?? Array.Empty<AssemblyReferenceInfo>());
+        }
+
+        public string ToJsonReport(bool includeBinary = false, bool indented = true)
+        {
+            JsonSerializerOptions options = new JsonSerializerOptions { WriteIndented = indented };
+            object certificateEntries = includeBinary
+                ? (object)CertificateEntries
+                : CertificateEntries.Select(entry => new
+                {
+                    entry.Type,
+                    Size = entry.Data?.Length ?? 0,
+                    entry.Pkcs7Error,
+                    SignerCount = entry.Pkcs7SignerInfos?.Length ?? 0,
+                    entry.AuthenticodeStatus
+                }).ToArray();
+
+            object iconGroups = includeBinary
+                ? (object)IconGroups
+                : IconGroups.Select(group => new
+                {
+                    group.NameId,
+                    group.LanguageId,
+                    group.Entries,
+                    IcoSize = group.IcoData?.Length ?? 0
+                }).ToArray();
+
+            object strongNameSignature = includeBinary
+                ? (object)StrongNameSignature
+                : (StrongNameSignature == null
+                    ? null
+                    : new
+                    {
+                        StrongNameSignature.Rva,
+                        StrongNameSignature.Size,
+                        DataSize = StrongNameSignature.Data?.Length ?? 0
+                    });
+
+            var report = new
+            {
+                SchemaVersion,
+                FilePath,
+                ParseResult,
+                Hash,
+                ImportHash,
+                IsDotNetFile,
+                DotNetRuntimeHint,
+                IsObfuscated,
+                ObfuscationPercentage,
+                FileVersion,
+                ProductVersion,
+                CompanyName,
+                FileDescription,
+                InternalName,
+                OriginalFilename,
+                ProductName,
+                Comments,
+                LegalCopyright,
+                LegalTrademarks,
+                PrivateBuild,
+                SpecialBuild,
+                Language,
+                VersionInfoDetails,
+                FileAlignment,
+                SectionAlignment,
+                SizeOfHeaders,
+                OverlayInfo,
+                PackingHints,
+                SectionEntropies,
+                SectionSlacks,
+                SectionGaps,
+                OptionalHeaderChecksum,
+                ComputedChecksum,
+                IsChecksumValid,
+                TimeDateStamp,
+                TimeDateStampUtc,
+                Subsystem,
+                DllCharacteristics,
+                SecurityFeatures,
+                HasCertificate,
+                CertificateEntries = certificateEntries,
+                Resources,
+                ResourceStringTables,
+                ResourceMessageTables,
+                ResourceDialogs,
+                ResourceAccelerators,
+                ResourceMenus,
+                ResourceToolbars,
+                ResourceManifests,
+                IconGroups = iconGroups,
+                ClrMetadata,
+                StrongNameSignature = strongNameSignature,
+                ReadyToRun,
+                Imports,
+                ImportEntries,
+                ImportDescriptors,
+                DelayImportEntries,
+                DelayImportDescriptors,
+                Exports,
+                ExportEntries,
+                BoundImports,
+                DebugDirectories,
+                BaseRelocations,
+                BaseRelocationSections,
+                ExceptionFunctions,
+                ExceptionSummary,
+                UnwindInfoDetails,
+                RichHeader,
+                TlsInfo,
+                LoadConfig,
+                AssemblyReferences,
+                AssemblyReferenceInfos
+            };
+
+            return JsonSerializer.Serialize(report, options);
         }
     }
 

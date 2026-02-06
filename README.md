@@ -24,11 +24,11 @@ The report contains all analysis details, and any embedded certificates are writ
 The report also includes CLR/.NET metadata when present (runtime version, metadata version, and stream list).
 It now also includes assembly metadata (assembly name/version, MVID, target framework, debuggable attribute) and metadata-based assembly references, plus a runtime hint (IL/Mixed/ReadyToRun).
 Resource string tables and manifests are decoded and included in the report when available.
-The report also includes debug directory entries, base relocations, TLS/load-config data (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, callback resolution), version-info details, icon-group reconstruction (PNG detection), Authenticode digest checks and signer status/policy summaries (RFC3161 timestamps, nested signatures), message tables, dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI, requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/entropy summaries, import descriptor consistency/bind hints, export forwarder resolution hints, section padding analysis, exception directory summaries (unwind counts/details/range validity), and subsystem/security flags when present.
+The report also includes debug directory entries (with CodeView/PDB IDs), base relocation summaries, TLS/load-config data (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, callback resolution), version-info details (string tables + translations), icon-group reconstruction (PNG detection), Authenticode digest checks and signer status/policy summaries (RFC3161 timestamps, nested signatures), message tables, dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI, requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/entropy summaries and packing hints, import descriptor consistency/bind hints with API-set resolution hints, export forwarder resolution hints, section padding analysis, exception directory summaries (unwind counts/details/range validity), and subsystem/security flags when present.
 
 ## Additional functionality
 The PECOFF Library has also the ability to get all imports and exports of the PE-file as well as the certificate.
-It now exposes debug directory entries, base relocations, TLS/load-config metadata (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, callback resolution), icon groups (PNG detection), version-info details, message tables, dialog/menu/toolbar/accelerator parsing, manifest schema details (requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/section entropy and padding info, import descriptor consistency/bind status, export forwarder resolution hints, exception directory summaries (including unwind details), subsystem/DllCharacteristics summaries, Authenticode digest verification results, and signer status/policy summaries (RFC3161 timestamps, nested signatures).
+It now exposes debug directory entries (CodeView/PDB IDs), base relocation details + section summaries, TLS/load-config metadata (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, callback resolution), icon groups (PNG detection), version-info details (string tables + translations), message tables, dialog/menu/toolbar/accelerator parsing, manifest schema details (requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/section entropy and packing hints, import descriptor consistency/bind status with API-set resolution hints, export forwarder resolution hints, exception directory summaries (including unwind details), subsystem/DllCharacteristics summaries, Authenticode digest verification results, and signer status/policy summaries (RFC3161 timestamps, nested signatures).
 
 ### Library API options
 The PECOFF parser supports options and an immutable result snapshot:
@@ -44,9 +44,18 @@ The PECOFF parser supports options and an immutable result snapshot:
 - `PECOFFOptions.AuthenticodePolicy`: configure chain/timestamp/EKU policy checks in signer status (including optional trust-store checks and revocation settings).
 - `PECOFFOptions.IssueCallback`: receive issues as they are raised (warnings/errors) in addition to the collected lists.
 - `PECOFFOptions.PresetFast()` / `PresetDefault()` / `PresetStrictSecurity()`: convenience presets for common configurations.
+- `PECOFFOptions.ValidationProfile`: `Default`, `Compatibility`, `Strict`, `Forensic` severity presets for warnings/errors.
+- `PECOFFOptions.ApiSetSchemaPath`: optional path to an `apisetschema.dll` for precise API-set resolution (otherwise heuristics are used).
 
 You can retrieve a stable snapshot via `pe.Result` or `PECOFF.Parse(path, options)`.
 `PECOFFResult.SchemaVersion` provides a stable DTO schema version for snapshot compatibility.
+
+### JSON report
+For CI/automation, you can emit a JSON report snapshot:
+
+    string json = pe.Result.ToJsonReport();
+
+Set `includeBinary: true` if you want raw byte arrays embedded; the default summarizes binary blobs by size.
 
 ### Snapshot regression tests
 PECOFF.Tests uses a snapshot file for the `testfiles` corpus:

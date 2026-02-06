@@ -252,6 +252,7 @@ namespace PECoff
         public uint ImportNameTableRva { get; }
         public uint BoundImportAddressTableRva { get; }
         public uint UnloadInformationTableRva { get; }
+        public ApiSetResolutionInfo ApiSetResolution { get; }
 
         public DelayImportDescriptorInfo(
             string dllName,
@@ -263,7 +264,8 @@ namespace PECoff
             uint importAddressTableRva,
             uint importNameTableRva,
             uint boundImportAddressTableRva,
-            uint unloadInformationTableRva)
+            uint unloadInformationTableRva,
+            ApiSetResolutionInfo apiSetResolution)
         {
             DllName = dllName ?? string.Empty;
             Attributes = attributes;
@@ -275,6 +277,7 @@ namespace PECoff
             ImportNameTableRva = importNameTableRva;
             BoundImportAddressTableRva = boundImportAddressTableRva;
             UnloadInformationTableRva = unloadInformationTableRva;
+            ApiSetResolution = apiSetResolution ?? new ApiSetResolutionInfo(false, false, false, string.Empty, Array.Empty<string>());
         }
     }
 
@@ -416,6 +419,8 @@ namespace PECoff
         private readonly ParseResult _parseResult = new ParseResult();
         private readonly PECOFFOptions _options;
         private readonly string _filePath;
+        private ApiSetSchema _apiSetSchema;
+        private bool _apiSetSchemaLoaded;
 
         private sealed class ImportDescriptorInternal
         {
@@ -1690,6 +1695,12 @@ namespace PECoff
             get { return _baseRelocations.ToArray(); }
         }
 
+        private readonly List<BaseRelocationSectionSummary> _baseRelocationSections = new List<BaseRelocationSectionSummary>();
+        public BaseRelocationSectionSummary[] BaseRelocationSections
+        {
+            get { return _baseRelocationSections.ToArray(); }
+        }
+
         private readonly List<ExceptionFunctionInfo> _exceptionFunctions = new List<ExceptionFunctionInfo>();
         public ExceptionFunctionInfo[] ExceptionFunctions
         {
@@ -1724,6 +1735,12 @@ namespace PECoff
         public LoadConfigInfo LoadConfig
         {
             get { return _loadConfig; }
+        }
+
+        private readonly List<PackingHintInfo> _packingHints = new List<PackingHintInfo>();
+        public PackingHintInfo[] PackingHints
+        {
+            get { return _packingHints.ToArray(); }
         }
 
         private List<AssemblyReferenceInfo> _assemblyReferenceInfos = new List<AssemblyReferenceInfo>();
@@ -1934,6 +1951,337 @@ namespace PECoff
             return false;
         }
 
+        private sealed class ApiSetSchema
+        {
+            public Dictionary<string, string[]> Map { get; }
+
+            public ApiSetSchema(Dictionary<string, string[]> map)
+            {
+                Map = map ?? new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        private ApiSetSchema EnsureApiSetSchema()
+        {
+            if (_apiSetSchemaLoaded)
+            {
+                return _apiSetSchema;
+            }
+
+            _apiSetSchemaLoaded = true;
+            if (_options == null || string.IsNullOrWhiteSpace(_options.ApiSetSchemaPath))
+            {
+                return null;
+            }
+
+            string path = _options.ApiSetSchemaPath;
+            if (!File.Exists(path))
+            {
+                Warn(ParseIssueCategory.Imports, $"API set schema file not found: {path}");
+                return null;
+            }
+
+            try
+            {
+                byte[] data = File.ReadAllBytes(path);
+                if (TryParseApiSetSchema(data, out ApiSetSchema schema, out string error))
+                {
+                    _apiSetSchema = schema;
+                }
+                else if (!string.IsNullOrWhiteSpace(error))
+                {
+                    Warn(ParseIssueCategory.Imports, $"API set schema parse failed: {error}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Warn(ParseIssueCategory.Imports, $"API set schema load failed: {ex.Message}");
+            }
+
+            return _apiSetSchema;
+        }
+
+        private ApiSetResolutionInfo ResolveApiSetResolution(string dllName)
+        {
+            if (!IsApiSetName(dllName))
+            {
+                return new ApiSetResolutionInfo(false, false, false, string.Empty, Array.Empty<string>());
+            }
+
+            string normalized = NormalizeApiSetName(dllName);
+            ApiSetSchema schema = EnsureApiSetSchema();
+            if (schema != null && schema.Map.TryGetValue(normalized, out string[] targets) && targets.Length > 0)
+            {
+                return new ApiSetResolutionInfo(true, true, false, normalized, targets);
+            }
+
+            string[] fallbackTargets = GuessApiSetTargets(normalized);
+            bool resolved = fallbackTargets.Length > 0;
+            return new ApiSetResolutionInfo(true, resolved, true, normalized, fallbackTargets);
+        }
+
+        private static bool IsApiSetName(string dllName)
+        {
+            if (string.IsNullOrWhiteSpace(dllName))
+            {
+                return false;
+            }
+
+            string name = dllName.Trim();
+            return name.StartsWith("api-ms-", StringComparison.OrdinalIgnoreCase) ||
+                   name.StartsWith("ext-ms-", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeApiSetName(string dllName)
+        {
+            string name = dllName?.Trim().ToLowerInvariant() ?? string.Empty;
+            if (string.IsNullOrEmpty(name))
+            {
+                return string.Empty;
+            }
+
+            if (!name.EndsWith(".dll", StringComparison.Ordinal))
+            {
+                name += ".dll";
+            }
+
+            return name;
+        }
+
+        private static string[] GuessApiSetTargets(string apiSetName)
+        {
+            if (string.IsNullOrWhiteSpace(apiSetName))
+            {
+                return Array.Empty<string>();
+            }
+
+            string name = apiSetName.ToLowerInvariant();
+            if (name.Contains("crt-"))
+            {
+                return new[] { "ucrtbase.dll" };
+            }
+
+            if (name.Contains("ntuser") || name.Contains("user"))
+            {
+                return new[] { "user32.dll" };
+            }
+
+            if (name.Contains("gdi"))
+            {
+                return new[] { "gdi32.dll" };
+            }
+
+            if (name.Contains("crypt"))
+            {
+                return new[] { "crypt32.dll" };
+            }
+
+            if (name.Contains("shell"))
+            {
+                return new[] { "shell32.dll" };
+            }
+
+            if (name.Contains("advapi"))
+            {
+                return new[] { "advapi32.dll" };
+            }
+
+            if (name.StartsWith("api-ms-win-core-", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("api-ms-win-", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("ext-ms-win-", StringComparison.OrdinalIgnoreCase))
+            {
+                return new[] { "kernelbase.dll" };
+            }
+
+            return Array.Empty<string>();
+        }
+
+        private static bool TryParseApiSetSchema(byte[] data, out ApiSetSchema schema, out string error)
+        {
+            schema = null;
+            error = string.Empty;
+            if (data == null || data.Length < 0x100)
+            {
+                error = "File too small.";
+                return false;
+            }
+
+            if (!TryFindApiSetSection(data, out int sectionOffset, out int sectionSize))
+            {
+                error = "API set section not found.";
+                return false;
+            }
+
+            if (sectionOffset < 0 || sectionSize <= 0 || sectionOffset + sectionSize > data.Length)
+            {
+                error = "API set section out of bounds.";
+                return false;
+            }
+
+            ReadOnlySpan<byte> span = new ReadOnlySpan<byte>(data, sectionOffset, sectionSize);
+            if (span.Length < 28)
+            {
+                error = "API set section too small.";
+                return false;
+            }
+
+            uint version = ReadUInt32(span, 0);
+            uint count = ReadUInt32(span, 12);
+            uint entryOffset = ReadUInt32(span, 16);
+
+            if (count == 0 || entryOffset >= span.Length)
+            {
+                error = "API set header invalid.";
+                return false;
+            }
+
+            int entrySize = 24;
+            int valueSize = 20;
+            Dictionary<string, string[]> map = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+
+            for (int i = 0; i < count; i++)
+            {
+                int entryPos = checked((int)entryOffset + (i * entrySize));
+                if (entryPos < 0 || entryPos + entrySize > span.Length)
+                {
+                    break;
+                }
+
+                uint nameOffset = ReadUInt32(span, entryPos + 4);
+                uint nameLength = ReadUInt32(span, entryPos + 8);
+                uint valueOffset = ReadUInt32(span, entryPos + 16);
+                uint valueCount = ReadUInt32(span, entryPos + 20);
+
+                if (nameOffset >= span.Length || nameLength == 0)
+                {
+                    continue;
+                }
+
+                string name = ReadUnicodeString(span, (int)nameOffset, (int)nameLength);
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    continue;
+                }
+
+                if (!name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                {
+                    name += ".dll";
+                }
+
+                List<string> targets = new List<string>();
+                for (int j = 0; j < valueCount; j++)
+                {
+                    int valuePos = checked((int)valueOffset + (j * valueSize));
+                    if (valuePos < 0 || valuePos + valueSize > span.Length)
+                    {
+                        break;
+                    }
+
+                    uint valueNameOffset = ReadUInt32(span, valuePos + 4);
+                    uint valueNameLength = ReadUInt32(span, valuePos + 8);
+                    uint valueOffsetEntry = ReadUInt32(span, valuePos + 12);
+                    uint valueLengthEntry = ReadUInt32(span, valuePos + 16);
+
+                    string target = string.Empty;
+                    if (valueOffsetEntry < span.Length && valueLengthEntry > 0)
+                    {
+                        target = ReadUnicodeString(span, (int)valueOffsetEntry, (int)valueLengthEntry);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(target) && valueNameOffset < span.Length && valueNameLength > 0)
+                    {
+                        target = ReadUnicodeString(span, (int)valueNameOffset, (int)valueNameLength);
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(target))
+                    {
+                        if (!target.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                        {
+                            target += ".dll";
+                        }
+
+                        targets.Add(target);
+                    }
+                }
+
+                if (targets.Count == 0)
+                {
+                    continue;
+                }
+
+                map[name.ToLowerInvariant()] = targets.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            }
+
+            if (map.Count == 0)
+            {
+                error = $"No API set entries parsed (version {version}).";
+                return false;
+            }
+
+            schema = new ApiSetSchema(map);
+            return true;
+        }
+
+        private static bool TryFindApiSetSection(byte[] data, out int sectionOffset, out int sectionSize)
+        {
+            sectionOffset = 0;
+            sectionSize = 0;
+
+            if (data.Length < 0x40 || data[0] != 'M' || data[1] != 'Z')
+            {
+                return false;
+            }
+
+            int peOffset = (int)ReadUInt32(data, 0x3C);
+            if (peOffset <= 0 || peOffset + 0x18 > data.Length)
+            {
+                return false;
+            }
+
+            if (data[peOffset] != 'P' || data[peOffset + 1] != 'E')
+            {
+                return false;
+            }
+
+            int fileHeaderOffset = peOffset + 4;
+            ushort numberOfSections = (ushort)ReadUInt16(data, fileHeaderOffset + 2);
+            ushort sizeOfOptionalHeader = (ushort)ReadUInt16(data, fileHeaderOffset + 16);
+            int sectionHeaderOffset = fileHeaderOffset + 20 + sizeOfOptionalHeader;
+
+            if (sectionHeaderOffset <= 0 || sectionHeaderOffset + (numberOfSections * 40) > data.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < numberOfSections; i++)
+            {
+                int offset = sectionHeaderOffset + (i * 40);
+                string name = Encoding.ASCII.GetString(data, offset, 8).TrimEnd('\0', ' ');
+                int size = (int)ReadUInt32(data, offset + 16);
+                int pointer = (int)ReadUInt32(data, offset + 20);
+
+                if (string.Equals(name, ".apiset", StringComparison.OrdinalIgnoreCase))
+                {
+                    sectionOffset = pointer;
+                    sectionSize = size;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string ReadUnicodeString(ReadOnlySpan<byte> buffer, int offset, int byteLength)
+        {
+            if (offset < 0 || byteLength <= 0 || offset + byteLength > buffer.Length)
+            {
+                return string.Empty;
+            }
+
+            string value = Encoding.Unicode.GetString(buffer.Slice(offset, byteLength)).TrimEnd('\0');
+            return value;
+        }
+
         public PECOFFResult ToResult()
         {
             return new PECOFFResult(
@@ -1963,6 +2311,7 @@ namespace PECoff
                 _sectionAlignment,
                 _sizeOfHeaders,
                 _overlayInfo,
+                _packingHints.ToArray(),
                 _sectionEntropies.ToArray(),
                 _sectionSlacks.ToArray(),
                 _sectionGaps.ToArray(),
@@ -2000,6 +2349,7 @@ namespace PECoff
                 _boundImports.ToArray(),
                 _debugDirectories.ToArray(),
                 _baseRelocations.ToArray(),
+                _baseRelocationSections.ToArray(),
                 _exceptionFunctions.ToArray(),
                 _exceptionSummary,
                 _unwindInfoDetails.ToArray(),
@@ -2547,6 +2897,139 @@ namespace PECoff
                     ArrayPool<byte>.Shared.Return(buffer);
                 }
             }
+        }
+
+        private void ComputePackingHints(List<IMAGE_SECTION_HEADER> sections)
+        {
+            _packingHints.Clear();
+            if (PEFileStream == null || sections == null)
+            {
+                return;
+            }
+
+            byte[] headerBuffer = new byte[5];
+            foreach (IMAGE_SECTION_HEADER section in sections)
+            {
+                string name = NormalizeSectionName(section.Section);
+                if (name.StartsWith("UPX", StringComparison.OrdinalIgnoreCase))
+                {
+                    _packingHints.Add(new PackingHintInfo("Section", name, "Section name suggests UPX packing."));
+                }
+
+                if (section.SizeOfRawData >= 5 && TrySetPosition(section.PointerToRawData, 5))
+                {
+                    int read = PEFileStream.Read(headerBuffer, 0, headerBuffer.Length);
+                    if (read == headerBuffer.Length && IsLzmaHeader(headerBuffer))
+                    {
+                        _packingHints.Add(new PackingHintInfo("Section", name, "LZMA header detected in section."));
+                    }
+                }
+            }
+
+            foreach (SectionEntropyInfo entropy in _sectionEntropies)
+            {
+                if (entropy.RawSize >= 1024 && entropy.Entropy >= 7.2)
+                {
+                    _packingHints.Add(new PackingHintInfo(
+                        "SectionEntropy",
+                        entropy.Name,
+                        string.Format(CultureInfo.InvariantCulture, "High entropy ({0:F2}).", entropy.Entropy)));
+                }
+            }
+
+            if (_overlayInfo != null && _overlayInfo.HasOverlay)
+            {
+                long size = _overlayInfo.Size;
+                int sampleSize = (int)Math.Min(64, size);
+                if (sampleSize > 0 && TrySetPosition(_overlayInfo.StartOffset, sampleSize))
+                {
+                    byte[] overlaySample = new byte[sampleSize];
+                    ReadExactly(PEFileStream, overlaySample, 0, overlaySample.Length);
+                    AddOverlaySignatureHints(overlaySample);
+                }
+            }
+        }
+
+        private void AddOverlaySignatureHints(ReadOnlySpan<byte> data)
+        {
+            foreach (PackingHintInfo hint in GetOverlaySignatureHints(data))
+            {
+                _packingHints.Add(hint);
+            }
+        }
+
+        internal static PackingHintInfo[] DetectOverlayHintsForTest(byte[] data)
+        {
+            if (data == null)
+            {
+                return Array.Empty<PackingHintInfo>();
+            }
+
+            return GetOverlaySignatureHints(data);
+        }
+
+        private static PackingHintInfo[] GetOverlaySignatureHints(ReadOnlySpan<byte> data)
+        {
+            List<PackingHintInfo> hints = new List<PackingHintInfo>();
+            if (data.Length < 4)
+            {
+                return hints.ToArray();
+            }
+
+            if (HasPrefix(data, new byte[] { 0x55, 0x50, 0x58, 0x21 })) // "UPX!"
+            {
+                hints.Add(new PackingHintInfo("Overlay", "UPX", "UPX overlay signature detected."));
+            }
+
+            if (HasPrefix(data, new byte[] { 0x50, 0x4B, 0x03, 0x04 })) // ZIP
+            {
+                hints.Add(new PackingHintInfo("Overlay", "ZIP", "ZIP archive signature detected."));
+            }
+
+            if (HasPrefix(data, new byte[] { 0x52, 0x61, 0x72, 0x21 })) // "Rar!"
+            {
+                hints.Add(new PackingHintInfo("Overlay", "RAR", "RAR archive signature detected."));
+            }
+
+            if (HasPrefix(data, new byte[] { 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C })) // 7z
+            {
+                hints.Add(new PackingHintInfo("Overlay", "7-Zip", "7z archive signature detected."));
+            }
+
+            if (IsLzmaHeader(data))
+            {
+                hints.Add(new PackingHintInfo("Overlay", "LZMA", "LZMA header detected."));
+            }
+
+            return hints.ToArray();
+        }
+
+        private static bool IsLzmaHeader(ReadOnlySpan<byte> data)
+        {
+            return data.Length >= 5 &&
+                   data[0] == 0x5D &&
+                   data[1] == 0x00 &&
+                   data[2] == 0x00 &&
+                   data[3] == 0x80 &&
+                   data[4] == 0x00;
+        }
+
+        private static bool HasPrefix(ReadOnlySpan<byte> data, byte[] signature)
+        {
+            if (signature == null || data.Length < signature.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < signature.Length; i++)
+            {
+                if (data[i] != signature[i])
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static double ComputeShannonEntropy(ReadOnlySpan<byte> data)
@@ -5312,6 +5795,7 @@ namespace PECoff
                     imports.Add(dllName);
                 }
 
+                ApiSetResolutionInfo apiSetResolution = ResolveApiSetResolution(dllName);
                 _delayImportDescriptors.Add(new DelayImportDescriptorInfo(
                     dllName,
                     descriptor.Attributes,
@@ -5322,7 +5806,8 @@ namespace PECoff
                     importAddressTableRva,
                     importNameTableRva,
                     boundImportAddressTableRva,
-                    unloadInformationTableRva));
+                    unloadInformationTableRva,
+                    apiSetResolution));
 
                 if (importNameTableRva != 0)
                 {
@@ -5484,6 +5969,9 @@ namespace PECoff
                 return;
             }
 
+            _baseRelocationSections.Clear();
+            Dictionary<string, BaseRelocationSectionAccumulator> summaries = new Dictionary<string, BaseRelocationSectionAccumulator>(StringComparer.OrdinalIgnoreCase);
+
             int headerSize = Marshal.SizeOf(typeof(IMAGE_BASE_RELOCATION));
             long cursor = tableOffset;
             while (cursor + headerSize <= end)
@@ -5504,6 +5992,11 @@ namespace PECoff
                     break;
                 }
 
+                if ((header.SizeOfBlock - headerSize) % 2 != 0)
+                {
+                    Warn(ParseIssueCategory.Relocations, "Base relocation block size is not aligned to 16-bit entries.");
+                }
+
                 long blockEnd = cursor + header.SizeOfBlock;
                 if (blockEnd > end)
                 {
@@ -5513,6 +6006,22 @@ namespace PECoff
 
                 int entryCount = (int)((header.SizeOfBlock - headerSize) / 2);
                 int[] typeCounts = new int[16];
+                int reservedTypeCount = 0;
+                int outOfRangeCount = 0;
+                int unmappedCount = 0;
+                bool isPageAligned = _sectionAlignment > 0
+                    ? (header.VirtualAddress % _sectionAlignment) == 0
+                    : (header.VirtualAddress % 0x1000) == 0;
+                if (!isPageAligned)
+                {
+                    Warn(ParseIssueCategory.Relocations, $"Base relocation page RVA 0x{header.VirtualAddress:X} is not aligned.");
+                }
+
+                bool blockMapped = TryGetSectionByRva(sections, header.VirtualAddress, out IMAGE_SECTION_HEADER blockSection);
+                string blockSectionName = blockMapped ? NormalizeSectionName(blockSection.Section) : "(unmapped)";
+                uint blockSectionRva = blockMapped ? blockSection.VirtualAddress : 0;
+                uint blockSectionSize = blockMapped ? Math.Max(blockSection.VirtualSize, blockSection.SizeOfRawData) : 0;
+
                 for (int i = 0; i < entryCount; i++)
                 {
                     if (!TrySetPosition(cursor + headerSize + (i * 2), 2))
@@ -5527,11 +6036,128 @@ namespace PECoff
                     {
                         typeCounts[type]++;
                     }
+
+                    if (type > 10)
+                    {
+                        reservedTypeCount++;
+                    }
+
+                    if (_sizeOfImage != 0)
+                    {
+                        uint entryRva = header.VirtualAddress + (uint)(entry & 0x0FFF);
+                        if (entryRva >= _sizeOfImage)
+                        {
+                            outOfRangeCount++;
+                        }
+                    }
                 }
 
-                _baseRelocations.Add(new BaseRelocationBlockInfo(header.VirtualAddress, header.SizeOfBlock, entryCount, typeCounts));
+                if (!blockMapped)
+                {
+                    unmappedCount = entryCount;
+                }
+
+                if (reservedTypeCount > 0)
+                {
+                    Warn(ParseIssueCategory.Relocations, $"Base relocation block at 0x{header.VirtualAddress:X} contains reserved relocation types.");
+                }
+
+                if (outOfRangeCount > 0)
+                {
+                    Warn(ParseIssueCategory.Relocations, $"Base relocation block at 0x{header.VirtualAddress:X} contains entries outside SizeOfImage.");
+                }
+
+                _baseRelocations.Add(new BaseRelocationBlockInfo(
+                    header.VirtualAddress,
+                    header.SizeOfBlock,
+                    entryCount,
+                    typeCounts,
+                    reservedTypeCount,
+                    outOfRangeCount,
+                    unmappedCount,
+                    isPageAligned));
+
+                BaseRelocationSectionAccumulator accumulator = GetOrCreateRelocationSummary(summaries, blockSectionName, blockSectionRva, blockSectionSize);
+                accumulator.BlockCount++;
+                accumulator.EntryCount += entryCount;
+                accumulator.ReservedTypeCount += reservedTypeCount;
+                accumulator.OutOfRangeCount += outOfRangeCount;
+                accumulator.UnmappedCount += unmappedCount;
+                for (int i = 0; i < typeCounts.Length; i++)
+                {
+                    accumulator.TypeCounts[i] += typeCounts[i];
+                }
                 cursor = blockEnd;
             }
+
+            if (summaries.Count > 0)
+            {
+                foreach (BaseRelocationSectionAccumulator accumulator in summaries.Values)
+                {
+                    _baseRelocationSections.Add(new BaseRelocationSectionSummary(
+                        accumulator.SectionName,
+                        accumulator.SectionRva,
+                        accumulator.SectionSize,
+                        accumulator.BlockCount,
+                        accumulator.EntryCount,
+                        accumulator.TypeCounts,
+                        accumulator.ReservedTypeCount,
+                        accumulator.OutOfRangeCount,
+                        accumulator.UnmappedCount));
+                }
+            }
+        }
+
+        private sealed class BaseRelocationSectionAccumulator
+        {
+            public string SectionName { get; }
+            public uint SectionRva { get; }
+            public uint SectionSize { get; }
+            public int BlockCount { get; set; }
+            public int EntryCount { get; set; }
+            public int[] TypeCounts { get; } = new int[16];
+            public int ReservedTypeCount { get; set; }
+            public int OutOfRangeCount { get; set; }
+            public int UnmappedCount { get; set; }
+
+            public BaseRelocationSectionAccumulator(string sectionName, uint sectionRva, uint sectionSize)
+            {
+                SectionName = sectionName ?? string.Empty;
+                SectionRva = sectionRva;
+                SectionSize = sectionSize;
+            }
+        }
+
+        private static BaseRelocationSectionAccumulator GetOrCreateRelocationSummary(
+            Dictionary<string, BaseRelocationSectionAccumulator> summaries,
+            string sectionName,
+            uint sectionRva,
+            uint sectionSize)
+        {
+            string key = string.Concat(sectionName, "@", sectionRva.ToString("X", CultureInfo.InvariantCulture));
+            if (!summaries.TryGetValue(key, out BaseRelocationSectionAccumulator accumulator))
+            {
+                accumulator = new BaseRelocationSectionAccumulator(sectionName, sectionRva, sectionSize);
+                summaries[key] = accumulator;
+            }
+
+            return accumulator;
+        }
+
+        private static string NormalizeSectionName(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                return string.Empty;
+            }
+
+            int nullIndex = name.IndexOf('\0');
+            if (nullIndex >= 0)
+            {
+                name = name.Substring(0, nullIndex);
+            }
+
+            return name.Trim();
         }
 
         private void ParseExceptionDirectory(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
@@ -5920,6 +6546,32 @@ namespace PECoff
                         if (TryParseCodeViewInfo(data, entry.TimeDateStamp, out DebugCodeViewInfo parsed))
                         {
                             codeView = parsed;
+                            if (parsed.IsRsds)
+                            {
+                                if (!parsed.HasValidGuid)
+                                {
+                                    Warn(ParseIssueCategory.Debug, "CodeView RSDS entry has an empty GUID.");
+                                }
+
+                                if (!parsed.HasValidAge)
+                                {
+                                    Warn(ParseIssueCategory.Debug, "CodeView RSDS entry has an invalid age.");
+                                }
+                            }
+
+                            if (parsed.IsNb10 && parsed.HasPdbTimeDateStamp && !parsed.TimeDateStampMatches)
+                            {
+                                Warn(ParseIssueCategory.Debug, "CodeView NB10 timestamp does not match debug directory timestamp.");
+                            }
+
+                            if (!parsed.HasPdbPath)
+                            {
+                                Warn(ParseIssueCategory.Debug, "CodeView entry is missing a PDB path.");
+                            }
+                            else if (!parsed.PdbPathEndsWithPdb)
+                            {
+                                Warn(ParseIssueCategory.Debug, "CodeView PDB path does not end with .pdb.");
+                            }
                         }
                     }
                 }
@@ -5957,7 +6609,29 @@ namespace PECoff
                 Guid guid = new Guid(span.Slice(4, 16));
                 uint age = ReadUInt32(span, 20);
                 string path = ReadNullTerminatedAscii(span, 24, out int _);
-                info = new DebugCodeViewInfo(signature, guid, age, path, 0, 0, false, false);
+                string fileName = GetFileNameFromPath(path);
+                bool hasGuid = guid != Guid.Empty;
+                bool hasAge = age > 0;
+                bool hasPath = !string.IsNullOrWhiteSpace(path);
+                bool pathEndsWithPdb = path.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase);
+                string pdbId = hasGuid ? string.Concat(guid.ToString("N"), age.ToString(CultureInfo.InvariantCulture)) : string.Empty;
+                info = new DebugCodeViewInfo(
+                    signature,
+                    guid,
+                    age,
+                    path,
+                    fileName,
+                    pdbId,
+                    0,
+                    0,
+                    false,
+                    false,
+                    true,
+                    false,
+                    hasGuid,
+                    hasAge,
+                    hasPath,
+                    pathEndsWithPdb);
                 return true;
             }
 
@@ -5968,11 +6642,49 @@ namespace PECoff
                 uint age = ReadUInt32(span, 12);
                 string path = ReadNullTerminatedAscii(span, 16, out int _);
                 bool matches = timeDateStamp != 0 && timeDateStamp == debugTimeDateStamp;
-                info = new DebugCodeViewInfo(signature, Guid.Empty, age, path, pdbSignature, timeDateStamp, true, matches);
+                string fileName = GetFileNameFromPath(path);
+                bool hasAge = age > 0;
+                bool hasPath = !string.IsNullOrWhiteSpace(path);
+                bool pathEndsWithPdb = path.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase);
+                string pdbId = pdbSignature != 0 ? string.Concat(pdbSignature.ToString("X8", CultureInfo.InvariantCulture), age.ToString(CultureInfo.InvariantCulture)) : string.Empty;
+                info = new DebugCodeViewInfo(
+                    signature,
+                    Guid.Empty,
+                    age,
+                    path,
+                    fileName,
+                    pdbId,
+                    pdbSignature,
+                    timeDateStamp,
+                    true,
+                    matches,
+                    false,
+                    true,
+                    false,
+                    hasAge,
+                    hasPath,
+                    pathEndsWithPdb);
                 return true;
             }
 
             return false;
+        }
+
+        private static string GetFileNameFromPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return string.Empty;
+            }
+
+            try
+            {
+                return Path.GetFileName(path);
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
         }
 
         private void ParseTlsDirectory(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections, bool isPe32Plus, ulong imageBase)
@@ -7259,6 +7971,12 @@ namespace PECoff
                     Warn(ParseIssueCategory.Imports, $"Bound import for {descriptor.DllName} is stale (timestamp mismatch).");
                 }
 
+                ApiSetResolutionInfo apiSetResolution = ResolveApiSetResolution(descriptor.DllName);
+                if (apiSetResolution.IsApiSet && !apiSetResolution.IsResolved)
+                {
+                    Warn(ParseIssueCategory.Imports, $"API set import {descriptor.DllName} could not be resolved.");
+                }
+
                 _importDescriptors.Add(new ImportDescriptorInfo(
                     descriptor.DllName,
                     descriptor.TimeDateStamp,
@@ -7270,7 +7988,8 @@ namespace PECoff
                     intCount,
                     iatCount,
                     intOnly,
-                    iatOnly));
+                    iatOnly,
+                    apiSetResolution));
             }
         }
 
@@ -7344,6 +8063,12 @@ namespace PECoff
                     return policySeverity;
                 }
 
+                if (_options.ValidationProfile != ValidationProfile.Default &&
+                    TryGetProfileSeverity(_options.ValidationProfile, category, defaultSeverity, out ParseIssueSeverity profileSeverity))
+                {
+                    defaultSeverity = profileSeverity;
+                }
+
                 if (_options.StrictMode && defaultSeverity == ParseIssueSeverity.Warning)
                 {
                     return ParseIssueSeverity.Error;
@@ -7351,6 +8076,71 @@ namespace PECoff
             }
 
             return defaultSeverity;
+        }
+
+        private static bool TryGetProfileSeverity(
+            ValidationProfile profile,
+            ParseIssueCategory category,
+            ParseIssueSeverity defaultSeverity,
+            out ParseIssueSeverity result)
+        {
+            result = defaultSeverity;
+            if (defaultSeverity == ParseIssueSeverity.Ignore)
+            {
+                return false;
+            }
+
+            switch (profile)
+            {
+                case ValidationProfile.Strict:
+                    if (defaultSeverity == ParseIssueSeverity.Warning &&
+                        (category == ParseIssueCategory.Header ||
+                         category == ParseIssueCategory.OptionalHeader ||
+                         category == ParseIssueCategory.Sections ||
+                         category == ParseIssueCategory.Imports ||
+                         category == ParseIssueCategory.Exports ||
+                         category == ParseIssueCategory.Resources ||
+                         category == ParseIssueCategory.Relocations ||
+                         category == ParseIssueCategory.CLR ||
+                         category == ParseIssueCategory.Metadata ||
+                         category == ParseIssueCategory.Checksum ||
+                         category == ParseIssueCategory.Authenticode))
+                    {
+                        result = ParseIssueSeverity.Error;
+                        return true;
+                    }
+                    break;
+                case ValidationProfile.Compatibility:
+                    if (defaultSeverity == ParseIssueSeverity.Error &&
+                        (category == ParseIssueCategory.Resources ||
+                         category == ParseIssueCategory.Debug ||
+                         category == ParseIssueCategory.Relocations ||
+                         category == ParseIssueCategory.Authenticode ||
+                         category == ParseIssueCategory.Checksum ||
+                         category == ParseIssueCategory.AssemblyAnalysis))
+                    {
+                        result = ParseIssueSeverity.Warning;
+                        return true;
+                    }
+                    break;
+                case ValidationProfile.Forensic:
+                    if (defaultSeverity == ParseIssueSeverity.Error &&
+                        (category == ParseIssueCategory.Resources ||
+                         category == ParseIssueCategory.Debug ||
+                         category == ParseIssueCategory.Relocations ||
+                         category == ParseIssueCategory.Authenticode ||
+                         category == ParseIssueCategory.Checksum ||
+                         category == ParseIssueCategory.AssemblyAnalysis ||
+                         category == ParseIssueCategory.Imports ||
+                         category == ParseIssueCategory.Exports))
+                    {
+                        result = ParseIssueSeverity.Warning;
+                        return true;
+                    }
+                    break;
+            }
+
+            return false;
         }
 
         private void Fail(string message)
@@ -8139,6 +8929,7 @@ namespace PECoff
                     ComputeImportHash();
                     ComputeOverlayInfo(sections);
                     ComputeSectionEntropies(sections);
+                    ComputePackingHints(sections);
                     BuildExceptionDirectorySummary(sections);
                     ComputeSecurityFeatures(isPe32Plus);
                     
