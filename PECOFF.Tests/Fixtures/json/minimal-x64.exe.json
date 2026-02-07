@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 16,
+  "SchemaVersion": 17,
   "FilePath": "minimal-x64.exe",
   "ParseResult": {
     "Errors": [],
@@ -38,6 +38,7 @@
     "Size": 0,
     "HasOverlay": false
   },
+  "OverlayContainers": [],
   "PackingHints": [],
   "SectionEntropies": [
     {

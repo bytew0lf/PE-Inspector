@@ -2381,6 +2381,67 @@ namespace PECoff
         }
     }
 
+    public sealed class OverlayContainerEntry
+    {
+        public string Name { get; }
+        public long CompressedSize { get; }
+        public long UncompressedSize { get; }
+        public string CompressionMethod { get; }
+        public ushort Flags { get; }
+        public bool IsDirectory { get; }
+        public string Notes { get; }
+
+        public OverlayContainerEntry(
+            string name,
+            long compressedSize,
+            long uncompressedSize,
+            string compressionMethod,
+            ushort flags,
+            bool isDirectory,
+            string notes)
+        {
+            Name = name ?? string.Empty;
+            CompressedSize = compressedSize < 0 ? 0 : compressedSize;
+            UncompressedSize = uncompressedSize < 0 ? 0 : uncompressedSize;
+            CompressionMethod = compressionMethod ?? string.Empty;
+            Flags = flags;
+            IsDirectory = isDirectory;
+            Notes = notes ?? string.Empty;
+        }
+    }
+
+    public sealed class OverlayContainerInfo
+    {
+        public string Type { get; }
+        public string Version { get; }
+        public long Offset { get; }
+        public long Size { get; }
+        public int EntryCount { get; }
+        public bool IsTruncated { get; }
+        public string Notes { get; }
+        public IReadOnlyList<OverlayContainerEntry> Entries { get; }
+
+        public OverlayContainerInfo(
+            string type,
+            string version,
+            long offset,
+            long size,
+            int entryCount,
+            bool isTruncated,
+            string notes,
+            OverlayContainerEntry[] entries)
+        {
+            Type = type ?? string.Empty;
+            Version = version ?? string.Empty;
+            Offset = offset < 0 ? 0 : offset;
+            Size = size < 0 ? 0 : size;
+            EntryCount = entryCount < 0 ? 0 : entryCount;
+            IsTruncated = isTruncated;
+            Notes = notes ?? string.Empty;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<OverlayContainerEntry>());
+        }
+    }
+
     public sealed class PackingHintInfo
     {
         public string Kind { get; }
@@ -3001,15 +3062,27 @@ namespace PECoff
         public ushort LanguageId { get; }
         public uint Size { get; }
         public bool IsText { get; }
+        public string Format { get; }
+        public string FormatDetails { get; }
         public string TextPreview { get; }
         public double Entropy { get; }
 
-        public ResourceRcDataInfo(uint nameId, ushort languageId, uint size, bool isText, string textPreview, double entropy)
+        public ResourceRcDataInfo(
+            uint nameId,
+            ushort languageId,
+            uint size,
+            bool isText,
+            string format,
+            string formatDetails,
+            string textPreview,
+            double entropy)
         {
             NameId = nameId;
             LanguageId = languageId;
             Size = size;
             IsText = isText;
+            Format = format ?? string.Empty;
+            FormatDetails = formatDetails ?? string.Empty;
             TextPreview = textPreview ?? string.Empty;
             Entropy = entropy;
         }
@@ -3090,7 +3163,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 16;
+        public const int CurrentSchemaVersion = 17;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -3122,6 +3195,7 @@ namespace PECoff
         public uint SectionAlignment { get; }
         public uint SizeOfHeaders { get; }
         public OverlayInfo OverlayInfo { get; }
+        public IReadOnlyList<OverlayContainerInfo> OverlayContainers { get; }
         public IReadOnlyList<PackingHintInfo> PackingHints { get; }
         public IReadOnlyList<SectionEntropyInfo> SectionEntropies { get; }
         public IReadOnlyList<SectionSlackInfo> SectionSlacks { get; }
@@ -3231,6 +3305,7 @@ namespace PECoff
             uint sectionAlignment,
             uint sizeOfHeaders,
             OverlayInfo overlayInfo,
+            OverlayContainerInfo[] overlayContainers,
             PackingHintInfo[] packingHints,
             SectionEntropyInfo[] sectionEntropies,
             SectionSlackInfo[] sectionSlacks,
@@ -3340,6 +3415,7 @@ namespace PECoff
             SectionAlignment = sectionAlignment;
             SizeOfHeaders = sizeOfHeaders;
             OverlayInfo = overlayInfo ?? new OverlayInfo(0, 0);
+            OverlayContainers = Array.AsReadOnly(overlayContainers ?? Array.Empty<OverlayContainerInfo>());
             PackingHints = Array.AsReadOnly(packingHints ?? Array.Empty<PackingHintInfo>());
             SectionEntropies = Array.AsReadOnly(sectionEntropies ?? Array.Empty<SectionEntropyInfo>());
             SectionSlacks = Array.AsReadOnly(sectionSlacks ?? Array.Empty<SectionSlackInfo>());
@@ -3523,6 +3599,7 @@ namespace PECoff
                 SectionAlignment,
                 SizeOfHeaders,
                 OverlayInfo,
+                OverlayContainers,
                 PackingHints = packingHints,
                 SectionEntropies = entropies,
                 SectionSlacks = slacks,

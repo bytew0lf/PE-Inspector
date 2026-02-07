@@ -286,6 +286,31 @@ namespace PE_FileInspector
                     sb.AppendLine("  Overlay Start: 0x" + pe.OverlayInfo.StartOffset.ToString("X", CultureInfo.InvariantCulture));
                     sb.AppendLine("  Overlay Size: " + pe.OverlayInfo.Size.ToString(CultureInfo.InvariantCulture));
                 }
+                if (pe.OverlayContainers.Count > 0)
+                {
+                    sb.AppendLine("  Overlay Containers:");
+                    foreach (OverlayContainerInfo container in pe.OverlayContainers)
+                    {
+                        sb.AppendLine("    - " + Safe(container.Type) +
+                                      " " + Safe(container.Version) +
+                                      " | Entries: " + container.EntryCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Truncated: " + container.IsTruncated.ToString(CultureInfo.InvariantCulture));
+                        if (!string.IsNullOrWhiteSpace(container.Notes))
+                        {
+                            sb.AppendLine("      Notes: " + Safe(container.Notes));
+                        }
+                        if (container.Entries.Count > 0)
+                        {
+                            foreach (OverlayContainerEntry entry in container.Entries.Take(10))
+                            {
+                                sb.AppendLine("      * " + Safe(entry.Name) +
+                                              " | " + entry.CompressionMethod +
+                                              " | " + entry.CompressedSize.ToString(CultureInfo.InvariantCulture) +
+                                              "/" + entry.UncompressedSize.ToString(CultureInfo.InvariantCulture));
+                            }
+                        }
+                    }
+                }
                 if (pe.PackingHints.Length > 0)
                 {
                     sb.AppendLine("  Packing Hints:");
@@ -2321,7 +2346,12 @@ namespace PE_FileInspector
                                       " | Lang: 0x" + info.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
                                       " | Size: " + info.Size.ToString(CultureInfo.InvariantCulture) +
                                       " | Text: " + info.IsText +
+                                      " | Format: " + Safe(info.Format) +
                                       " | Entropy: " + info.Entropy.ToString("F3", CultureInfo.InvariantCulture));
+                        if (!string.IsNullOrWhiteSpace(info.FormatDetails))
+                        {
+                            sb.AppendLine("    Format Details: " + Safe(info.FormatDetails));
+                        }
                         if (!string.IsNullOrWhiteSpace(info.TextPreview))
                         {
                             sb.AppendLine("    Preview: " + info.TextPreview);
