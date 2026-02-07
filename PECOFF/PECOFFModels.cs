@@ -403,6 +403,10 @@ namespace PECoff
 
     public sealed class ExceptionDirectorySummary
     {
+        public uint DirectoryRva { get; }
+        public uint DirectorySize { get; }
+        public string DirectorySection { get; }
+        public bool DirectoryInPdata { get; }
         public int FunctionCount { get; }
         public int InvalidRangeCount { get; }
         public int OutOfRangeCount { get; }
@@ -411,6 +415,10 @@ namespace PECoff
         public IReadOnlyList<UnwindInfoVersionCount> UnwindInfoVersions { get; }
 
         public ExceptionDirectorySummary(
+            uint directoryRva,
+            uint directorySize,
+            string directorySection,
+            bool directoryInPdata,
             int functionCount,
             int invalidRangeCount,
             int outOfRangeCount,
@@ -418,6 +426,10 @@ namespace PECoff
             int unwindInfoParseFailures,
             UnwindInfoVersionCount[] unwindInfoVersions)
         {
+            DirectoryRva = directoryRva;
+            DirectorySize = directorySize;
+            DirectorySection = directorySection ?? string.Empty;
+            DirectoryInPdata = directoryInPdata;
             FunctionCount = functionCount;
             InvalidRangeCount = invalidRangeCount;
             OutOfRangeCount = outOfRangeCount;
@@ -433,13 +445,20 @@ namespace PECoff
         public int EmptyBlockCount { get; }
         public int InvalidBlockCount { get; }
         public int OrphanedBlockCount { get; }
+        public int DiscardableBlockCount { get; }
 
-        public RelocationAnomalySummary(int zeroSizedBlockCount, int emptyBlockCount, int invalidBlockCount, int orphanedBlockCount)
+        public RelocationAnomalySummary(
+            int zeroSizedBlockCount,
+            int emptyBlockCount,
+            int invalidBlockCount,
+            int orphanedBlockCount,
+            int discardableBlockCount)
         {
             ZeroSizedBlockCount = zeroSizedBlockCount;
             EmptyBlockCount = emptyBlockCount;
             InvalidBlockCount = invalidBlockCount;
             OrphanedBlockCount = orphanedBlockCount;
+            DiscardableBlockCount = discardableBlockCount;
         }
     }
 
@@ -725,6 +744,7 @@ namespace PECoff
         public ulong GuardXfgDispatchFunctionPointer { get; }
         public ulong GuardXfgTableDispatchFunctionPointer { get; }
         public IReadOnlyList<GuardFeatureInfo> GuardFeatureMatrix { get; }
+        public IReadOnlyList<GuardTableSanityInfo> GuardTableSanity { get; }
 
         public LoadConfigInfo(
             uint size,
@@ -752,7 +772,8 @@ namespace PECoff
             ulong guardXfgCheckFunctionPointer,
             ulong guardXfgDispatchFunctionPointer,
             ulong guardXfgTableDispatchFunctionPointer,
-            GuardFeatureInfo[] guardFeatureMatrix)
+            GuardFeatureInfo[] guardFeatureMatrix,
+            GuardTableSanityInfo[] guardTableSanity)
         {
             Size = size;
             TimeDateStamp = timeDateStamp;
@@ -780,6 +801,45 @@ namespace PECoff
             GuardXfgDispatchFunctionPointer = guardXfgDispatchFunctionPointer;
             GuardXfgTableDispatchFunctionPointer = guardXfgTableDispatchFunctionPointer;
             GuardFeatureMatrix = Array.AsReadOnly(guardFeatureMatrix ?? Array.Empty<GuardFeatureInfo>());
+            GuardTableSanity = Array.AsReadOnly(guardTableSanity ?? Array.Empty<GuardTableSanityInfo>());
+        }
+    }
+
+    public sealed class GuardTableSanityInfo
+    {
+        public string Name { get; }
+        public bool PointerPresent { get; }
+        public bool CountPresent { get; }
+        public bool MappedToSection { get; }
+        public string SectionName { get; }
+        public uint SectionRva { get; }
+        public uint SectionSize { get; }
+        public uint EstimatedSize { get; }
+        public bool SizeFits { get; }
+        public string Notes { get; }
+
+        public GuardTableSanityInfo(
+            string name,
+            bool pointerPresent,
+            bool countPresent,
+            bool mappedToSection,
+            string sectionName,
+            uint sectionRva,
+            uint sectionSize,
+            uint estimatedSize,
+            bool sizeFits,
+            string notes)
+        {
+            Name = name ?? string.Empty;
+            PointerPresent = pointerPresent;
+            CountPresent = countPresent;
+            MappedToSection = mappedToSection;
+            SectionName = sectionName ?? string.Empty;
+            SectionRva = sectionRva;
+            SectionSize = sectionSize;
+            EstimatedSize = estimatedSize;
+            SizeFits = sizeFits;
+            Notes = notes ?? string.Empty;
         }
     }
 
@@ -833,6 +893,8 @@ namespace PECoff
     public sealed class VersionInfoDetails
     {
         public VersionFixedFileInfo FixedFileInfo { get; }
+        public uint FixedFileInfoSignature { get; }
+        public bool FixedFileInfoSignatureValid { get; }
         public IReadOnlyDictionary<string, string> StringValues { get; }
         public IReadOnlyList<VersionStringTableInfo> StringTables { get; }
         public uint? Translation { get; }
@@ -841,6 +903,8 @@ namespace PECoff
 
         public VersionInfoDetails(
             VersionFixedFileInfo fixedFileInfo,
+            uint fixedFileInfoSignature,
+            bool fixedFileInfoSignatureValid,
             IReadOnlyDictionary<string, string> stringValues,
             VersionStringTableInfo[] stringTables,
             uint? translation,
@@ -848,6 +912,8 @@ namespace PECoff
             string translationText)
         {
             FixedFileInfo = fixedFileInfo;
+            FixedFileInfoSignature = fixedFileInfoSignature;
+            FixedFileInfoSignatureValid = fixedFileInfoSignatureValid;
             StringValues = stringValues ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             StringTables = Array.AsReadOnly(stringTables ?? Array.Empty<VersionStringTableInfo>());
             Translation = translation;
@@ -869,6 +935,41 @@ namespace PECoff
             LanguageId = languageId;
             CodePage = codePage;
             Values = values ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
+    public sealed class ResourceStringCoverageInfo
+    {
+        public ushort LanguageId { get; }
+        public string CultureName { get; }
+        public int BlockCount { get; }
+        public int StringCount { get; }
+        public uint MinBlockId { get; }
+        public uint MaxBlockId { get; }
+        public int MissingBlockCount { get; }
+        public IReadOnlyList<uint> MissingBlocks { get; }
+        public bool IsBestMatch { get; }
+
+        public ResourceStringCoverageInfo(
+            ushort languageId,
+            string cultureName,
+            int blockCount,
+            int stringCount,
+            uint minBlockId,
+            uint maxBlockId,
+            int missingBlockCount,
+            uint[] missingBlocks,
+            bool isBestMatch)
+        {
+            LanguageId = languageId;
+            CultureName = cultureName ?? string.Empty;
+            BlockCount = blockCount;
+            StringCount = stringCount;
+            MinBlockId = minBlockId;
+            MaxBlockId = maxBlockId;
+            MissingBlockCount = missingBlockCount;
+            MissingBlocks = Array.AsReadOnly(missingBlocks ?? Array.Empty<uint>());
+            IsBestMatch = isBestMatch;
         }
     }
 
@@ -958,6 +1059,35 @@ namespace PECoff
             Rva = rva;
             Size = size;
             Data = data ?? Array.Empty<byte>();
+        }
+    }
+
+    public sealed class StrongNameValidationInfo
+    {
+        public bool SignedFlag { get; }
+        public bool HasSignature { get; }
+        public uint SignatureRva { get; }
+        public uint SignatureSize { get; }
+        public int DataSize { get; }
+        public bool SizeMatches { get; }
+        public IReadOnlyList<string> Issues { get; }
+
+        public StrongNameValidationInfo(
+            bool signedFlag,
+            bool hasSignature,
+            uint signatureRva,
+            uint signatureSize,
+            int dataSize,
+            bool sizeMatches,
+            string[] issues)
+        {
+            SignedFlag = signedFlag;
+            HasSignature = hasSignature;
+            SignatureRva = signatureRva;
+            SignatureSize = signatureSize;
+            DataSize = dataSize;
+            SizeMatches = sizeMatches;
+            Issues = Array.AsReadOnly(issues ?? Array.Empty<string>());
         }
     }
 
@@ -1342,12 +1472,18 @@ namespace PECoff
         public int DuplicateNameCount { get; }
         public int DuplicateOrdinalCount { get; }
         public int OrdinalOutOfRangeCount { get; }
+        public int ForwarderMissingTargetCount { get; }
 
-        public ExportAnomalySummary(int duplicateNameCount, int duplicateOrdinalCount, int ordinalOutOfRangeCount)
+        public ExportAnomalySummary(
+            int duplicateNameCount,
+            int duplicateOrdinalCount,
+            int ordinalOutOfRangeCount,
+            int forwarderMissingTargetCount)
         {
             DuplicateNameCount = duplicateNameCount;
             DuplicateOrdinalCount = duplicateOrdinalCount;
             OrdinalOutOfRangeCount = ordinalOutOfRangeCount;
+            ForwarderMissingTargetCount = forwarderMissingTargetCount;
         }
     }
 
@@ -1631,7 +1767,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 7;
+        public const int CurrentSchemaVersion = 8;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -1679,6 +1815,7 @@ namespace PECoff
         public IReadOnlyList<CertificateEntry> CertificateEntries { get; }
         public IReadOnlyList<ResourceEntry> Resources { get; }
         public IReadOnlyList<ResourceStringTableInfo> ResourceStringTables { get; }
+        public IReadOnlyList<ResourceStringCoverageInfo> ResourceStringCoverage { get; }
         public IReadOnlyList<ResourceMessageTableInfo> ResourceMessageTables { get; }
         public IReadOnlyList<ResourceDialogInfo> ResourceDialogs { get; }
         public IReadOnlyList<ResourceAcceleratorTableInfo> ResourceAccelerators { get; }
@@ -1691,6 +1828,7 @@ namespace PECoff
         public IReadOnlyList<IconGroupInfo> IconGroups { get; }
         public ClrMetadataInfo ClrMetadata { get; }
         public StrongNameSignatureInfo StrongNameSignature { get; }
+        public StrongNameValidationInfo StrongNameValidation { get; }
         public ReadyToRunInfo ReadyToRun { get; }
         public IReadOnlyList<string> Imports { get; }
         public IReadOnlyList<ImportEntry> ImportEntries { get; }
@@ -1761,6 +1899,7 @@ namespace PECoff
             CertificateEntry[] certificateEntries,
             ResourceEntry[] resources,
             ResourceStringTableInfo[] resourceStringTables,
+            ResourceStringCoverageInfo[] resourceStringCoverage,
             ResourceMessageTableInfo[] resourceMessageTables,
             ResourceDialogInfo[] resourceDialogs,
             ResourceAcceleratorTableInfo[] resourceAccelerators,
@@ -1773,6 +1912,7 @@ namespace PECoff
             IconGroupInfo[] iconGroups,
             ClrMetadataInfo clrMetadata,
             StrongNameSignatureInfo strongNameSignature,
+            StrongNameValidationInfo strongNameValidation,
             ReadyToRunInfo readyToRun,
             string[] imports,
             ImportEntry[] importEntries,
@@ -1843,6 +1983,7 @@ namespace PECoff
             CertificateEntries = Array.AsReadOnly(certificateEntries ?? Array.Empty<CertificateEntry>());
             Resources = Array.AsReadOnly(resources ?? Array.Empty<ResourceEntry>());
             ResourceStringTables = Array.AsReadOnly(resourceStringTables ?? Array.Empty<ResourceStringTableInfo>());
+            ResourceStringCoverage = Array.AsReadOnly(resourceStringCoverage ?? Array.Empty<ResourceStringCoverageInfo>());
             ResourceMessageTables = Array.AsReadOnly(resourceMessageTables ?? Array.Empty<ResourceMessageTableInfo>());
             ResourceDialogs = Array.AsReadOnly(resourceDialogs ?? Array.Empty<ResourceDialogInfo>());
             ResourceAccelerators = Array.AsReadOnly(resourceAccelerators ?? Array.Empty<ResourceAcceleratorTableInfo>());
@@ -1855,6 +1996,7 @@ namespace PECoff
             IconGroups = Array.AsReadOnly(iconGroups ?? Array.Empty<IconGroupInfo>());
             ClrMetadata = clrMetadata;
             StrongNameSignature = strongNameSignature;
+            StrongNameValidation = strongNameValidation;
             ReadyToRun = readyToRun;
             Imports = Array.AsReadOnly(imports ?? Array.Empty<string>());
             ImportEntries = Array.AsReadOnly(importEntries ?? Array.Empty<ImportEntry>());
@@ -1863,12 +2005,12 @@ namespace PECoff
             DelayImportDescriptors = Array.AsReadOnly(delayImportDescriptors ?? Array.Empty<DelayImportDescriptorInfo>());
             Exports = Array.AsReadOnly(exports ?? Array.Empty<string>());
             ExportEntries = Array.AsReadOnly(exportEntries ?? Array.Empty<ExportEntry>());
-            ExportAnomalies = exportAnomalies ?? new ExportAnomalySummary(0, 0, 0);
+            ExportAnomalies = exportAnomalies ?? new ExportAnomalySummary(0, 0, 0, 0);
             BoundImports = Array.AsReadOnly(boundImports ?? Array.Empty<BoundImportEntry>());
             DebugDirectories = Array.AsReadOnly(debugDirectories ?? Array.Empty<DebugDirectoryEntry>());
             BaseRelocations = Array.AsReadOnly(baseRelocations ?? Array.Empty<BaseRelocationBlockInfo>());
             BaseRelocationSections = Array.AsReadOnly(baseRelocationSections ?? Array.Empty<BaseRelocationSectionSummary>());
-            RelocationAnomalies = relocationAnomalies ?? new RelocationAnomalySummary(0, 0, 0, 0);
+            RelocationAnomalies = relocationAnomalies ?? new RelocationAnomalySummary(0, 0, 0, 0, 0);
             ApiSetSchema = apiSetSchema ?? new ApiSetSchemaInfo(false, 0, string.Empty, string.Empty);
             ExceptionFunctions = Array.AsReadOnly(exceptionFunctions ?? Array.Empty<ExceptionFunctionInfo>());
             ExceptionSummary = exceptionSummary;
@@ -1888,6 +2030,11 @@ namespace PECoff
                 : CertificateEntries.Select(entry => new
                 {
                     entry.Type,
+                    entry.DeclaredLength,
+                    entry.Revision,
+                    entry.AlignedLength,
+                    entry.AlignmentPadding,
+                    entry.FileOffset,
                     Size = entry.Data?.Length ?? 0,
                     entry.Pkcs7Error,
                     SignerCount = entry.Pkcs7SignerInfos?.Length ?? 0,
@@ -1939,6 +2086,9 @@ namespace PECoff
             SectionPermissionInfo[] permissions = stableOrdering
                 ? SectionPermissions.OrderBy(info => info.Name, StringComparer.OrdinalIgnoreCase).ToArray()
                 : SectionPermissions.ToArray();
+            ResourceStringCoverageInfo[] stringCoverage = stableOrdering
+                ? ResourceStringCoverage.OrderBy(info => info.LanguageId).ToArray()
+                : ResourceStringCoverage.ToArray();
             ResourceLocaleCoverageInfo[] resourceCoverage = stableOrdering
                 ? ResourceLocaleCoverage.OrderBy(info => info.ResourceKind, StringComparer.OrdinalIgnoreCase).ToArray()
                 : ResourceLocaleCoverage.ToArray();
@@ -1989,6 +2139,7 @@ namespace PECoff
                 CertificateEntries = certificateEntries,
                 Resources,
                 ResourceStringTables,
+                ResourceStringCoverage = stringCoverage,
                 ResourceMessageTables,
                 ResourceDialogs,
                 ResourceAccelerators,
@@ -2001,6 +2152,7 @@ namespace PECoff
                 IconGroups = iconGroups,
                 ClrMetadata,
                 StrongNameSignature = strongNameSignature,
+                StrongNameValidation,
                 ReadyToRun,
                 Imports = imports,
                 ImportEntries,

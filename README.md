@@ -12,7 +12,7 @@ Single-file inspector that writes a human-readable report and extracts certifica
 
 Usage:
 
-    PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze> [--suppress-cssm <true|false>]
+    PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze> [--suppress-cssm <true|false>] [--sections <list>] [--exclude-sections <list>]
 
 Notes:
 
@@ -20,15 +20,18 @@ Notes:
 - Set `--suppress-cssm false` or `PE_INSPECTOR_SUPPRESS_CSSM=0` to allow these warnings.
 
 The report contains all analysis details, and any embedded certificates are written to the output directory with their native extensions (e.g. `.cer`, `.p7b`) and additionally as PEM (`.pem`).
+Use `--sections` to emit only selected report sections, or `--exclude-sections` to omit sections (comma-separated keys). Keys are normalized to lowercase with dashes, for example:
+
+`file-info`, `version-info`, `pe-analysis`, `section-entropy`, `section-permissions`, `section-padding`, `certificates`, `parse-status`, `findings`, `clr`, `strong-name`, `readytorun`, `assembly-refs`, `imports`, `import-details`, `import-descriptors`, `delay-import-details`, `delay-import-descriptors`, `bound-imports`, `exports`, `export-anomalies`, `export-details`, `exception`, `debug`, `relocations`, `tls`, `load-config`, `rich-header`, `version-info-details`, `icon-groups`, `cursor-groups`, `bitmaps`, `resources`, `resource-string-tables`, `resource-string-coverage`, `resource-message-tables`, `resource-dialogs`, `resource-accelerators`, `resource-menus`, `resource-toolbars`, `resource-manifests`, `resource-locale-coverage`.
 
 The report also includes CLR/.NET metadata when present (runtime version, metadata version, stream list, module references, managed resource names/sizes/hashes).
 It now also includes assembly metadata (assembly name/version, MVID, target framework, debuggable attribute, assembly/module attribute lists) and metadata-based assembly references (with public key tokens and resolution hints), plus a runtime hint (IL/Mixed/ReadyToRun).
-Resource string tables and manifests are decoded and included in the report when available.
+Resource string tables and manifests are decoded and included in the report when available, along with string coverage summaries and strong-name signature validation details for .NET files.
 The report also includes debug directory entries (CodeView/PDB IDs + identity checks), base relocation summaries (top types + sample RVAs, anomaly counts), TLS/load-config data (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, callback resolution + section mapping, guard feature matrix), version-info details (string tables + translations + file flags), icon-group reconstruction (PNG detection), bitmap/cursor resource metadata, Authenticode digest checks and signer status/policy summaries (RFC3161 timestamps, nested signatures), message tables, dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI, requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/entropy summaries and packing hints, import descriptor consistency/bind hints with API-set resolution confidence and canonical targets, export forwarder resolution hints plus export anomaly counts, section padding and permission analysis, exception directory summaries (unwind counts/details/range validity), resource locale coverage, and subsystem/security flags when present.
 
 ## Additional functionality
 The PECOFF Library has also the ability to get all imports and exports of the PE-file as well as the certificate.
-It now exposes debug directory entries (CodeView/PDB IDs + identity checks), base relocation details + section summaries (with anomaly counts), TLS/load-config metadata (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, callback resolution + section mapping, guard feature matrix), icon groups (PNG detection), version-info details (string tables + translations + file flags), bitmap/cursor metadata, message tables, dialog/menu/toolbar/accelerator parsing, manifest schema details (requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/section entropy and packing hints, import descriptor consistency/bind status with API-set resolution confidence and canonical targets, export forwarder resolution hints plus export anomaly counts, section padding/permission analysis, exception directory summaries (including unwind details), resource locale coverage, subsystem/DllCharacteristics summaries, Authenticode digest verification results, signer status/policy summaries (RFC3161 timestamps, nested signatures), plus CLR module references and managed resource summaries.
+It now exposes debug directory entries (CodeView/PDB IDs + identity checks), base relocation details + section summaries (with anomaly counts), TLS/load-config metadata (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, callback resolution + section mapping, guard feature matrix), icon groups (PNG detection), version-info details (string tables + translations + file flags), bitmap/cursor metadata, message tables, dialog/menu/toolbar/accelerator parsing, manifest schema details (requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/section entropy and packing hints, import descriptor consistency/bind status with API-set resolution confidence and canonical targets, export forwarder resolution hints plus export anomaly counts, section padding/permission analysis, exception directory summaries (including unwind details + directory placement), resource locale and string coverage, strong-name signature validation, subsystem/DllCharacteristics summaries, Authenticode digest verification results, signer status/policy summaries (RFC3161 timestamps, nested signatures), plus CLR module references and managed resource summaries.
 
 ### Library API options
 The PECOFF parser supports options and an immutable result snapshot:
@@ -123,6 +126,7 @@ Defaults:
 - v5: managed resource sizes, Pkcs7 chain element details, and stable JSON ordering support.
 - v6: managed resource hashes, manifest validation details, and CLR attribute lists.
 - v7: section permission summaries, resource locale coverage, export/relocation anomaly counts, guard feature matrix, and CLR metadata validation details.
+- v8: resource string coverage, strong-name signature validation, certificate entry metadata (length/alignment), guard table sanity checks, forwarder-missing export counts, and exception directory placement metadata.
 
 ## Contents of the output file
 The CSV-Output currently contains the following values for each analyzed file.

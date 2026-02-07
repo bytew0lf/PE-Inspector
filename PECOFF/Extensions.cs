@@ -568,7 +568,7 @@ namespace PECoff
         {
             get
             {
-                if (vi.Value.dwSignature != 0xFEEF04BD)
+                if (!FixedFileInfoSignatureValid)
                 {
                     return null;
                 }
@@ -590,6 +590,10 @@ namespace PECoff
             }
         }
 
+        public uint FixedFileInfoSignature => vi.Value.dwSignature;
+
+        public bool FixedFileInfoSignatureValid => vi.Value.dwSignature == 0xFEEF04BD;
+
         public VersionInfoDetails ToVersionInfoDetails()
         {
             VersionFixedFileInfo fixedInfo = FixedFileInfo;
@@ -607,6 +611,8 @@ namespace PECoff
                 .ToArray();
             return new VersionInfoDetails(
                 fixedInfo,
+                FixedFileInfoSignature,
+                FixedFileInfoSignatureValid,
                 new ReadOnlyDictionary<string, string>(_stringValues),
                 stringTables,
                 _translation,

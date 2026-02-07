@@ -354,6 +354,19 @@ namespace PECoff
             }
         }
 
+        public static string GetCertificateRevisionName(ushort revision)
+        {
+            switch (revision)
+            {
+                case 0x0100:
+                    return "WIN_CERT_REVISION_1_0";
+                case 0x0200:
+                    return "WIN_CERT_REVISION_2_0";
+                default:
+                    return "0x" + revision.ToString("X4", CultureInfo.InvariantCulture);
+            }
+        }
+
         public static string GetPemLabel(CertificateTypeKind type)
         {
             switch (type)

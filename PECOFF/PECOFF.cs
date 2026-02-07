@@ -100,19 +100,30 @@ namespace PECoff
     {
         public CertificateTypeKind Type { get; }
         public byte[] Data { get; }
+        public uint DeclaredLength { get; }
+        public ushort Revision { get; }
+        public int AlignedLength { get; }
+        public int AlignmentPadding { get; }
+        public long FileOffset { get; }
+        public bool IsAligned => AlignmentPadding == 0;
         public Pkcs7SignerInfo[] Pkcs7SignerInfos { get; }
         public string Pkcs7Error { get; }
         public AuthenticodeVerificationResult[] AuthenticodeResults { get; }
         public AuthenticodeStatusInfo AuthenticodeStatus { get; }
 
         public CertificateEntry(CertificateTypeKind type, byte[] data)
-            : this(type, data, Array.Empty<Pkcs7SignerInfo>(), string.Empty, Array.Empty<AuthenticodeVerificationResult>(), null)
+            : this(type, data, 0, 0, 0, 0, -1, Array.Empty<Pkcs7SignerInfo>(), string.Empty, Array.Empty<AuthenticodeVerificationResult>(), null)
         {
         }
 
         public CertificateEntry(
             CertificateTypeKind type,
             byte[] data,
+            uint declaredLength,
+            ushort revision,
+            int alignedLength,
+            int alignmentPadding,
+            long fileOffset,
             Pkcs7SignerInfo[] pkcs7SignerInfos,
             string pkcs7Error,
             AuthenticodeVerificationResult[] authenticodeResults,
@@ -120,6 +131,11 @@ namespace PECoff
         {
             Type = type;
             Data = data ?? Array.Empty<byte>();
+            DeclaredLength = declaredLength;
+            Revision = revision;
+            AlignedLength = alignedLength < 0 ? 0 : alignedLength;
+            AlignmentPadding = alignmentPadding < 0 ? 0 : alignmentPadding;
+            FileOffset = fileOffset;
             Pkcs7SignerInfos = pkcs7SignerInfos ?? Array.Empty<Pkcs7SignerInfo>();
             Pkcs7Error = pkcs7Error ?? string.Empty;
             AuthenticodeResults = authenticodeResults ?? Array.Empty<AuthenticodeVerificationResult>();
@@ -1546,6 +1562,12 @@ namespace PECoff
             get { return _sectionAlignment; }
         }
 
+        private ulong _imageBase;
+        public ulong ImageBase
+        {
+            get { return _imageBase; }
+        }
+
         private uint _sizeOfImage;
         public uint SizeOfImage
         {
@@ -1742,6 +1764,16 @@ namespace PECoff
             }
         }
 
+        private readonly List<ResourceStringCoverageInfo> _resourceStringCoverage = new List<ResourceStringCoverageInfo>();
+        public ResourceStringCoverageInfo[] ResourceStringCoverage
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceStringCoverage.ToArray();
+            }
+        }
+
         private readonly List<ResourceManifestInfo> _resourceManifests = new List<ResourceManifestInfo>();
         public ResourceManifestInfo[] ResourceManifests
         {
@@ -1869,6 +1901,16 @@ namespace PECoff
             {
                 EnsureClrParsed();
                 return _strongNameSignature;
+            }
+        }
+
+        private StrongNameValidationInfo _strongNameValidation;
+        public StrongNameValidationInfo StrongNameValidation
+        {
+            get
+            {
+                EnsureClrParsed();
+                return _strongNameValidation;
             }
         }
 
@@ -2038,7 +2080,7 @@ namespace PECoff
             get { return _exportEntries.ToArray(); }
         }
 
-        private ExportAnomalySummary _exportAnomalies = new ExportAnomalySummary(0, 0, 0);
+        private ExportAnomalySummary _exportAnomalies = new ExportAnomalySummary(0, 0, 0, 0);
         public ExportAnomalySummary ExportAnomalies
         {
             get { return _exportAnomalies; }
@@ -2080,7 +2122,7 @@ namespace PECoff
             }
         }
 
-        private RelocationAnomalySummary _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0);
+        private RelocationAnomalySummary _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0);
         public RelocationAnomalySummary RelocationAnomalies
         {
             get
@@ -2089,6 +2131,11 @@ namespace PECoff
                 return _relocationAnomalies;
             }
         }
+
+        private uint _exceptionDirectoryRva;
+        private uint _exceptionDirectorySize;
+        private string _exceptionDirectorySectionName = string.Empty;
+        private bool _exceptionDirectoryInPdata;
 
         private readonly List<ExceptionFunctionInfo> _exceptionFunctions = new List<ExceptionFunctionInfo>();
         public ExceptionFunctionInfo[] ExceptionFunctions
@@ -2935,6 +2982,7 @@ namespace PECoff
                 _certificateEntries.ToArray(),
                 _resources.ToArray(),
                 _resourceStringTables.ToArray(),
+                _resourceStringCoverage.ToArray(),
                 _resourceMessageTables.ToArray(),
                 _resourceDialogs.ToArray(),
                 _resourceAccelerators.ToArray(),
@@ -2947,6 +2995,7 @@ namespace PECoff
                 _iconGroups.ToArray(),
                 _clrMetadata,
                 _strongNameSignature,
+                _strongNameValidation,
                 _readyToRun,
                 imports.ToArray(),
                 _importEntries.ToArray(),
@@ -4512,6 +4561,10 @@ namespace PECoff
             byte[] data = owned.Length > 0 ? owned : dataSpan.ToArray();
             FileVersionInfo fvi = new FileVersionInfo(data);
             _versionInfoDetails = fvi.ToVersionInfoDetails();
+            if (!fvi.FixedFileInfoSignatureValid && fvi.FixedFileInfoSignature != 0)
+            {
+                Warn(ParseIssueCategory.Resources, "VS_FIXEDFILEINFO signature is invalid.");
+            }
         }
 
         private void DecodeResourceIconGroups(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
@@ -4724,6 +4777,7 @@ namespace PECoff
                 SetIfEmpty(ref _language, versionInfo.Language);
             }
 
+            BuildResourceStringCoverage();
             BuildResourceLocaleCoverage();
         }
 
@@ -4732,6 +4786,192 @@ namespace PECoff
             _resourceLocaleCoverage.Clear();
             AddResourceLocaleCoverage("StringTable", _resourceStringTables.Select(t => t.LanguageId));
             AddResourceLocaleCoverage("Manifest", _resourceManifests.Select(m => m.LanguageId));
+        }
+
+        private void BuildResourceStringCoverage()
+        {
+            _resourceStringCoverage.Clear();
+            if (_resourceStringTables.Count == 0)
+            {
+                return;
+            }
+
+            List<ResourceStringCoverageInfo> coverage = ComputeResourceStringCoverage(
+                _resourceStringTables,
+                message => Warn(ParseIssueCategory.Resources, message));
+            _resourceStringCoverage.AddRange(coverage);
+        }
+
+        internal static ResourceStringCoverageInfo[] BuildResourceStringCoverageForTest(params ResourceStringTableInfo[] tables)
+        {
+            List<ResourceStringCoverageInfo> coverage = ComputeResourceStringCoverage(
+                tables ?? Array.Empty<ResourceStringTableInfo>(),
+                null);
+            return coverage.ToArray();
+        }
+
+        private static List<ResourceStringCoverageInfo> ComputeResourceStringCoverage(
+            IEnumerable<ResourceStringTableInfo> tables,
+            Action<string> warn)
+        {
+            if (tables == null)
+            {
+                return new List<ResourceStringCoverageInfo>();
+            }
+
+            ResourceStringTableInfo[] tableArray = tables as ResourceStringTableInfo[] ?? tables.ToArray();
+            if (tableArray.Length == 0)
+            {
+                return new List<ResourceStringCoverageInfo>();
+            }
+
+            List<ResourceStringCoverageCandidate> candidates = new List<ResourceStringCoverageCandidate>();
+            foreach (IGrouping<ushort, ResourceStringTableInfo> group in tableArray.GroupBy(t => t.LanguageId))
+            {
+                ushort languageId = group.Key;
+                uint[] blockIds = group.Select(t => t.BlockId).Distinct().OrderBy(id => id).ToArray();
+                if (blockIds.Length == 0)
+                {
+                    continue;
+                }
+
+                int stringCount = 0;
+                foreach (ResourceStringTableInfo table in group)
+                {
+                    if (table.Strings == null)
+                    {
+                        continue;
+                    }
+
+                    for (int i = 0; i < table.Strings.Length; i++)
+                    {
+                        if (!string.IsNullOrWhiteSpace(table.Strings[i]))
+                        {
+                            stringCount++;
+                        }
+                    }
+                }
+
+                uint minBlock = blockIds[0];
+                uint maxBlock = blockIds[blockIds.Length - 1];
+                ulong range = (ulong)maxBlock - minBlock + 1;
+                int missingCount = 0;
+                if (range > (ulong)blockIds.Length)
+                {
+                    missingCount = range > int.MaxValue ? int.MaxValue : (int)(range - (ulong)blockIds.Length);
+                }
+
+                List<uint> missingBlocks = new List<uint>();
+                if (missingCount > 0 && range <= 512)
+                {
+                    HashSet<uint> present = new HashSet<uint>(blockIds);
+                    for (uint id = minBlock; id <= maxBlock; id++)
+                    {
+                        if (!present.Contains(id))
+                        {
+                            missingBlocks.Add(id);
+                            if (missingBlocks.Count >= 10)
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                candidates.Add(new ResourceStringCoverageCandidate(
+                    languageId,
+                    ResolveResourceCultureName(languageId),
+                    blockIds.Length,
+                    stringCount,
+                    minBlock,
+                    maxBlock,
+                    missingCount,
+                    missingBlocks.ToArray()));
+            }
+
+            if (candidates.Count == 0)
+            {
+                return new List<ResourceStringCoverageInfo>();
+            }
+
+            ResourceStringCoverageCandidate best = candidates
+                .OrderByDescending(c => c.StringCount)
+                .ThenByDescending(c => c.BlockCount)
+                .First();
+
+            List<ResourceStringCoverageInfo> coverage = new List<ResourceStringCoverageInfo>(candidates.Count);
+            foreach (ResourceStringCoverageCandidate candidate in candidates)
+            {
+                bool isBest = candidate.LanguageId == best.LanguageId &&
+                              candidate.BlockCount == best.BlockCount &&
+                              candidate.StringCount == best.StringCount;
+                coverage.Add(new ResourceStringCoverageInfo(
+                    candidate.LanguageId,
+                    candidate.CultureName,
+                    candidate.BlockCount,
+                    candidate.StringCount,
+                    candidate.MinBlockId,
+                    candidate.MaxBlockId,
+                    candidate.MissingBlockCount,
+                    candidate.MissingBlocks,
+                    isBest));
+
+                if (isBest && candidate.MissingBlockCount > 0 && warn != null)
+                {
+                    warn($"String table has {candidate.MissingBlockCount} missing block(s) for language 0x{candidate.LanguageId:X4}.");
+                }
+            }
+
+            return coverage;
+        }
+
+        private sealed class ResourceStringCoverageCandidate
+        {
+            public ushort LanguageId { get; }
+            public string CultureName { get; }
+            public int BlockCount { get; }
+            public int StringCount { get; }
+            public uint MinBlockId { get; }
+            public uint MaxBlockId { get; }
+            public int MissingBlockCount { get; }
+            public uint[] MissingBlocks { get; }
+
+            public ResourceStringCoverageCandidate(
+                ushort languageId,
+                string cultureName,
+                int blockCount,
+                int stringCount,
+                uint minBlockId,
+                uint maxBlockId,
+                int missingBlockCount,
+                uint[] missingBlocks)
+            {
+                LanguageId = languageId;
+                CultureName = cultureName ?? string.Empty;
+                BlockCount = blockCount;
+                StringCount = stringCount;
+                MinBlockId = minBlockId;
+                MaxBlockId = maxBlockId;
+                MissingBlockCount = missingBlockCount;
+                MissingBlocks = missingBlocks ?? Array.Empty<uint>();
+            }
+        }
+
+        private static string ResolveResourceCultureName(ushort languageId)
+        {
+            if (languageId == 0)
+            {
+                return "Neutral";
+            }
+
+            try
+            {
+                return CultureInfo.GetCultureInfo(languageId).Name;
+            }
+            catch (CultureNotFoundException)
+            {
+                return "0x" + languageId.ToString("X4", CultureInfo.InvariantCulture);
+            }
         }
 
         private void AddResourceLocaleCoverage(string kind, IEnumerable<ushort> languageIds)
@@ -7126,7 +7366,7 @@ namespace PECoff
 
         private void ParseBaseRelocationTable(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
         {
-            _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0);
+            _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0);
             if (!TryGetFileOffset(sections, directory.VirtualAddress, out long tableOffset))
             {
                 Warn(ParseIssueCategory.Relocations, "Base relocation table RVA not mapped to a section.");
@@ -7152,6 +7392,7 @@ namespace PECoff
             int emptyBlocks = 0;
             int invalidBlocks = 0;
             int orphanedBlocks = 0;
+            int discardableBlocks = 0;
 
             int headerSize = Marshal.SizeOf(typeof(IMAGE_BASE_RELOCATION));
             long cursor = tableOffset;
@@ -7213,6 +7454,13 @@ namespace PECoff
                 string blockSectionName = blockMapped ? NormalizeSectionName(blockSection.Section) : "(unmapped)";
                 uint blockSectionRva = blockMapped ? blockSection.VirtualAddress : 0;
                 uint blockSectionSize = blockMapped ? Math.Max(blockSection.VirtualSize, blockSection.SizeOfRawData) : 0;
+                bool isDiscardable = blockMapped &&
+                                     (blockSection.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_DISCARDABLE) != 0;
+                if (isDiscardable)
+                {
+                    discardableBlocks++;
+                }
+
                 if (!blockMapped)
                 {
                     orphanedBlocks++;
@@ -7311,7 +7559,17 @@ namespace PECoff
                 }
             }
 
-            _relocationAnomalies = new RelocationAnomalySummary(zeroSizedBlocks, emptyBlocks, invalidBlocks, orphanedBlocks);
+            if (orphanedBlocks > 0)
+            {
+                Warn(ParseIssueCategory.Relocations, $"Base relocation blocks reference unmapped sections: {orphanedBlocks}.");
+            }
+
+            if (discardableBlocks > 0)
+            {
+                Warn(ParseIssueCategory.Relocations, $"Base relocation blocks reside in discardable sections: {discardableBlocks}.");
+            }
+
+            _relocationAnomalies = new RelocationAnomalySummary(zeroSizedBlocks, emptyBlocks, invalidBlocks, orphanedBlocks, discardableBlocks);
         }
 
         private sealed class BaseRelocationSectionAccumulator
@@ -7404,6 +7662,30 @@ namespace PECoff
 
         private void ParseExceptionDirectory(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
         {
+            _exceptionDirectoryRva = directory.VirtualAddress;
+            _exceptionDirectorySize = directory.Size;
+            _exceptionDirectorySectionName = string.Empty;
+            _exceptionDirectoryInPdata = false;
+            if (directory.Size > 0 && TryGetSectionByRva(sections, directory.VirtualAddress, out IMAGE_SECTION_HEADER exceptionSection))
+            {
+                _exceptionDirectorySectionName = NormalizeSectionName(exceptionSection.Section);
+                _exceptionDirectoryInPdata = string.Equals(_exceptionDirectorySectionName, ".pdata", StringComparison.OrdinalIgnoreCase);
+
+                bool hasPdata = sections.Any(s => string.Equals(NormalizeSectionName(s.Section), ".pdata", StringComparison.OrdinalIgnoreCase));
+                if (hasPdata && !_exceptionDirectoryInPdata)
+                {
+                    Warn(ParseIssueCategory.Sections, "Exception directory is not located in the .pdata section.");
+                }
+
+                uint sectionSize = Math.Max(exceptionSection.VirtualSize, exceptionSection.SizeOfRawData);
+                ulong endRva = (ulong)directory.VirtualAddress + (ulong)directory.Size;
+                ulong sectionEnd = (ulong)exceptionSection.VirtualAddress + sectionSize;
+                if (directory.Size > 0 && endRva > sectionEnd)
+                {
+                    Warn(ParseIssueCategory.Sections, "Exception directory exceeds the section bounds.");
+                }
+            }
+
             if (!TryGetFileOffset(sections, directory.VirtualAddress, out long tableOffset))
             {
                 Warn(ParseIssueCategory.Sections, "Exception directory RVA not mapped to a section.");
@@ -7461,6 +7743,10 @@ namespace PECoff
 
             _exceptionSummary = BuildExceptionDirectorySummaryCore(
                 _exceptionFunctions,
+                _exceptionDirectoryRva,
+                _exceptionDirectorySize,
+                _exceptionDirectorySectionName,
+                _exceptionDirectoryInPdata,
                 _sizeOfImage,
                 isAmd64,
                 (uint rva, out byte version) => TryReadUnwindVersion(sections, rva, out version));
@@ -7643,13 +7929,27 @@ namespace PECoff
 
         private static ExceptionDirectorySummary BuildExceptionDirectorySummaryCore(
             IReadOnlyList<ExceptionFunctionInfo> functions,
+            uint directoryRva,
+            uint directorySize,
+            string directorySection,
+            bool directoryInPdata,
             uint sizeOfImage,
             bool parseUnwindInfo,
             TryGetUnwindVersion tryGetUnwindVersion)
         {
             if (functions == null || functions.Count == 0)
             {
-                return new ExceptionDirectorySummary(0, 0, 0, 0, 0, Array.Empty<UnwindInfoVersionCount>());
+                return new ExceptionDirectorySummary(
+                    directoryRva,
+                    directorySize,
+                    directorySection,
+                    directoryInPdata,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    Array.Empty<UnwindInfoVersionCount>());
             }
 
             int invalidRange = 0;
@@ -7704,6 +8004,10 @@ namespace PECoff
                 .ToArray();
 
             return new ExceptionDirectorySummary(
+                directoryRva,
+                directorySize,
+                directorySection,
+                directoryInPdata,
                 functions.Count,
                 invalidRange,
                 outOfRange,
@@ -7716,7 +8020,11 @@ namespace PECoff
             ExceptionFunctionInfo[] functions,
             uint sizeOfImage,
             bool parseUnwindInfo,
-            Dictionary<uint, byte[]> unwindInfo)
+            Dictionary<uint, byte[]> unwindInfo,
+            uint directoryRva = 0,
+            uint directorySize = 0,
+            string directorySection = "",
+            bool directoryInPdata = false)
         {
             bool TryGetVersion(uint rva, out byte version)
             {
@@ -7730,7 +8038,15 @@ namespace PECoff
                 return true;
             }
 
-            return BuildExceptionDirectorySummaryCore(functions ?? Array.Empty<ExceptionFunctionInfo>(), sizeOfImage, parseUnwindInfo, TryGetVersion);
+            return BuildExceptionDirectorySummaryCore(
+                functions ?? Array.Empty<ExceptionFunctionInfo>(),
+                directoryRva,
+                directorySize,
+                directorySection,
+                directoryInPdata,
+                sizeOfImage,
+                parseUnwindInfo,
+                TryGetVersion);
         }
 
         private void ParseDebugDirectory(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
@@ -8270,6 +8586,47 @@ namespace PECoff
                     chpeMetadataPointer != 0 ? "CHPE metadata present" : string.Empty)
             };
 
+            List<GuardTableSanityInfo> guardTableSanity = new List<GuardTableSanityInfo>
+            {
+                BuildGuardTableSanity(
+                    "CFG Function Table",
+                    guardCfTable,
+                    guardCfCount,
+                    true,
+                    sections,
+                    4,
+                    false),
+                BuildGuardTableSanity(
+                    "EH Continuation Table",
+                    guardEhContinuationTable,
+                    guardEhContinuationCount,
+                    true,
+                    sections,
+                    4,
+                    false),
+                BuildGuardTableSanity(
+                    "XFG Table Dispatch",
+                    guardXfgTableDispatchFunctionPointer,
+                    0,
+                    false,
+                    sections,
+                    0,
+                    true)
+            };
+
+            foreach (GuardTableSanityInfo info in guardTableSanity)
+            {
+                if (info.PointerPresent && !info.MappedToSection)
+                {
+                    Warn(ParseIssueCategory.LoadConfig, $"{info.Name} pointer is not mapped to a section.");
+                }
+
+                if (info.PointerPresent && info.CountPresent && !info.SizeFits)
+                {
+                    Warn(ParseIssueCategory.LoadConfig, $"{info.Name} size exceeds section bounds.");
+                }
+            }
+
             _loadConfig = new LoadConfigInfo(
                 size,
                 timeDateStamp,
@@ -8296,7 +8653,8 @@ namespace PECoff
                 guardXfgCheckFunctionPointer,
                 guardXfgDispatchFunctionPointer,
                 guardXfgTableDispatchFunctionPointer,
-                guardFeatures.ToArray());
+                guardFeatures.ToArray(),
+                guardTableSanity.ToArray());
         }
 
         private static ulong ReadPointer(ReadOnlySpan<byte> span, ref int offset, bool isPe32Plus)
@@ -8384,6 +8742,147 @@ namespace PECoff
             }
 
             return TryGetFileOffset(sections, rva, out fileOffset);
+        }
+
+        private static bool TryGetRvaFromAddress(ulong address, ulong imageBase, out uint rva, out string source)
+        {
+            rva = 0;
+            source = string.Empty;
+            if (address == 0)
+            {
+                return false;
+            }
+
+            if (TryVaToRva(address, imageBase, out rva))
+            {
+                source = "VA";
+                return true;
+            }
+
+            if (address <= uint.MaxValue)
+            {
+                rva = (uint)address;
+                source = "RVA";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string AppendNote(string notes, string addition)
+        {
+            if (string.IsNullOrWhiteSpace(addition))
+            {
+                return notes ?? string.Empty;
+            }
+
+            if (string.IsNullOrWhiteSpace(notes))
+            {
+                return addition;
+            }
+
+            return notes + "; " + addition;
+        }
+
+        private GuardTableSanityInfo BuildGuardTableSanity(
+            string name,
+            ulong pointer,
+            ulong count,
+            bool hasCount,
+            List<IMAGE_SECTION_HEADER> sections,
+            uint minEntrySize,
+            bool requireExecutable)
+        {
+            bool pointerPresent = pointer != 0;
+            bool countPresent = hasCount && count != 0;
+            bool mapped = false;
+            string sectionName = string.Empty;
+            uint sectionRva = 0;
+            uint sectionSize = 0;
+            uint estimatedSize = 0;
+            bool sizeFits = true;
+            string notes = string.Empty;
+
+            if (!pointerPresent)
+            {
+                if (countPresent)
+                {
+                    notes = "count present without pointer";
+                }
+
+                return new GuardTableSanityInfo(
+                    name,
+                    pointerPresent,
+                    countPresent,
+                    mapped,
+                    sectionName,
+                    sectionRva,
+                    sectionSize,
+                    estimatedSize,
+                    sizeFits,
+                    notes);
+            }
+
+            if (!TryGetRvaFromAddress(pointer, _imageBase, out uint rva, out string source))
+            {
+                notes = AppendNote(notes, "address not mappable");
+                return new GuardTableSanityInfo(
+                    name,
+                    pointerPresent,
+                    countPresent,
+                    mapped,
+                    sectionName,
+                    sectionRva,
+                    sectionSize,
+                    estimatedSize,
+                    sizeFits,
+                    notes);
+            }
+
+            notes = AppendNote(notes, "source=" + source);
+
+            if (TryGetSectionByRva(sections, rva, out IMAGE_SECTION_HEADER section))
+            {
+                mapped = true;
+                sectionName = NormalizeSectionName(section.Section);
+                sectionRva = section.VirtualAddress;
+                sectionSize = Math.Max(section.VirtualSize, section.SizeOfRawData);
+                if (countPresent && minEntrySize > 0)
+                {
+                    ulong estimated = count * minEntrySize;
+                    estimatedSize = estimated > uint.MaxValue ? uint.MaxValue : (uint)estimated;
+                    ulong end = (ulong)rva + estimated;
+                    ulong sectionEnd = (ulong)section.VirtualAddress + sectionSize;
+                    sizeFits = end <= sectionEnd;
+                }
+
+                if (requireExecutable &&
+                    (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_EXECUTE) == 0)
+                {
+                    notes = AppendNote(notes, "non-executable section");
+                }
+            }
+            else
+            {
+                notes = AppendNote(notes, "address not mapped to section");
+            }
+
+            if (countPresent && minEntrySize > 0)
+            {
+                notes = AppendNote(notes, $"assumed entry size {minEntrySize} bytes");
+            }
+
+            return new GuardTableSanityInfo(
+                name,
+                pointerPresent,
+                countPresent,
+                mapped,
+                sectionName,
+                sectionRva,
+                sectionSize,
+                estimatedSize,
+                sizeFits,
+                notes);
         }
 
         private bool TryResolveExportName(uint rva, out string name)
@@ -8656,6 +9155,8 @@ namespace PECoff
         private void ParseClrDirectory(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
         {
             _clrMetadata = null;
+            _strongNameSignature = null;
+            _strongNameValidation = null;
             if (!TryGetFileOffset(sections, directory.VirtualAddress, out long clrOffset))
             {
                 Warn(ParseIssueCategory.CLR, "CLR header RVA not mapped to a section.");
@@ -8672,6 +9173,7 @@ namespace PECoff
             ReadExactly(PEFileStream, buffer, 0, buffer.Length);
             IMAGE_COR20_HEADER clrHeader = ByteArrayToStructure<IMAGE_COR20_HEADER>(buffer);
             uint expectedClrSize = (uint)Marshal.SizeOf(typeof(IMAGE_COR20_HEADER));
+            bool strongNameSignedFlag = (clrHeader.Flags & 0x00000008) != 0;
             if (clrHeader.cb < expectedClrSize)
             {
                 Warn(ParseIssueCategory.CLR, "CLR header size is smaller than expected.");
@@ -8710,6 +9212,49 @@ namespace PECoff
             {
                 Warn(ParseIssueCategory.CLR, "Strong name signature size is set but RVA is zero.");
             }
+
+            List<string> strongNameIssues = new List<string>();
+            bool hasStrongName = _strongNameSignature != null && _strongNameSignature.Data.Length > 0;
+            uint strongNameRva = clrHeader.StrongNameSignature.VirtualAddress;
+            uint strongNameSize = clrHeader.StrongNameSignature.Size;
+            int strongNameDataSize = hasStrongName ? _strongNameSignature.Data.Length : 0;
+            bool strongNameSizeMatches = strongNameSize == 0
+                ? strongNameDataSize == 0
+                : strongNameDataSize == strongNameSize;
+
+            if (strongNameSignedFlag && !hasStrongName)
+            {
+                string message = "StrongNameSigned flag is set but signature data is missing.";
+                Warn(ParseIssueCategory.CLR, message);
+                strongNameIssues.Add(message);
+            }
+            else if (!strongNameSignedFlag && hasStrongName)
+            {
+                string message = "Strong name signature data is present but StrongNameSigned flag is not set.";
+                Warn(ParseIssueCategory.CLR, message);
+                strongNameIssues.Add(message);
+            }
+
+            if (hasStrongName && !strongNameSizeMatches)
+            {
+                string message = "Strong name signature size does not match data length.";
+                Warn(ParseIssueCategory.CLR, message);
+                strongNameIssues.Add(message);
+            }
+
+            if (strongNameSize > 0 && strongNameRva == 0)
+            {
+                strongNameIssues.Add("Strong name signature size is set but RVA is zero.");
+            }
+
+            _strongNameValidation = new StrongNameValidationInfo(
+                strongNameSignedFlag,
+                hasStrongName,
+                strongNameRva,
+                strongNameSize,
+                strongNameDataSize,
+                strongNameSizeMatches,
+                strongNameIssues.ToArray());
 
             if (clrHeader.ManagedNativeHeader.Size > 0 &&
                 clrHeader.ManagedNativeHeader.VirtualAddress != 0)
@@ -9652,12 +10197,13 @@ namespace PECoff
         {
             if (_exportEntries.Count == 0 && _exportOrdinalOutOfRangeCount == 0)
             {
-                _exportAnomalies = new ExportAnomalySummary(0, 0, 0);
+                _exportAnomalies = new ExportAnomalySummary(0, 0, 0, 0);
                 return;
             }
 
             Dictionary<string, int> nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             Dictionary<uint, int> ordinalCounts = new Dictionary<uint, int>();
+            int forwarderMissingTargets = 0;
             foreach (ExportEntry entry in _exportEntries)
             {
                 if (!string.IsNullOrWhiteSpace(entry.Name))
@@ -9666,6 +10212,31 @@ namespace PECoff
                 }
 
                 ordinalCounts[entry.Ordinal] = ordinalCounts.TryGetValue(entry.Ordinal, out int ordCount) ? ordCount + 1 : 1;
+
+                if (entry.IsForwarder && !string.IsNullOrWhiteSpace(entry.Forwarder))
+                {
+                    if (!TryParseForwarderTarget(entry.Forwarder, out string module, out _))
+                    {
+                        forwarderMissingTargets++;
+                        continue;
+                    }
+
+                    string normalizedModule = NormalizeModuleName(module);
+                    if (string.IsNullOrWhiteSpace(normalizedModule))
+                    {
+                        forwarderMissingTargets++;
+                        continue;
+                    }
+
+                    if (IsApiSetName(normalizedModule))
+                    {
+                        ApiSetResolutionInfo resolution = ResolveApiSetResolution(normalizedModule);
+                        if (!resolution.IsResolved || resolution.CanonicalTargets == null || resolution.CanonicalTargets.Count == 0)
+                        {
+                            forwarderMissingTargets++;
+                        }
+                    }
+                }
             }
 
             int duplicateNameCount = nameCounts.Count(pair => pair.Value > 1);
@@ -9685,10 +10256,22 @@ namespace PECoff
                 Warn(ParseIssueCategory.Exports, $"Export name ordinals outside export address table: {_exportOrdinalOutOfRangeCount}.");
             }
 
-            _exportAnomalies = new ExportAnomalySummary(duplicateNameCount, duplicateOrdinalCount, _exportOrdinalOutOfRangeCount);
+            if (forwarderMissingTargets > 0)
+            {
+                Warn(ParseIssueCategory.Exports, $"Forwarder target modules could not be resolved: {forwarderMissingTargets}.");
+            }
+
+            _exportAnomalies = new ExportAnomalySummary(
+                duplicateNameCount,
+                duplicateOrdinalCount,
+                _exportOrdinalOutOfRangeCount,
+                forwarderMissingTargets);
         }
 
-        internal static ExportAnomalySummary ComputeExportAnomaliesForTest(IEnumerable<ExportEntry> entries, int ordinalOutOfRangeCount)
+        internal static ExportAnomalySummary ComputeExportAnomaliesForTest(
+            IEnumerable<ExportEntry> entries,
+            int ordinalOutOfRangeCount,
+            int forwarderMissingTargetCount)
         {
             Dictionary<string, int> nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             Dictionary<uint, int> ordinalCounts = new Dictionary<uint, int>();
@@ -9707,7 +10290,11 @@ namespace PECoff
 
             int duplicateNameCount = nameCounts.Count(pair => pair.Value > 1);
             int duplicateOrdinalCount = ordinalCounts.Count(pair => pair.Value > 1);
-            return new ExportAnomalySummary(duplicateNameCount, duplicateOrdinalCount, ordinalOutOfRangeCount);
+            return new ExportAnomalySummary(
+                duplicateNameCount,
+                duplicateOrdinalCount,
+                ordinalOutOfRangeCount,
+                forwarderMissingTargetCount);
         }
 
         private void ValidateRelocationHints()
@@ -10087,6 +10674,7 @@ namespace PECoff
                 _parseResult.Clear();
                 _resources.Clear();
                 _resourceStringTables.Clear();
+                _resourceStringCoverage.Clear();
                 _resourceManifests.Clear();
                 _resourceLocaleCoverage.Clear();
                 _resourceMessageTables.Clear();
@@ -10111,12 +10699,16 @@ namespace PECoff
                 _delayImportDescriptors.Clear();
                 _exportEntries.Clear();
                 _exportOrdinalOutOfRangeCount = 0;
-                _exportAnomalies = new ExportAnomalySummary(0, 0, 0);
+                _exportAnomalies = new ExportAnomalySummary(0, 0, 0, 0);
                 _exportDllName = string.Empty;
                 _boundImports.Clear();
                 _debugDirectories.Clear();
                 _baseRelocations.Clear();
-                _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0);
+                _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0);
+                _exceptionDirectoryRva = 0;
+                _exceptionDirectorySize = 0;
+                _exceptionDirectorySectionName = string.Empty;
+                _exceptionDirectoryInPdata = false;
                 _exceptionFunctions.Clear();
                 _unwindInfoDetails.Clear();
                 _exceptionSummary = null;
@@ -10125,8 +10717,10 @@ namespace PECoff
                 _loadConfig = null;
                 _clrMetadata = null;
                 _strongNameSignature = null;
+                _strongNameValidation = null;
                 _fileAlignment = 0;
                 _sectionAlignment = 0;
+                _imageBase = 0;
                 _sizeOfImage = 0;
                 _sizeOfCode = 0;
                 _sizeOfInitializedData = 0;
@@ -10194,6 +10788,7 @@ namespace PECoff
                     _timeDateStamp = peHeader.FileHeader.TimeDateStamp;
                     _fileAlignment = peHeader.FileAlignment;
                     _sectionAlignment = peHeader.SectionAlignment;
+                    _imageBase = peHeader.ImageBase;
                     _sizeOfImage = peHeader.SizeOfImage;
                     _sizeOfCode = peHeader.SizeOfCode;
                     _sizeOfInitializedData = peHeader.SizeOfInitializedData;
@@ -10614,6 +11209,30 @@ namespace PECoff
                                     Array.Copy(buffer, offset + headerSize, certData, 0, certDataLength);
                                     _certificates.Add(certData);
                                     CertificateTypeKind typeKind = (CertificateTypeKind)certHeader.wCertificateType;
+                                    ushort revisionValue = (ushort)certHeader.wRevision;
+                                    if (certHeader.wRevision != CertificateRevision.WIN_CERT_REVISION_1_0 &&
+                                        certHeader.wRevision != CertificateRevision.WIN_CERT_REVISION_2_0)
+                                    {
+                                        Warn(ParseIssueCategory.Certificates, $"Certificate entry has unknown revision 0x{revisionValue:X4}.");
+                                    }
+
+                                    int aligned = Align8(entryLength);
+                                    if (entryLength % 8 != 0)
+                                    {
+                                        Warn(ParseIssueCategory.Certificates, $"Certificate entry length {entryLength} is not 8-byte aligned.");
+                                    }
+
+                                    if (aligned <= 0)
+                                    {
+                                        break;
+                                    }
+
+                                    if (offset + aligned > buffer.Length)
+                                    {
+                                        Warn(ParseIssueCategory.Certificates, "Certificate entry alignment exceeds certificate table size.");
+                                        break;
+                                    }
+
                                     Pkcs7SignerInfo[] pkcs7Signers = Array.Empty<Pkcs7SignerInfo>();
                                     string pkcs7Error = string.Empty;
                                     AuthenticodeVerificationResult[] authenticodeResults = Array.Empty<AuthenticodeVerificationResult>();
@@ -10650,13 +11269,20 @@ namespace PECoff
                                     }
 
                                     AuthenticodeStatusInfo statusInfo = CertificateUtilities.BuildAuthenticodeStatus(pkcs7Signers, _options?.AuthenticodePolicy);
-                                    _certificateEntries.Add(new CertificateEntry(typeKind, certData, pkcs7Signers, pkcs7Error, authenticodeResults, statusInfo));
-
-                                    int aligned = Align8(entryLength);
-                                    if (aligned <= 0)
-                                    {
-                                        break;
-                                    }
+                                    long entryOffset = _certificateTableOffset + offset;
+                                    int padding = aligned - entryLength;
+                                    _certificateEntries.Add(new CertificateEntry(
+                                        typeKind,
+                                        certData,
+                                        certHeader.dwLength,
+                                        revisionValue,
+                                        aligned,
+                                        padding,
+                                        entryOffset,
+                                        pkcs7Signers,
+                                        pkcs7Error,
+                                        authenticodeResults,
+                                        statusInfo));
 
                                     offset += aligned;
                                 }

@@ -13,10 +13,11 @@ public class ExportAnomalyTests
             new ExportEntry("Bar", 1, 0, false, string.Empty)
         };
 
-        ExportAnomalySummary summary = PECOFF.ComputeExportAnomaliesForTest(entries, 2);
+        ExportAnomalySummary summary = PECOFF.ComputeExportAnomaliesForTest(entries, 2, 0);
 
         Assert.Equal(1, summary.DuplicateNameCount);
         Assert.Equal(1, summary.DuplicateOrdinalCount);
         Assert.Equal(2, summary.OrdinalOutOfRangeCount);
+        Assert.Equal(0, summary.ForwarderMissingTargetCount);
     }
 }

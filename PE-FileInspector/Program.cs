@@ -29,6 +29,29 @@ namespace PE_FileInspector
             public string OutputDir { get; set; } = string.Empty;
             public string FilePath { get; set; } = string.Empty;
             public bool? SuppressCssm { get; set; }
+            public ReportFilter Filter { get; } = new ReportFilter();
+        }
+
+        private sealed class ReportFilter
+        {
+            public HashSet<string> Include { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> Exclude { get; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            public bool ShouldInclude(string sectionKey)
+            {
+                string key = NormalizeSectionKey(sectionKey);
+                if (Include.Count > 0 && !Include.Contains(key))
+                {
+                    return false;
+                }
+
+                if (Exclude.Contains(key))
+                {
+                    return false;
+                }
+
+                return true;
+            }
         }
 
         private static int Main(string[] args)
@@ -115,7 +138,7 @@ namespace PE_FileInspector
                     }
                 }
 
-                string report = BuildReport(options.FilePath, pe, certPaths, pemPaths);
+                string report = BuildReport(options.FilePath, pe, certPaths, pemPaths, options.Filter);
                 File.WriteAllText(reportPath, report, Encoding.UTF8);
 
                 Console.WriteLine("Report written to: {0}", reportPath);
@@ -142,7 +165,7 @@ namespace PE_FileInspector
             }
         }
 
-        private static string BuildReport(string filePath, PECOFF pe, List<string> certPaths, List<string> pemPaths)
+        private static string BuildReport(string filePath, PECOFF pe, List<string> certPaths, List<string> pemPaths, ReportFilter filter)
         {
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("PE File Inspection Report");
@@ -150,317 +173,371 @@ namespace PE_FileInspector
             sb.AppendLine("Generated: " + DateTimeOffset.Now.ToString("u", CultureInfo.InvariantCulture));
             sb.AppendLine();
 
-            FileInfo fi = new FileInfo(filePath);
-            sb.AppendLine("File Information:");
-            sb.AppendLine("  Full Path: " + filePath);
-            sb.AppendLine("  File Name: " + fi.Name);
-            sb.AppendLine("  Extension: " + fi.Extension);
-            sb.AppendLine("  Directory: " + fi.DirectoryName);
-            sb.AppendLine("  Size (bytes): " + fi.Length.ToString(CultureInfo.InvariantCulture));
-            sb.AppendLine("  SHA256: " + (pe.Hash ?? string.Empty));
-            sb.AppendLine();
-
-            sb.AppendLine("Version Information:");
-            sb.AppendLine("  Product Version: " + Safe(pe.ProductVersion));
-            sb.AppendLine("  File Version: " + Safe(pe.FileVersion));
-            sb.AppendLine("  Company Name: " + Safe(pe.CompanyName));
-            sb.AppendLine("  File Description: " + Safe(pe.FileDescription));
-            sb.AppendLine("  Internal Name: " + Safe(pe.InternalName));
-            sb.AppendLine("  Original Filename: " + Safe(pe.OriginalFilename));
-            sb.AppendLine("  Product Name: " + Safe(pe.ProductName));
-            sb.AppendLine("  Copyright: " + Safe(pe.LegalCopyright));
-            sb.AppendLine("  Trademarks: " + Safe(pe.LegalTrademarks));
-            sb.AppendLine("  Language: " + Safe(pe.Language));
-            sb.AppendLine("  Comments: " + Safe(pe.Comments));
-            sb.AppendLine("  Private Build: " + Safe(pe.PrivateBuild));
-            sb.AppendLine("  Special Build: " + Safe(pe.SpecialBuild));
-            if (pe.VersionInfoDetails != null)
+            if (filter.ShouldInclude("file-info"))
             {
-                if (pe.VersionInfoDetails.Translations.Count > 0)
+                FileInfo fi = new FileInfo(filePath);
+                sb.AppendLine("File Information:");
+                sb.AppendLine("  Full Path: " + filePath);
+                sb.AppendLine("  File Name: " + fi.Name);
+                sb.AppendLine("  Extension: " + fi.Extension);
+                sb.AppendLine("  Directory: " + fi.DirectoryName);
+                sb.AppendLine("  Size (bytes): " + fi.Length.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  SHA256: " + (pe.Hash ?? string.Empty));
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("version-info"))
+            {
+                sb.AppendLine("Version Information:");
+                sb.AppendLine("  Product Version: " + Safe(pe.ProductVersion));
+                sb.AppendLine("  File Version: " + Safe(pe.FileVersion));
+                sb.AppendLine("  Company Name: " + Safe(pe.CompanyName));
+                sb.AppendLine("  File Description: " + Safe(pe.FileDescription));
+                sb.AppendLine("  Internal Name: " + Safe(pe.InternalName));
+                sb.AppendLine("  Original Filename: " + Safe(pe.OriginalFilename));
+                sb.AppendLine("  Product Name: " + Safe(pe.ProductName));
+                sb.AppendLine("  Copyright: " + Safe(pe.LegalCopyright));
+                sb.AppendLine("  Trademarks: " + Safe(pe.LegalTrademarks));
+                sb.AppendLine("  Language: " + Safe(pe.Language));
+                sb.AppendLine("  Comments: " + Safe(pe.Comments));
+                sb.AppendLine("  Private Build: " + Safe(pe.PrivateBuild));
+                sb.AppendLine("  Special Build: " + Safe(pe.SpecialBuild));
+                if (pe.VersionInfoDetails != null)
                 {
-                    sb.AppendLine("  Translations:");
-                    foreach (VersionTranslationInfo translation in pe.VersionInfoDetails.Translations)
+                    if (pe.VersionInfoDetails.Translations.Count > 0)
                     {
-                        sb.AppendLine("    - " + translation.DisplayName);
-                    }
-                }
-
-                if (pe.VersionInfoDetails.StringTables.Count > 0)
-                {
-                    sb.AppendLine("  String Tables:");
-                    foreach (VersionStringTableInfo table in pe.VersionInfoDetails.StringTables)
-                    {
-                        sb.AppendLine("    - " + table.Key + " (" + table.Values.Count.ToString(CultureInfo.InvariantCulture) + " entries)");
-                    }
-                }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("PE Analysis:");
-            sb.AppendLine("  Is .NET File: " + pe.IsDotNetFile);
-            sb.AppendLine("  Is Obfuscated: " + pe.IsObfuscated);
-            sb.AppendLine("  Obfuscation Percentage: " + pe.ObfuscationPercentage.ToString(CultureInfo.InvariantCulture));
-            sb.AppendLine("  Import Hash: " + Safe(pe.ImportHash));
-            if (pe.ApiSetSchema != null)
-            {
-                if (pe.ApiSetSchema.Loaded)
-                {
-                    sb.AppendLine("  API Set Schema: v" + pe.ApiSetSchema.Version.ToString(CultureInfo.InvariantCulture) +
-                                  " (" + Safe(pe.ApiSetSchema.Flavor) + ") " + Safe(pe.ApiSetSchema.SourcePath));
-                }
-                else if (!string.IsNullOrWhiteSpace(pe.ApiSetSchema.SourcePath))
-                {
-                    sb.AppendLine("  API Set Schema: not loaded (" + Safe(pe.ApiSetSchema.SourcePath) + ")");
-                }
-            }
-            sb.AppendLine("  File Alignment: " + pe.FileAlignment.ToString(CultureInfo.InvariantCulture));
-            sb.AppendLine("  Section Alignment: " + pe.SectionAlignment.ToString(CultureInfo.InvariantCulture));
-            sb.AppendLine("  Size Of Headers: " + pe.SizeOfHeaders.ToString(CultureInfo.InvariantCulture));
-            if (pe.OverlayInfo != null)
-            {
-                sb.AppendLine("  Overlay Start: 0x" + pe.OverlayInfo.StartOffset.ToString("X", CultureInfo.InvariantCulture));
-                sb.AppendLine("  Overlay Size: " + pe.OverlayInfo.Size.ToString(CultureInfo.InvariantCulture));
-            }
-            if (pe.PackingHints.Count > 0)
-            {
-                sb.AppendLine("  Packing Hints:");
-                foreach (PackingHintInfo hint in pe.PackingHints)
-                {
-                    sb.AppendLine("    - " + hint.Kind + ": " + Safe(hint.Name) + " | " + Safe(hint.Evidence));
-                }
-            }
-            else
-            {
-                sb.AppendLine("  Packing Hints: (none)");
-            }
-            sb.AppendLine("  Optional Header Checksum: 0x" + pe.OptionalHeaderChecksum.ToString("X8", CultureInfo.InvariantCulture));
-            sb.AppendLine("  Computed Checksum: 0x" + pe.ComputedChecksum.ToString("X8", CultureInfo.InvariantCulture));
-            sb.AppendLine("  Checksum Valid: " + pe.IsChecksumValid);
-            if (pe.SubsystemInfo != null)
-            {
-                sb.AppendLine("  Subsystem: " + pe.SubsystemInfo.Name + " (0x" + pe.SubsystemInfo.Value.ToString("X4", CultureInfo.InvariantCulture) + ")");
-                sb.AppendLine("  Subsystem GUI: " + pe.SubsystemInfo.IsGui);
-                sb.AppendLine("  Subsystem Console: " + pe.SubsystemInfo.IsConsole);
-            }
-            if (pe.DllCharacteristicsInfo != null)
-            {
-                sb.AppendLine("  DllCharacteristics: 0x" + pe.DllCharacteristicsInfo.Value.ToString("X4", CultureInfo.InvariantCulture));
-                sb.AppendLine("  NX Compat: " + pe.DllCharacteristicsInfo.NxCompat);
-                sb.AppendLine("  ASLR: " + pe.DllCharacteristicsInfo.AslrEnabled);
-                bool cfgEnabled = pe.DllCharacteristicsInfo.GuardCf || (pe.LoadConfig != null && pe.LoadConfig.GuardFlags != 0);
-                sb.AppendLine("  CFG: " + cfgEnabled);
-                sb.AppendLine("  High Entropy VA: " + pe.DllCharacteristicsInfo.HighEntropyVa);
-                if (pe.DllCharacteristicsInfo.Flags.Length > 0)
-                {
-                    sb.AppendLine("  DllCharacteristics Flags:");
-                    foreach (string flag in pe.DllCharacteristicsInfo.Flags)
-                    {
-                        sb.AppendLine("    - " + flag);
-                    }
-                }
-            }
-            if (pe.SecurityFeaturesInfo != null)
-            {
-                sb.AppendLine("  Security Features:");
-                sb.AppendLine("    NX Compat: " + pe.SecurityFeaturesInfo.NxCompat);
-                sb.AppendLine("    ASLR: " + pe.SecurityFeaturesInfo.AslrEnabled);
-                sb.AppendLine("    High Entropy VA: " + pe.SecurityFeaturesInfo.HighEntropyVa);
-                sb.AppendLine("    CFG: " + pe.SecurityFeaturesInfo.GuardCf);
-                sb.AppendLine("    Security Cookie: " + pe.SecurityFeaturesInfo.HasSecurityCookie);
-                sb.AppendLine("    SafeSEH: " + pe.SecurityFeaturesInfo.SafeSeh);
-                sb.AppendLine("    NO_SEH: " + pe.SecurityFeaturesInfo.NoSeh);
-            }
-            sb.AppendLine("  TimeDateStamp (raw): 0x" + pe.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
-            sb.AppendLine("  TimeDateStamp (UTC): " + (pe.TimeDateStampUtc?.ToString("u", CultureInfo.InvariantCulture) ?? string.Empty));
-            sb.AppendLine("  Has Certificate: " + pe.HasCertificate);
-            sb.AppendLine("  Certificate Count: " + certPaths.Count.ToString(CultureInfo.InvariantCulture));
-            if (certPaths.Count == 0)
-            {
-                sb.AppendLine("  Certificate Paths (Raw): (none)");
-            }
-            else
-            {
-                sb.AppendLine("  Certificate Paths (Raw):");
-                foreach (string path in certPaths)
-                {
-                    sb.AppendLine("    - " + path);
-                }
-            }
-            if (pemPaths.Count == 0)
-            {
-                sb.AppendLine("  Certificate Paths (PEM): (none)");
-            }
-            else
-            {
-                sb.AppendLine("  Certificate Paths (PEM):");
-                foreach (string path in pemPaths)
-                {
-                    sb.AppendLine("    - " + path);
-                }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Section Entropy:");
-            if (pe.SectionEntropies.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                foreach (SectionEntropyInfo entry in pe.SectionEntropies.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase))
-                {
-                    sb.AppendLine("  - " + entry.Name +
-                                  " | Size: " + entry.RawSize.ToString(CultureInfo.InvariantCulture) +
-                                  " | Entropy: " + entry.Entropy.ToString("F3", CultureInfo.InvariantCulture));
-                }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Section Permissions:");
-            if (pe.SectionPermissions.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                foreach (SectionPermissionInfo info in pe.SectionPermissions.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase))
-                {
-                    string flags = info.Flags.Count > 0 ? string.Join(",", info.Flags) : "(none)";
-                    sb.AppendLine("  - " + Safe(info.Name) +
-                                  " | Flags: " + flags +
-                                  " | R:" + info.IsReadable +
-                                  " W:" + info.IsWritable +
-                                  " X:" + info.IsExecutable +
-                                  " | Suspicious: " + info.HasSuspiciousPermissions +
-                                  " | Mismatch: " + info.HasMismatch);
-                }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Section Padding:");
-            if (pe.SectionSlacks.Length == 0 && pe.SectionGaps.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                if (pe.SectionSlacks.Length > 0)
-                {
-                    sb.AppendLine("  Trailing Slack:");
-                    foreach (SectionSlackInfo slack in pe.SectionSlacks)
-                    {
-                        sb.AppendLine("    - " + slack.SectionName +
-                                      " | Offset: 0x" + slack.FileOffset.ToString("X", CultureInfo.InvariantCulture) +
-                                      " | Size: " + slack.Size.ToString(CultureInfo.InvariantCulture) +
-                                      " | NonZero: " + slack.NonZeroCount.ToString(CultureInfo.InvariantCulture) +
-                                      " | Sampled: " + slack.SampledBytes.ToString(CultureInfo.InvariantCulture));
-                    }
-                }
-
-                if (pe.SectionGaps.Length > 0)
-                {
-                    sb.AppendLine("  Gaps:");
-                    foreach (SectionGapInfo gap in pe.SectionGaps)
-                    {
-                        sb.AppendLine("    - " + Safe(gap.PreviousSection) + " -> " + Safe(gap.NextSection) +
-                                      " | Offset: 0x" + gap.FileOffset.ToString("X", CultureInfo.InvariantCulture) +
-                                      " | Size: " + gap.Size.ToString(CultureInfo.InvariantCulture) +
-                                      " | NonZero: " + gap.NonZeroCount.ToString(CultureInfo.InvariantCulture) +
-                                      " | Sampled: " + gap.SampledBytes.ToString(CultureInfo.InvariantCulture));
-                    }
-                }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Certificate Signer Information:");
-            CertificateEntry[] certEntries = pe.CertificateEntries;
-            if (certEntries.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                for (int i = 0; i < certEntries.Length; i++)
-                {
-                    CertificateEntry entry = certEntries[i];
-                    string typeToken = CertificateUtilities.GetCertificateTypeToken(entry.Type);
-                    sb.AppendLine("  Entry " + (i + 1).ToString(CultureInfo.InvariantCulture) +
-                                  " (" + typeToken + ", " + entry.Data.Length.ToString(CultureInfo.InvariantCulture) + " bytes)");
-                    if (entry.AuthenticodeStatus != null)
-                    {
-                        sb.AppendLine("    Status: Signers=" + entry.AuthenticodeStatus.SignerCount.ToString(CultureInfo.InvariantCulture) +
-                                      " | SignatureValid=" + entry.AuthenticodeStatus.SignatureValid +
-                                      " | ChainValid=" + entry.AuthenticodeStatus.ChainValid +
-                                      " | Timestamp=" + entry.AuthenticodeStatus.HasTimestamp +
-                                      " | TimestampValid=" + entry.AuthenticodeStatus.TimestampValid);
-                        sb.AppendLine("    Policy Compliant: " + entry.AuthenticodeStatus.PolicyCompliant);
-                        if (entry.AuthenticodeStatus.PolicyFailures.Count > 0)
+                        sb.AppendLine("  Translations:");
+                        foreach (VersionTranslationInfo translation in pe.VersionInfoDetails.Translations)
                         {
-                            sb.AppendLine("    Policy Failures:");
-                            foreach (string failure in entry.AuthenticodeStatus.PolicyFailures)
+                            sb.AppendLine("    - " + translation.DisplayName);
+                        }
+                    }
+
+                    if (pe.VersionInfoDetails.StringTables.Count > 0)
+                    {
+                        sb.AppendLine("  String Tables:");
+                        foreach (VersionStringTableInfo table in pe.VersionInfoDetails.StringTables)
+                        {
+                            sb.AppendLine("    - " + table.Key + " (" + table.Values.Count.ToString(CultureInfo.InvariantCulture) + " entries)");
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("pe-analysis"))
+            {
+                sb.AppendLine("PE Analysis:");
+                sb.AppendLine("  Is .NET File: " + pe.IsDotNetFile);
+                sb.AppendLine("  Is Obfuscated: " + pe.IsObfuscated);
+                sb.AppendLine("  Obfuscation Percentage: " + pe.ObfuscationPercentage.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  Import Hash: " + Safe(pe.ImportHash));
+                if (pe.ApiSetSchema != null)
+                {
+                    if (pe.ApiSetSchema.Loaded)
+                    {
+                        sb.AppendLine("  API Set Schema: v" + pe.ApiSetSchema.Version.ToString(CultureInfo.InvariantCulture) +
+                                      " (" + Safe(pe.ApiSetSchema.Flavor) + ") " + Safe(pe.ApiSetSchema.SourcePath));
+                    }
+                    else if (!string.IsNullOrWhiteSpace(pe.ApiSetSchema.SourcePath))
+                    {
+                        sb.AppendLine("  API Set Schema: not loaded (" + Safe(pe.ApiSetSchema.SourcePath) + ")");
+                    }
+                }
+                sb.AppendLine("  File Alignment: " + pe.FileAlignment.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  Section Alignment: " + pe.SectionAlignment.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  Size Of Headers: " + pe.SizeOfHeaders.ToString(CultureInfo.InvariantCulture));
+                if (pe.OverlayInfo != null)
+                {
+                    sb.AppendLine("  Overlay Start: 0x" + pe.OverlayInfo.StartOffset.ToString("X", CultureInfo.InvariantCulture));
+                    sb.AppendLine("  Overlay Size: " + pe.OverlayInfo.Size.ToString(CultureInfo.InvariantCulture));
+                }
+                if (pe.PackingHints.Length > 0)
+                {
+                    sb.AppendLine("  Packing Hints:");
+                    foreach (PackingHintInfo hint in pe.PackingHints)
+                    {
+                        sb.AppendLine("    - " + hint.Kind + ": " + Safe(hint.Name) + " | " + Safe(hint.Evidence));
+                    }
+                }
+                else
+                {
+                    sb.AppendLine("  Packing Hints: (none)");
+                }
+                sb.AppendLine("  Optional Header Checksum: 0x" + pe.OptionalHeaderChecksum.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  Computed Checksum: 0x" + pe.ComputedChecksum.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  Checksum Valid: " + pe.IsChecksumValid);
+                if (pe.SubsystemInfo != null)
+                {
+                    sb.AppendLine("  Subsystem: " + pe.SubsystemInfo.Name + " (0x" + pe.SubsystemInfo.Value.ToString("X4", CultureInfo.InvariantCulture) + ")");
+                    sb.AppendLine("  Subsystem GUI: " + pe.SubsystemInfo.IsGui);
+                    sb.AppendLine("  Subsystem Console: " + pe.SubsystemInfo.IsConsole);
+                }
+                if (pe.DllCharacteristicsInfo != null)
+                {
+                    sb.AppendLine("  DllCharacteristics: 0x" + pe.DllCharacteristicsInfo.Value.ToString("X4", CultureInfo.InvariantCulture));
+                    sb.AppendLine("  NX Compat: " + pe.DllCharacteristicsInfo.NxCompat);
+                    sb.AppendLine("  ASLR: " + pe.DllCharacteristicsInfo.AslrEnabled);
+                    bool cfgEnabled = pe.DllCharacteristicsInfo.GuardCf || (pe.LoadConfig != null && pe.LoadConfig.GuardFlags != 0);
+                    sb.AppendLine("  CFG: " + cfgEnabled);
+                    sb.AppendLine("  High Entropy VA: " + pe.DllCharacteristicsInfo.HighEntropyVa);
+                    if (pe.DllCharacteristicsInfo.Flags.Length > 0)
+                    {
+                        sb.AppendLine("  DllCharacteristics Flags:");
+                        foreach (string flag in pe.DllCharacteristicsInfo.Flags)
+                        {
+                            sb.AppendLine("    - " + flag);
+                        }
+                    }
+                }
+                if (pe.SecurityFeaturesInfo != null)
+                {
+                    sb.AppendLine("  Security Features:");
+                    sb.AppendLine("    NX Compat: " + pe.SecurityFeaturesInfo.NxCompat);
+                    sb.AppendLine("    ASLR: " + pe.SecurityFeaturesInfo.AslrEnabled);
+                    sb.AppendLine("    High Entropy VA: " + pe.SecurityFeaturesInfo.HighEntropyVa);
+                    sb.AppendLine("    CFG: " + pe.SecurityFeaturesInfo.GuardCf);
+                    sb.AppendLine("    Security Cookie: " + pe.SecurityFeaturesInfo.HasSecurityCookie);
+                    sb.AppendLine("    SafeSEH: " + pe.SecurityFeaturesInfo.SafeSeh);
+                    sb.AppendLine("    NO_SEH: " + pe.SecurityFeaturesInfo.NoSeh);
+                }
+                sb.AppendLine("  TimeDateStamp (raw): 0x" + pe.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  TimeDateStamp (UTC): " + (pe.TimeDateStampUtc?.ToString("u", CultureInfo.InvariantCulture) ?? string.Empty));
+                sb.AppendLine("  Has Certificate: " + pe.HasCertificate);
+                sb.AppendLine("  Certificate Count: " + certPaths.Count.ToString(CultureInfo.InvariantCulture));
+                if (certPaths.Count == 0)
+                {
+                    sb.AppendLine("  Certificate Paths (Raw): (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Certificate Paths (Raw):");
+                    foreach (string path in certPaths)
+                    {
+                        sb.AppendLine("    - " + path);
+                    }
+                }
+                if (pemPaths.Count == 0)
+                {
+                    sb.AppendLine("  Certificate Paths (PEM): (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Certificate Paths (PEM):");
+                    foreach (string path in pemPaths)
+                    {
+                        sb.AppendLine("    - " + path);
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("section-entropy"))
+            {
+                sb.AppendLine("Section Entropy:");
+                if (pe.SectionEntropies.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (SectionEntropyInfo entry in pe.SectionEntropies.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        sb.AppendLine("  - " + entry.Name +
+                                      " | Size: " + entry.RawSize.ToString(CultureInfo.InvariantCulture) +
+                                      " | Entropy: " + entry.Entropy.ToString("F3", CultureInfo.InvariantCulture));
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("section-permissions"))
+            {
+                sb.AppendLine("Section Permissions:");
+                if (pe.SectionPermissions.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (SectionPermissionInfo info in pe.SectionPermissions.OrderBy(s => s.Name, StringComparer.OrdinalIgnoreCase))
+                    {
+                        string flags = info.Flags.Count > 0 ? string.Join(",", info.Flags) : "(none)";
+                        sb.AppendLine("  - " + Safe(info.Name) +
+                                      " | Flags: " + flags +
+                                      " | R:" + info.IsReadable +
+                                      " W:" + info.IsWritable +
+                                      " X:" + info.IsExecutable +
+                                      " | Suspicious: " + info.HasSuspiciousPermissions +
+                                      " | Mismatch: " + info.HasMismatch);
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("section-padding"))
+            {
+                sb.AppendLine("Section Padding:");
+                if (pe.SectionSlacks.Length == 0 && pe.SectionGaps.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    if (pe.SectionSlacks.Length > 0)
+                    {
+                        sb.AppendLine("  Trailing Slack:");
+                        foreach (SectionSlackInfo slack in pe.SectionSlacks)
+                        {
+                            sb.AppendLine("    - " + slack.SectionName +
+                                          " | Offset: 0x" + slack.FileOffset.ToString("X", CultureInfo.InvariantCulture) +
+                                          " | Size: " + slack.Size.ToString(CultureInfo.InvariantCulture) +
+                                          " | NonZero: " + slack.NonZeroCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Sampled: " + slack.SampledBytes.ToString(CultureInfo.InvariantCulture));
+                        }
+                    }
+
+                    if (pe.SectionGaps.Length > 0)
+                    {
+                        sb.AppendLine("  Gaps:");
+                        foreach (SectionGapInfo gap in pe.SectionGaps)
+                        {
+                            sb.AppendLine("    - " + Safe(gap.PreviousSection) + " -> " + Safe(gap.NextSection) +
+                                          " | Offset: 0x" + gap.FileOffset.ToString("X", CultureInfo.InvariantCulture) +
+                                          " | Size: " + gap.Size.ToString(CultureInfo.InvariantCulture) +
+                                          " | NonZero: " + gap.NonZeroCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Sampled: " + gap.SampledBytes.ToString(CultureInfo.InvariantCulture));
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("certificates"))
+            {
+                sb.AppendLine("Certificate Signer Information:");
+                CertificateEntry[] certEntries = pe.CertificateEntries;
+                if (certEntries.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    for (int i = 0; i < certEntries.Length; i++)
+                    {
+                        CertificateEntry entry = certEntries[i];
+                        string typeToken = CertificateUtilities.GetCertificateTypeToken(entry.Type);
+                        sb.AppendLine("  Entry " + (i + 1).ToString(CultureInfo.InvariantCulture) +
+                                      " (" + typeToken + ", " + entry.Data.Length.ToString(CultureInfo.InvariantCulture) + " bytes)");
+                        if (entry.DeclaredLength > 0)
+                        {
+                            sb.AppendLine("    Declared Length: " + entry.DeclaredLength.ToString(CultureInfo.InvariantCulture));
+                        }
+                        if (entry.Revision != 0)
+                        {
+                            sb.AppendLine("    Revision: " + CertificateUtilities.GetCertificateRevisionName(entry.Revision));
+                        }
+                        if (entry.AlignedLength > 0)
+                        {
+                            sb.AppendLine("    Aligned Length: " + entry.AlignedLength.ToString(CultureInfo.InvariantCulture));
+                        }
+                        if (entry.AlignmentPadding > 0)
+                        {
+                            sb.AppendLine("    Alignment Padding: " + entry.AlignmentPadding.ToString(CultureInfo.InvariantCulture));
+                        }
+                        if (entry.FileOffset >= 0)
+                        {
+                            sb.AppendLine("    File Offset: 0x" + entry.FileOffset.ToString("X", CultureInfo.InvariantCulture));
+                        }
+                        sb.AppendLine("    Is Aligned: " + entry.IsAligned);
+                        if (entry.AuthenticodeStatus != null)
+                        {
+                            sb.AppendLine("    Status: Signers=" + entry.AuthenticodeStatus.SignerCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | SignatureValid=" + entry.AuthenticodeStatus.SignatureValid +
+                                          " | ChainValid=" + entry.AuthenticodeStatus.ChainValid +
+                                          " | Timestamp=" + entry.AuthenticodeStatus.HasTimestamp +
+                                          " | TimestampValid=" + entry.AuthenticodeStatus.TimestampValid);
+                            sb.AppendLine("    Policy Compliant: " + entry.AuthenticodeStatus.PolicyCompliant);
+                            if (entry.AuthenticodeStatus.PolicyFailures.Count > 0)
                             {
-                                sb.AppendLine("      - " + Safe(failure));
+                                sb.AppendLine("    Policy Failures:");
+                                foreach (string failure in entry.AuthenticodeStatus.PolicyFailures)
+                                {
+                                    sb.AppendLine("      - " + Safe(failure));
+                                }
                             }
                         }
-                    }
 
-                    if (entry.Pkcs7SignerInfos == null || entry.Pkcs7SignerInfos.Length == 0)
-                    {
-                        if (!string.IsNullOrWhiteSpace(entry.Pkcs7Error))
+                        if (entry.Pkcs7SignerInfos == null || entry.Pkcs7SignerInfos.Length == 0)
                         {
-                            sb.AppendLine("    PKCS7 Error: " + entry.Pkcs7Error);
+                            if (!string.IsNullOrWhiteSpace(entry.Pkcs7Error))
+                            {
+                                sb.AppendLine("    PKCS7 Error: " + entry.Pkcs7Error);
+                            }
+                            else
+                            {
+                                sb.AppendLine("    (no PKCS7 signer info)");
+                            }
+                            if (entry.AuthenticodeResults != null && entry.AuthenticodeResults.Length > 0)
+                            {
+                                WriteAuthenticodeResults(sb, entry.AuthenticodeResults, "    ");
+                            }
+                            continue;
                         }
-                        else
+
+                        foreach (Pkcs7SignerInfo signer in entry.Pkcs7SignerInfos)
                         {
-                            sb.AppendLine("    (no PKCS7 signer info)");
+                            WriteSignerInfo(sb, signer, "    ");
                         }
+
                         if (entry.AuthenticodeResults != null && entry.AuthenticodeResults.Length > 0)
                         {
                             WriteAuthenticodeResults(sb, entry.AuthenticodeResults, "    ");
                         }
-                        continue;
-                    }
-
-                    foreach (Pkcs7SignerInfo signer in entry.Pkcs7SignerInfos)
-                    {
-                        WriteSignerInfo(sb, signer, "    ");
-                    }
-
-                    if (entry.AuthenticodeResults != null && entry.AuthenticodeResults.Length > 0)
-                    {
-                        WriteAuthenticodeResults(sb, entry.AuthenticodeResults, "    ");
                     }
                 }
+                sb.AppendLine();
             }
-            sb.AppendLine();
 
-            sb.AppendLine("Parse Status:");
-            sb.AppendLine("  Success: " + pe.ParseResult.IsSuccess);
-            if (pe.ParseResult.Errors.Count > 0)
+            if (filter.ShouldInclude("parse-status"))
             {
-                sb.AppendLine("  Errors:");
-                foreach (string error in pe.ParseResult.Errors)
+                sb.AppendLine("Parse Status:");
+                sb.AppendLine("  Success: " + pe.ParseResult.IsSuccess);
+                if (pe.ParseResult.Errors.Count > 0)
                 {
-                    sb.AppendLine("    - " + error);
+                    sb.AppendLine("  Errors:");
+                    foreach (string error in pe.ParseResult.Errors)
+                    {
+                        sb.AppendLine("    - " + error);
+                    }
                 }
-            }
-            if (pe.ParseResult.Warnings.Count > 0)
-            {
-                sb.AppendLine("  Warnings:");
-                foreach (string warning in pe.ParseResult.Warnings)
+                if (pe.ParseResult.Warnings.Count > 0)
                 {
-                    sb.AppendLine("    - " + warning);
+                    sb.AppendLine("  Warnings:");
+                    foreach (string warning in pe.ParseResult.Warnings)
+                    {
+                        sb.AppendLine("    - " + warning);
+                    }
                 }
+                sb.AppendLine();
             }
-            sb.AppendLine();
 
-            sb.AppendLine("CLR / .NET Metadata:");
-            if (pe.ClrMetadata == null)
+            if (filter.ShouldInclude("findings"))
             {
-                sb.AppendLine("  (none)");
+                sb.AppendLine("Findings:");
+                WriteFindings(sb, pe);
+                sb.AppendLine();
             }
-            else
+
+            if (filter.ShouldInclude("clr"))
             {
+                sb.AppendLine("CLR / .NET Metadata:");
+                if (pe.ClrMetadata == null)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
                 if (!string.IsNullOrWhiteSpace(pe.DotNetRuntimeHint))
                 {
                     sb.AppendLine("  Runtime Hint: " + Safe(pe.DotNetRuntimeHint));
@@ -473,6 +550,19 @@ namespace PE_FileInspector
                 sb.AppendLine("  32-bit Required: " + pe.ClrMetadata.Requires32Bit);
                 sb.AppendLine("  32-bit Preferred: " + pe.ClrMetadata.Prefers32Bit);
                 sb.AppendLine("  StrongName Signed: " + pe.ClrMetadata.StrongNameSigned);
+                if (pe.StrongNameValidation != null)
+                {
+                    sb.AppendLine("  StrongName Signature Present: " + pe.StrongNameValidation.HasSignature);
+                    sb.AppendLine("  StrongName Size Matches: " + pe.StrongNameValidation.SizeMatches);
+                    if (pe.StrongNameValidation.Issues.Count > 0)
+                    {
+                        sb.AppendLine("  StrongName Issues:");
+                        foreach (string issue in pe.StrongNameValidation.Issues)
+                        {
+                            sb.AppendLine("    - " + issue);
+                        }
+                    }
+                }
                 sb.AppendLine("  Metadata Valid: " + pe.ClrMetadata.IsValid);
                 if (pe.ClrMetadata.ValidationMessages != null && pe.ClrMetadata.ValidationMessages.Length > 0)
                 {
@@ -607,395 +697,440 @@ namespace PE_FileInspector
                         sb.AppendLine("    - " + stream.Name + " (Offset: " + stream.Offset.ToString(CultureInfo.InvariantCulture) + ", Size: " + stream.Size.ToString(CultureInfo.InvariantCulture) + ")");
                     }
                 }
+                }
+                sb.AppendLine();
             }
-            sb.AppendLine();
 
-            sb.AppendLine("Strong Name Signature:");
-            if (pe.StrongNameSignature == null)
+            if (filter.ShouldInclude("strong-name"))
             {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                sb.AppendLine("  RVA: 0x" + pe.StrongNameSignature.Rva.ToString("X8", CultureInfo.InvariantCulture));
-                sb.AppendLine("  Size: " + pe.StrongNameSignature.Size.ToString(CultureInfo.InvariantCulture));
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("ReadyToRun Header:");
-            if (pe.ReadyToRun == null)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                sb.AppendLine("  Signature: " + pe.ReadyToRun.SignatureText + " (0x" + pe.ReadyToRun.Signature.ToString("X8", CultureInfo.InvariantCulture) + ")");
-                sb.AppendLine("  Version: " + pe.ReadyToRun.MajorVersion.ToString(CultureInfo.InvariantCulture) + "." + pe.ReadyToRun.MinorVersion.ToString(CultureInfo.InvariantCulture));
-                sb.AppendLine("  Flags: 0x" + pe.ReadyToRun.Flags.ToString("X8", CultureInfo.InvariantCulture));
-                sb.AppendLine("  Section Count: " + pe.ReadyToRun.SectionCount.ToString(CultureInfo.InvariantCulture));
-                sb.AppendLine("  EntryPoint Sections: " + pe.ReadyToRun.EntryPointSectionCount.ToString(CultureInfo.InvariantCulture) +
-                              " | Total Size: " + pe.ReadyToRun.EntryPointSectionTotalSize.ToString(CultureInfo.InvariantCulture));
-                if (pe.ReadyToRun.Sections.Count == 0)
+                sb.AppendLine("Strong Name Signature:");
+                if (pe.StrongNameSignature == null)
                 {
-                    sb.AppendLine("  Sections: (none)");
+                    sb.AppendLine("  (none)");
                 }
                 else
                 {
-                    sb.AppendLine("  Sections:");
-                    foreach (ReadyToRunSectionInfo section in pe.ReadyToRun.Sections)
-                    {
-                        string name = string.IsNullOrWhiteSpace(section.Name) ? string.Empty : " (" + section.Name + ")";
-                        sb.AppendLine("    - Type: 0x" + section.Type.ToString("X8", CultureInfo.InvariantCulture) + name +
-                                      " | RVA: 0x" + section.Rva.ToString("X8", CultureInfo.InvariantCulture) +
-                                      " | Size: " + section.Size.ToString(CultureInfo.InvariantCulture));
-                    }
+                    sb.AppendLine("  RVA: 0x" + pe.StrongNameSignature.Rva.ToString("X8", CultureInfo.InvariantCulture));
+                    sb.AppendLine("  Size: " + pe.StrongNameSignature.Size.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("  Data Size: " + pe.StrongNameSignature.Data.Length.ToString(CultureInfo.InvariantCulture));
                 }
+                sb.AppendLine();
             }
-            sb.AppendLine();
 
-            sb.AppendLine("Assembly References:");
-            if (!pe.IsDotNetFile)
+            if (filter.ShouldInclude("readytorun"))
             {
-                sb.AppendLine("  (not a .NET assembly)");
-            }
-            else if (pe.AssemblyReferenceInfos.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                foreach (AssemblyReferenceInfo reference in pe.AssemblyReferenceInfos)
+                sb.AppendLine("ReadyToRun Header:");
+                if (pe.ReadyToRun == null)
                 {
-                    sb.AppendLine("  - " + reference.Name + " " + reference.Version);
+                    sb.AppendLine("  (none)");
                 }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Imports:");
-            if (pe.Imports.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                foreach (string import in pe.Imports)
+                else
                 {
-                    sb.AppendLine("  - " + import);
-                }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Import Details:");
-            if (pe.ImportEntries.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                var importGroups = pe.ImportEntries
-                    .GroupBy(entry => entry.DllName, StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase);
-
-                foreach (var group in importGroups)
-                {
-                    sb.AppendLine("  DLL: " + group.Key + " (" + group.Count().ToString(CultureInfo.InvariantCulture) + ")");
-                    foreach (ImportEntry entry in group.OrderBy(e => e.IsByOrdinal).ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
+                    sb.AppendLine("  Signature: " + pe.ReadyToRun.SignatureText + " (0x" + pe.ReadyToRun.Signature.ToString("X8", CultureInfo.InvariantCulture) + ")");
+                    sb.AppendLine("  Version: " + pe.ReadyToRun.MajorVersion.ToString(CultureInfo.InvariantCulture) + "." + pe.ReadyToRun.MinorVersion.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("  Flags: 0x" + pe.ReadyToRun.Flags.ToString("X8", CultureInfo.InvariantCulture));
+                    sb.AppendLine("  Section Count: " + pe.ReadyToRun.SectionCount.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("  EntryPoint Sections: " + pe.ReadyToRun.EntryPointSectionCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Total Size: " + pe.ReadyToRun.EntryPointSectionTotalSize.ToString(CultureInfo.InvariantCulture));
+                    if (pe.ReadyToRun.Sections.Count == 0)
                     {
-                        string source = entry.Source == ImportThunkSource.ImportAddressTable ? "IAT" : "INT";
-                        if (entry.IsByOrdinal)
-                        {
-                            sb.AppendLine("    - [" + source + "] Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
-                                          " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
-                        }
-                        else
-                        {
-                            sb.AppendLine("    - [" + source + "] Hint: " + entry.Hint.ToString(CultureInfo.InvariantCulture) +
-                                          ", Name: " + Safe(entry.Name) +
-                                          " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
-                        }
-                    }
-                }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Import Descriptors:");
-            if (pe.ImportDescriptors.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                foreach (ImportDescriptorInfo descriptor in pe.ImportDescriptors.OrderBy(d => d.DllName, StringComparer.OrdinalIgnoreCase))
-                {
-                    sb.AppendLine("  - " + Safe(descriptor.DllName) +
-                                  " | INT: " + descriptor.IntCount.ToString(CultureInfo.InvariantCulture) +
-                                  " | IAT: " + descriptor.IatCount.ToString(CultureInfo.InvariantCulture) +
-                                  " | Bound: " + descriptor.IsBound +
-                                  " | Stale: " + descriptor.IsBoundStale);
-                    if (descriptor.ApiSetResolution != null && descriptor.ApiSetResolution.IsApiSet)
-                    {
-                        string targets = descriptor.ApiSetResolution.Targets.Count > 0
-                            ? string.Join(", ", descriptor.ApiSetResolution.Targets)
-                            : "(unresolved)";
-                        string canonical = descriptor.ApiSetResolution.CanonicalTargets.Count > 0
-                            ? string.Join(", ", descriptor.ApiSetResolution.CanonicalTargets)
-                            : "(none)";
-                        sb.AppendLine("    ApiSet: " + Safe(descriptor.ApiSetResolution.ApiSetName) +
-                                      " -> " + targets +
-                                      " | Canonical: " + canonical +
-                                      " | Source: " + Safe(descriptor.ApiSetResolution.ResolutionSource) +
-                                      " | Confidence: " + Safe(descriptor.ApiSetResolution.ResolutionConfidence));
-                    }
-                    if (descriptor.IntOnlyFunctions.Count > 0)
-                    {
-                        sb.AppendLine("    INT-only: " + string.Join(", ", descriptor.IntOnlyFunctions.Take(10)));
-                        if (descriptor.IntOnlyFunctions.Count > 10)
-                        {
-                            sb.AppendLine("    (truncated)");
-                        }
-                    }
-                    if (descriptor.IatOnlyFunctions.Count > 0)
-                    {
-                        sb.AppendLine("    IAT-only: " + string.Join(", ", descriptor.IatOnlyFunctions.Take(10)));
-                        if (descriptor.IatOnlyFunctions.Count > 10)
-                        {
-                            sb.AppendLine("    (truncated)");
-                        }
-                    }
-                }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Delay Import Details:");
-            if (pe.DelayImportEntries.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                var delayGroups = pe.DelayImportEntries
-                    .GroupBy(entry => entry.DllName, StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase);
-
-                foreach (var group in delayGroups)
-                {
-                    sb.AppendLine("  DLL: " + group.Key + " (" + group.Count().ToString(CultureInfo.InvariantCulture) + ")");
-                    foreach (ImportEntry entry in group.OrderBy(e => e.IsByOrdinal).ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
-                    {
-                        string source = entry.Source == ImportThunkSource.ImportAddressTable ? "IAT" : "INT";
-                        if (entry.IsByOrdinal)
-                        {
-                            sb.AppendLine("    - [" + source + "] Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
-                                          " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
-                        }
-                        else
-                        {
-                            sb.AppendLine("    - [" + source + "] Hint: " + entry.Hint.ToString(CultureInfo.InvariantCulture) +
-                                          ", Name: " + Safe(entry.Name) +
-                                          " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
-                        }
-                    }
-                }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Delay Import Descriptors:");
-            if (pe.DelayImportDescriptors.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                foreach (DelayImportDescriptorInfo descriptor in pe.DelayImportDescriptors)
-                {
-                    sb.AppendLine("  - Dll: " + Safe(descriptor.DllName) +
-                                  " | Uses RVA: " + descriptor.UsesRva +
-                                  " | Bound: " + descriptor.IsBound +
-                                  " | TimeDateStamp: 0x" + descriptor.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
-                    if (descriptor.ApiSetResolution != null && descriptor.ApiSetResolution.IsApiSet)
-                    {
-                        string targets = descriptor.ApiSetResolution.Targets.Count > 0
-                            ? string.Join(", ", descriptor.ApiSetResolution.Targets)
-                            : "(unresolved)";
-                        string canonical = descriptor.ApiSetResolution.CanonicalTargets.Count > 0
-                            ? string.Join(", ", descriptor.ApiSetResolution.CanonicalTargets)
-                            : "(none)";
-                        sb.AppendLine("    ApiSet: " + Safe(descriptor.ApiSetResolution.ApiSetName) +
-                                      " -> " + targets +
-                                      " | Canonical: " + canonical +
-                                      " | Source: " + Safe(descriptor.ApiSetResolution.ResolutionSource) +
-                                      " | Confidence: " + Safe(descriptor.ApiSetResolution.ResolutionConfidence));
-                    }
-                    sb.AppendLine("    ModuleHandle RVA: 0x" + descriptor.ModuleHandleRva.ToString("X8", CultureInfo.InvariantCulture));
-                    sb.AppendLine("    IAT RVA: 0x" + descriptor.ImportAddressTableRva.ToString("X8", CultureInfo.InvariantCulture));
-                    sb.AppendLine("    INT RVA: 0x" + descriptor.ImportNameTableRva.ToString("X8", CultureInfo.InvariantCulture));
-                    sb.AppendLine("    Bound IAT RVA: 0x" + descriptor.BoundImportAddressTableRva.ToString("X8", CultureInfo.InvariantCulture));
-                    sb.AppendLine("    Unload Info RVA: 0x" + descriptor.UnloadInformationTableRva.ToString("X8", CultureInfo.InvariantCulture));
-                }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Bound Imports:");
-            if (pe.BoundImports.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                foreach (BoundImportEntry bound in pe.BoundImports)
-                {
-                    sb.AppendLine("  - Dll: " + Safe(bound.DllName) +
-                                  " | TimeDateStamp: 0x" + bound.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
-                    if (bound.Forwarders.Length == 0)
-                    {
-                        sb.AppendLine("    Forwarders: (none)");
+                        sb.AppendLine("  Sections: (none)");
                     }
                     else
                     {
-                        sb.AppendLine("    Forwarders:");
-                        foreach (BoundForwarderRef forwarder in bound.Forwarders)
+                        sb.AppendLine("  Sections:");
+                        foreach (ReadyToRunSectionInfo section in pe.ReadyToRun.Sections)
                         {
-                            sb.AppendLine("      - " + Safe(forwarder.DllName) +
-                                          " | TimeDateStamp: 0x" + forwarder.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                            string name = string.IsNullOrWhiteSpace(section.Name) ? string.Empty : " (" + section.Name + ")";
+                            sb.AppendLine("    - Type: 0x" + section.Type.ToString("X8", CultureInfo.InvariantCulture) + name +
+                                          " | RVA: 0x" + section.Rva.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | Size: " + section.Size.ToString(CultureInfo.InvariantCulture));
                         }
                     }
                 }
+                sb.AppendLine();
             }
-            sb.AppendLine();
 
-            sb.AppendLine("Exports:");
-            if (pe.Exports.Length == 0)
+            if (filter.ShouldInclude("assembly-refs"))
             {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                foreach (string exportName in pe.Exports)
+                sb.AppendLine("Assembly References:");
+                if (!pe.IsDotNetFile)
                 {
-                    sb.AppendLine("  - " + exportName);
+                    sb.AppendLine("  (not a .NET assembly)");
                 }
+                else if (pe.AssemblyReferenceInfos.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (AssemblyReferenceInfo reference in pe.AssemblyReferenceInfos)
+                    {
+                        sb.AppendLine("  - " + reference.Name + " " + reference.Version);
+                    }
+                }
+                sb.AppendLine();
             }
-            sb.AppendLine();
 
-            if (pe.ExportAnomalies != null)
+            if (filter.ShouldInclude("imports"))
+            {
+                sb.AppendLine("Imports:");
+                if (pe.Imports.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (string import in pe.Imports)
+                    {
+                        sb.AppendLine("  - " + import);
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("import-details"))
+            {
+                sb.AppendLine("Import Details:");
+                if (pe.ImportEntries.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    var importGroups = pe.ImportEntries
+                        .GroupBy(entry => entry.DllName, StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var group in importGroups)
+                    {
+                        sb.AppendLine("  DLL: " + group.Key + " (" + group.Count().ToString(CultureInfo.InvariantCulture) + ")");
+                        foreach (ImportEntry entry in group.OrderBy(e => e.IsByOrdinal).ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
+                        {
+                            string source = entry.Source == ImportThunkSource.ImportAddressTable ? "IAT" : "INT";
+                            if (entry.IsByOrdinal)
+                            {
+                                sb.AppendLine("    - [" + source + "] Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
+                                              " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
+                            }
+                            else
+                            {
+                                sb.AppendLine("    - [" + source + "] Hint: " + entry.Hint.ToString(CultureInfo.InvariantCulture) +
+                                              ", Name: " + Safe(entry.Name) +
+                                              " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
+                            }
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("import-descriptors"))
+            {
+                sb.AppendLine("Import Descriptors:");
+                if (pe.ImportDescriptors.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (ImportDescriptorInfo descriptor in pe.ImportDescriptors.OrderBy(d => d.DllName, StringComparer.OrdinalIgnoreCase))
+                    {
+                        sb.AppendLine("  - " + Safe(descriptor.DllName) +
+                                      " | INT: " + descriptor.IntCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | IAT: " + descriptor.IatCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Bound: " + descriptor.IsBound +
+                                      " | Stale: " + descriptor.IsBoundStale);
+                        if (descriptor.ApiSetResolution != null && descriptor.ApiSetResolution.IsApiSet)
+                        {
+                            string targets = descriptor.ApiSetResolution.Targets.Count > 0
+                                ? string.Join(", ", descriptor.ApiSetResolution.Targets)
+                                : "(unresolved)";
+                            string canonical = descriptor.ApiSetResolution.CanonicalTargets.Count > 0
+                                ? string.Join(", ", descriptor.ApiSetResolution.CanonicalTargets)
+                                : "(none)";
+                            sb.AppendLine("    ApiSet: " + Safe(descriptor.ApiSetResolution.ApiSetName) +
+                                          " -> " + targets +
+                                          " | Canonical: " + canonical +
+                                          " | Source: " + Safe(descriptor.ApiSetResolution.ResolutionSource) +
+                                          " | Confidence: " + Safe(descriptor.ApiSetResolution.ResolutionConfidence));
+                        }
+                        if (descriptor.IntOnlyFunctions.Count > 0)
+                        {
+                            sb.AppendLine("    INT-only: " + string.Join(", ", descriptor.IntOnlyFunctions.Take(10)));
+                            if (descriptor.IntOnlyFunctions.Count > 10)
+                            {
+                                sb.AppendLine("    (truncated)");
+                            }
+                        }
+                        if (descriptor.IatOnlyFunctions.Count > 0)
+                        {
+                            sb.AppendLine("    IAT-only: " + string.Join(", ", descriptor.IatOnlyFunctions.Take(10)));
+                            if (descriptor.IatOnlyFunctions.Count > 10)
+                            {
+                                sb.AppendLine("    (truncated)");
+                            }
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("delay-import-details"))
+            {
+                sb.AppendLine("Delay Import Details:");
+                if (pe.DelayImportEntries.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    var delayGroups = pe.DelayImportEntries
+                        .GroupBy(entry => entry.DllName, StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase);
+
+                    foreach (var group in delayGroups)
+                    {
+                        sb.AppendLine("  DLL: " + group.Key + " (" + group.Count().ToString(CultureInfo.InvariantCulture) + ")");
+                        foreach (ImportEntry entry in group.OrderBy(e => e.IsByOrdinal).ThenBy(e => e.Name, StringComparer.OrdinalIgnoreCase))
+                        {
+                            string source = entry.Source == ImportThunkSource.ImportAddressTable ? "IAT" : "INT";
+                            if (entry.IsByOrdinal)
+                            {
+                                sb.AppendLine("    - [" + source + "] Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
+                                              " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
+                            }
+                            else
+                            {
+                                sb.AppendLine("    - [" + source + "] Hint: " + entry.Hint.ToString(CultureInfo.InvariantCulture) +
+                                              ", Name: " + Safe(entry.Name) +
+                                              " | Thunk RVA: 0x" + entry.ThunkRva.ToString("X8", CultureInfo.InvariantCulture));
+                            }
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("delay-import-descriptors"))
+            {
+                sb.AppendLine("Delay Import Descriptors:");
+                if (pe.DelayImportDescriptors.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (DelayImportDescriptorInfo descriptor in pe.DelayImportDescriptors)
+                    {
+                        sb.AppendLine("  - Dll: " + Safe(descriptor.DllName) +
+                                      " | Uses RVA: " + descriptor.UsesRva +
+                                      " | Bound: " + descriptor.IsBound +
+                                      " | TimeDateStamp: 0x" + descriptor.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                        if (descriptor.ApiSetResolution != null && descriptor.ApiSetResolution.IsApiSet)
+                        {
+                            string targets = descriptor.ApiSetResolution.Targets.Count > 0
+                                ? string.Join(", ", descriptor.ApiSetResolution.Targets)
+                                : "(unresolved)";
+                            string canonical = descriptor.ApiSetResolution.CanonicalTargets.Count > 0
+                                ? string.Join(", ", descriptor.ApiSetResolution.CanonicalTargets)
+                                : "(none)";
+                            sb.AppendLine("    ApiSet: " + Safe(descriptor.ApiSetResolution.ApiSetName) +
+                                          " -> " + targets +
+                                          " | Canonical: " + canonical +
+                                          " | Source: " + Safe(descriptor.ApiSetResolution.ResolutionSource) +
+                                          " | Confidence: " + Safe(descriptor.ApiSetResolution.ResolutionConfidence));
+                        }
+                        sb.AppendLine("    ModuleHandle RVA: 0x" + descriptor.ModuleHandleRva.ToString("X8", CultureInfo.InvariantCulture));
+                        sb.AppendLine("    IAT RVA: 0x" + descriptor.ImportAddressTableRva.ToString("X8", CultureInfo.InvariantCulture));
+                        sb.AppendLine("    INT RVA: 0x" + descriptor.ImportNameTableRva.ToString("X8", CultureInfo.InvariantCulture));
+                        sb.AppendLine("    Bound IAT RVA: 0x" + descriptor.BoundImportAddressTableRva.ToString("X8", CultureInfo.InvariantCulture));
+                        sb.AppendLine("    Unload Info RVA: 0x" + descriptor.UnloadInformationTableRva.ToString("X8", CultureInfo.InvariantCulture));
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("bound-imports"))
+            {
+                sb.AppendLine("Bound Imports:");
+                if (pe.BoundImports.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (BoundImportEntry bound in pe.BoundImports)
+                    {
+                        sb.AppendLine("  - Dll: " + Safe(bound.DllName) +
+                                      " | TimeDateStamp: 0x" + bound.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                        if (bound.Forwarders.Length == 0)
+                        {
+                            sb.AppendLine("    Forwarders: (none)");
+                        }
+                        else
+                        {
+                            sb.AppendLine("    Forwarders:");
+                            foreach (BoundForwarderRef forwarder in bound.Forwarders)
+                            {
+                                sb.AppendLine("      - " + Safe(forwarder.DllName) +
+                                              " | TimeDateStamp: 0x" + forwarder.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                            }
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("exports"))
+            {
+                sb.AppendLine("Exports:");
+                if (pe.Exports.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (string exportName in pe.Exports)
+                    {
+                        sb.AppendLine("  - " + exportName);
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("export-anomalies") && pe.ExportAnomalies != null)
             {
                 sb.AppendLine("Export Anomalies:");
                 sb.AppendLine("  Duplicate Names: " + pe.ExportAnomalies.DuplicateNameCount.ToString(CultureInfo.InvariantCulture) +
                               " | Duplicate Ordinals: " + pe.ExportAnomalies.DuplicateOrdinalCount.ToString(CultureInfo.InvariantCulture) +
-                              " | Ordinal OutOfRange: " + pe.ExportAnomalies.OrdinalOutOfRangeCount.ToString(CultureInfo.InvariantCulture));
+                              " | Ordinal OutOfRange: " + pe.ExportAnomalies.OrdinalOutOfRangeCount.ToString(CultureInfo.InvariantCulture) +
+                              " | Forwarder Missing Target: " + pe.ExportAnomalies.ForwarderMissingTargetCount.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine();
             }
 
-            sb.AppendLine("Export Details:");
-            if (pe.ExportEntries.Length == 0)
+            if (filter.ShouldInclude("export-details"))
             {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                foreach (ExportEntry entry in pe.ExportEntries.OrderBy(e => e.Ordinal))
+                sb.AppendLine("Export Details:");
+                if (pe.ExportEntries.Length == 0)
                 {
-                    string name = string.IsNullOrWhiteSpace(entry.Name) ? "(ordinal-only)" : entry.Name;
-                    string line = "  - Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
-                                  ", Name: " + name +
-                                  ", AddressRVA: 0x" + entry.AddressRva.ToString("X8", CultureInfo.InvariantCulture);
-                    if (entry.IsForwarder)
-                    {
-                        line += ", Forwarder: " + Safe(entry.Forwarder);
-                        if (entry.ForwarderChain.Count > 0)
-                        {
-                            line += ", ForwarderTarget: " + Safe(entry.ForwarderTarget);
-                        }
-                        line += ", ForwarderResolved: " + entry.ForwarderResolved;
-                    }
-                    sb.AppendLine(line);
-                    if (entry.IsForwarder && entry.ForwarderChain.Count > 0)
-                    {
-                        string chain = string.Join(" -> ", entry.ForwarderChain);
-                        if (entry.ForwarderHasCycle)
-                        {
-                            chain += " (cycle)";
-                        }
-                        sb.AppendLine("    ForwarderChain: " + chain);
-                    }
+                    sb.AppendLine("  (none)");
                 }
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Exception Directory:");
-            if (pe.ExceptionFunctions.Length == 0)
-            {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                if (pe.ExceptionSummary != null)
+                else
                 {
-                    sb.AppendLine("  Summary:");
-                    sb.AppendLine("    Functions: " + pe.ExceptionSummary.FunctionCount.ToString(CultureInfo.InvariantCulture));
-                    sb.AppendLine("    Invalid Ranges: " + pe.ExceptionSummary.InvalidRangeCount.ToString(CultureInfo.InvariantCulture));
-                    sb.AppendLine("    Out Of Range: " + pe.ExceptionSummary.OutOfRangeCount.ToString(CultureInfo.InvariantCulture));
-                    sb.AppendLine("    Unwind Infos: " + pe.ExceptionSummary.UnwindInfoCount.ToString(CultureInfo.InvariantCulture));
-                    sb.AppendLine("    Unwind Parse Failures: " + pe.ExceptionSummary.UnwindInfoParseFailures.ToString(CultureInfo.InvariantCulture));
-                    if (pe.ExceptionSummary.UnwindInfoVersions.Count > 0)
+                    foreach (ExportEntry entry in pe.ExportEntries.OrderBy(e => e.Ordinal))
                     {
-                        sb.AppendLine("    Unwind Versions:");
-                        foreach (UnwindInfoVersionCount version in pe.ExceptionSummary.UnwindInfoVersions)
+                        string name = string.IsNullOrWhiteSpace(entry.Name) ? "(ordinal-only)" : entry.Name;
+                        string line = "  - Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
+                                      ", Name: " + name +
+                                      ", AddressRVA: 0x" + entry.AddressRva.ToString("X8", CultureInfo.InvariantCulture);
+                        if (entry.IsForwarder)
                         {
-                            sb.AppendLine("      - v" + version.Version.ToString(CultureInfo.InvariantCulture) +
-                                          ": " + version.Count.ToString(CultureInfo.InvariantCulture));
-                        }
-                    }
-                }
-
-                if (pe.UnwindInfoDetails.Count > 0)
-                {
-                    sb.AppendLine("  Unwind Details:");
-                    foreach (UnwindInfoDetail detail in pe.UnwindInfoDetails.Take(20))
-                    {
-                        string line = "    - Function: 0x" + detail.FunctionBegin.ToString("X8", CultureInfo.InvariantCulture) +
-                                      "-0x" + detail.FunctionEnd.ToString("X8", CultureInfo.InvariantCulture) +
-                                      " | Unwind: 0x" + detail.UnwindInfoAddress.ToString("X8", CultureInfo.InvariantCulture) +
-                                      " | Prolog: " + detail.PrologSize.ToString(CultureInfo.InvariantCulture) +
-                                      " | Frame: " + detail.FrameRegister.ToString(CultureInfo.InvariantCulture) +
-                                      "/" + detail.FrameOffset.ToString(CultureInfo.InvariantCulture);
-                        if (detail.PrologSizeExceedsFunction)
-                        {
-                            line += " (prolog > size)";
+                            line += ", Forwarder: " + Safe(entry.Forwarder);
+                            if (entry.ForwarderChain.Count > 0)
+                            {
+                                line += ", ForwarderTarget: " + Safe(entry.ForwarderTarget);
+                            }
+                            line += ", ForwarderResolved: " + entry.ForwarderResolved;
                         }
                         sb.AppendLine(line);
-
-                        if (detail.UnwindCodes.Count > 0)
+                        if (entry.IsForwarder && entry.ForwarderChain.Count > 0)
                         {
-                            string codes = string.Join(", ",
-                                detail.UnwindCodes.Select(c =>
-                                    c.CodeOffset.ToString(CultureInfo.InvariantCulture) +
-                                    ":" + c.UnwindOp.ToString(CultureInfo.InvariantCulture) +
-                                    "/" + c.OpInfo.ToString(CultureInfo.InvariantCulture)));
-                            sb.AppendLine("      Codes: " + codes);
+                            string chain = string.Join(" -> ", entry.ForwarderChain);
+                            if (entry.ForwarderHasCycle)
+                            {
+                                chain += " (cycle)";
+                            }
+                            sb.AppendLine("    ForwarderChain: " + chain);
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("exception"))
+            {
+                sb.AppendLine("Exception Directory:");
+                if (pe.ExceptionFunctions.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    if (pe.ExceptionSummary != null)
+                    {
+                        sb.AppendLine("  Summary:");
+                        sb.AppendLine("    Directory RVA: 0x" + pe.ExceptionSummary.DirectoryRva.ToString("X8", CultureInfo.InvariantCulture));
+                        sb.AppendLine("    Directory Size: " + pe.ExceptionSummary.DirectorySize.ToString(CultureInfo.InvariantCulture));
+                        sb.AppendLine("    Directory Section: " + Safe(pe.ExceptionSummary.DirectorySection));
+                        sb.AppendLine("    In .pdata: " + pe.ExceptionSummary.DirectoryInPdata);
+                        sb.AppendLine("    Functions: " + pe.ExceptionSummary.FunctionCount.ToString(CultureInfo.InvariantCulture));
+                        sb.AppendLine("    Invalid Ranges: " + pe.ExceptionSummary.InvalidRangeCount.ToString(CultureInfo.InvariantCulture));
+                        sb.AppendLine("    Out Of Range: " + pe.ExceptionSummary.OutOfRangeCount.ToString(CultureInfo.InvariantCulture));
+                        sb.AppendLine("    Unwind Infos: " + pe.ExceptionSummary.UnwindInfoCount.ToString(CultureInfo.InvariantCulture));
+                        sb.AppendLine("    Unwind Parse Failures: " + pe.ExceptionSummary.UnwindInfoParseFailures.ToString(CultureInfo.InvariantCulture));
+                        if (pe.ExceptionSummary.UnwindInfoVersions.Count > 0)
+                        {
+                            sb.AppendLine("    Unwind Versions:");
+                            foreach (UnwindInfoVersionCount version in pe.ExceptionSummary.UnwindInfoVersions)
+                            {
+                                sb.AppendLine("      - v" + version.Version.ToString(CultureInfo.InvariantCulture) +
+                                              ": " + version.Count.ToString(CultureInfo.InvariantCulture));
+                            }
                         }
                     }
 
-                    if (pe.UnwindInfoDetails.Count > 20)
+                    if (pe.UnwindInfoDetails.Length > 0)
                     {
-                        sb.AppendLine("    (truncated)");
+                        sb.AppendLine("  Unwind Details:");
+                        foreach (UnwindInfoDetail detail in pe.UnwindInfoDetails.Take(20))
+                        {
+                            string line = "    - Function: 0x" + detail.FunctionBegin.ToString("X8", CultureInfo.InvariantCulture) +
+                                          "-0x" + detail.FunctionEnd.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | Unwind: 0x" + detail.UnwindInfoAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | Prolog: " + detail.PrologSize.ToString(CultureInfo.InvariantCulture) +
+                                          " | Frame: " + detail.FrameRegister.ToString(CultureInfo.InvariantCulture) +
+                                          "/" + detail.FrameOffset.ToString(CultureInfo.InvariantCulture);
+                            if (detail.PrologSizeExceedsFunction)
+                            {
+                                line += " (prolog > size)";
+                            }
+                            sb.AppendLine(line);
+
+                            if (detail.UnwindCodes.Count > 0)
+                            {
+                                string codes = string.Join(", ",
+                                    detail.UnwindCodes.Select(c =>
+                                        c.CodeOffset.ToString(CultureInfo.InvariantCulture) +
+                                        ":" + c.UnwindOp.ToString(CultureInfo.InvariantCulture) +
+                                        "/" + c.OpInfo.ToString(CultureInfo.InvariantCulture)));
+                                sb.AppendLine("      Codes: " + codes);
+                            }
+                        }
+
+                        if (pe.UnwindInfoDetails.Length > 20)
+                        {
+                            sb.AppendLine("    (truncated)");
+                        }
+                    }
+
+                    sb.AppendLine("  Functions: " + pe.ExceptionFunctions.Length.ToString(CultureInfo.InvariantCulture));
+                    foreach (ExceptionFunctionInfo func in pe.ExceptionFunctions.Take(50))
+                    {
+                        sb.AppendLine("  - Begin: 0x" + func.BeginAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | End: 0x" + func.EndAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Unwind: 0x" + func.UnwindInfoAddress.ToString("X8", CultureInfo.InvariantCulture));
+                    }
+                    if (pe.ExceptionFunctions.Length > 50)
+                    {
+                        sb.AppendLine("  (truncated)");
                     }
                 }
-
-                sb.AppendLine("  Functions: " + pe.ExceptionFunctions.Length.ToString(CultureInfo.InvariantCulture));
-                foreach (ExceptionFunctionInfo func in pe.ExceptionFunctions.Take(50))
-                {
-                    sb.AppendLine("  - Begin: 0x" + func.BeginAddress.ToString("X8", CultureInfo.InvariantCulture) +
-                                  " | End: 0x" + func.EndAddress.ToString("X8", CultureInfo.InvariantCulture) +
-                                  " | Unwind: 0x" + func.UnwindInfoAddress.ToString("X8", CultureInfo.InvariantCulture));
-                }
-                if (pe.ExceptionFunctions.Length > 50)
-                {
-                    sb.AppendLine("  (truncated)");
-                }
+                sb.AppendLine();
             }
-            sb.AppendLine();
 
+            if (filter.ShouldInclude("debug"))
+            {
             sb.AppendLine("Debug Directory:");
             if (pe.DebugDirectories.Length == 0)
             {
@@ -1053,7 +1188,10 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("relocations"))
+            {
             sb.AppendLine("Base Relocations:");
             if (pe.BaseRelocations.Length == 0)
             {
@@ -1103,11 +1241,15 @@ namespace PE_FileInspector
                     sb.AppendLine("  Anomalies: ZeroSized=" + pe.RelocationAnomalies.ZeroSizedBlockCount.ToString(CultureInfo.InvariantCulture) +
                                   " | Empty=" + pe.RelocationAnomalies.EmptyBlockCount.ToString(CultureInfo.InvariantCulture) +
                                   " | Invalid=" + pe.RelocationAnomalies.InvalidBlockCount.ToString(CultureInfo.InvariantCulture) +
-                                  " | Orphaned=" + pe.RelocationAnomalies.OrphanedBlockCount.ToString(CultureInfo.InvariantCulture));
+                                  " | Orphaned=" + pe.RelocationAnomalies.OrphanedBlockCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Discardable=" + pe.RelocationAnomalies.DiscardableBlockCount.ToString(CultureInfo.InvariantCulture));
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("tls"))
+            {
             sb.AppendLine("TLS Directory:");
             if (pe.TlsInfo == null)
             {
@@ -1168,139 +1310,180 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
-
-            sb.AppendLine("Load Config:");
-            if (pe.LoadConfig == null)
-            {
-                sb.AppendLine("  (none)");
             }
-            else
+
+            if (filter.ShouldInclude("load-config"))
             {
-                sb.AppendLine("  Size: " + pe.LoadConfig.Size.ToString(CultureInfo.InvariantCulture));
-                sb.AppendLine("  TimeDateStamp: 0x" + pe.LoadConfig.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
-                if (pe.LoadConfig.GlobalFlagsInfo != null)
+                sb.AppendLine("Load Config:");
+                if (pe.LoadConfig == null)
                 {
-                    sb.AppendLine("  GlobalFlags: 0x" + pe.LoadConfig.GlobalFlagsInfo.Value.ToString("X8", CultureInfo.InvariantCulture));
-                    if (pe.LoadConfig.GlobalFlagsInfo.Flags.Count > 0)
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Size: " + pe.LoadConfig.Size.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("  TimeDateStamp: 0x" + pe.LoadConfig.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
+                    if (pe.LoadConfig.GlobalFlagsInfo != null)
                     {
-                        sb.AppendLine("  Global Flags Decoded:");
-                        foreach (string flag in pe.LoadConfig.GlobalFlagsInfo.Flags)
+                        sb.AppendLine("  GlobalFlags: 0x" + pe.LoadConfig.GlobalFlagsInfo.Value.ToString("X8", CultureInfo.InvariantCulture));
+                        if (pe.LoadConfig.GlobalFlagsInfo.Flags.Count > 0)
+                        {
+                            sb.AppendLine("  Global Flags Decoded:");
+                            foreach (string flag in pe.LoadConfig.GlobalFlagsInfo.Flags)
+                            {
+                                sb.AppendLine("    - " + flag);
+                            }
+                        }
+                    }
+
+                    sb.AppendLine("  SecurityCookie: 0x" + pe.LoadConfig.SecurityCookie.ToString("X", CultureInfo.InvariantCulture));
+                    sb.AppendLine("  SEHandlerCount: " + pe.LoadConfig.SeHandlerCount.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("  GuardFlags: 0x" + pe.LoadConfig.GuardFlags.ToString("X8", CultureInfo.InvariantCulture));
+                    if (pe.LoadConfig.GuardFlagsInfo != null && pe.LoadConfig.GuardFlagsInfo.Flags.Count > 0)
+                    {
+                        sb.AppendLine("  Guard Flags Decoded:");
+                        foreach (string flag in pe.LoadConfig.GuardFlagsInfo.Flags)
                         {
                             sb.AppendLine("    - " + flag);
                         }
                     }
-                }
 
-                sb.AppendLine("  SecurityCookie: 0x" + pe.LoadConfig.SecurityCookie.ToString("X", CultureInfo.InvariantCulture));
-                sb.AppendLine("  SEHandlerCount: " + pe.LoadConfig.SeHandlerCount.ToString(CultureInfo.InvariantCulture));
-                sb.AppendLine("  GuardFlags: 0x" + pe.LoadConfig.GuardFlags.ToString("X8", CultureInfo.InvariantCulture));
-                if (pe.LoadConfig.GuardFlagsInfo != null && pe.LoadConfig.GuardFlagsInfo.Flags.Count > 0)
-                {
-                    sb.AppendLine("  Guard Flags Decoded:");
-                    foreach (string flag in pe.LoadConfig.GuardFlagsInfo.Flags)
+                    if (pe.LoadConfig.ChpeMetadataPointer != 0)
                     {
-                        sb.AppendLine("    - " + flag);
+                        sb.AppendLine("  CHPE Metadata Pointer: 0x" + pe.LoadConfig.ChpeMetadataPointer.ToString("X", CultureInfo.InvariantCulture));
+                    }
+
+                    if (pe.LoadConfig.GuardEhContinuationTable != 0 || pe.LoadConfig.GuardEhContinuationCount != 0)
+                    {
+                        sb.AppendLine("  GuardEH Continuation Table: 0x" + pe.LoadConfig.GuardEhContinuationTable.ToString("X", CultureInfo.InvariantCulture));
+                        sb.AppendLine("  GuardEH Continuation Count: " + pe.LoadConfig.GuardEhContinuationCount.ToString(CultureInfo.InvariantCulture));
+                    }
+
+                    if (pe.LoadConfig.GuardXfgCheckFunctionPointer != 0 ||
+                        pe.LoadConfig.GuardXfgDispatchFunctionPointer != 0 ||
+                        pe.LoadConfig.GuardXfgTableDispatchFunctionPointer != 0)
+                    {
+                        sb.AppendLine("  GuardXFG Check Function: 0x" + pe.LoadConfig.GuardXfgCheckFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
+                        sb.AppendLine("  GuardXFG Dispatch Function: 0x" + pe.LoadConfig.GuardXfgDispatchFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
+                        sb.AppendLine("  GuardXFG Table Dispatch: 0x" + pe.LoadConfig.GuardXfgTableDispatchFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
+                    }
+
+                    if (pe.LoadConfig.GuardFeatureMatrix != null && pe.LoadConfig.GuardFeatureMatrix.Count > 0)
+                    {
+                        sb.AppendLine("  Guard Feature Matrix:");
+                        foreach (GuardFeatureInfo feature in pe.LoadConfig.GuardFeatureMatrix)
+                        {
+                            sb.AppendLine("    - " + Safe(feature.Feature) +
+                                          " | Enabled: " + feature.Enabled +
+                                          " | Table: " + feature.HasTable +
+                                          " | Pointer: " + feature.HasPointer +
+                                          (string.IsNullOrWhiteSpace(feature.Notes) ? string.Empty : " | " + Safe(feature.Notes)));
+                        }
+                    }
+
+                    if (pe.LoadConfig.GuardTableSanity != null && pe.LoadConfig.GuardTableSanity.Count > 0)
+                    {
+                        sb.AppendLine("  Guard Table Sanity:");
+                        foreach (GuardTableSanityInfo info in pe.LoadConfig.GuardTableSanity)
+                        {
+                            sb.AppendLine("    - " + Safe(info.Name) +
+                                          " | Pointer: " + info.PointerPresent +
+                                          " | Count: " + info.CountPresent +
+                                          " | Mapped: " + info.MappedToSection +
+                                          " | SizeFits: " + info.SizeFits);
+                            if (!string.IsNullOrWhiteSpace(info.SectionName))
+                            {
+                                sb.AppendLine("      Section: " + Safe(info.SectionName) +
+                                              " (RVA 0x" + info.SectionRva.ToString("X8", CultureInfo.InvariantCulture) +
+                                              ", Size " + info.SectionSize.ToString(CultureInfo.InvariantCulture) + ")");
+                            }
+                            if (info.EstimatedSize > 0)
+                            {
+                                sb.AppendLine("      Estimated Size: " + info.EstimatedSize.ToString(CultureInfo.InvariantCulture));
+                            }
+                            if (!string.IsNullOrWhiteSpace(info.Notes))
+                            {
+                                sb.AppendLine("      Notes: " + Safe(info.Notes));
+                            }
+                        }
                     }
                 }
-
-                if (pe.LoadConfig.ChpeMetadataPointer != 0)
-                {
-                    sb.AppendLine("  CHPE Metadata Pointer: 0x" + pe.LoadConfig.ChpeMetadataPointer.ToString("X", CultureInfo.InvariantCulture));
-                }
-
-                if (pe.LoadConfig.GuardEhContinuationTable != 0 || pe.LoadConfig.GuardEhContinuationCount != 0)
-                {
-                    sb.AppendLine("  GuardEH Continuation Table: 0x" + pe.LoadConfig.GuardEhContinuationTable.ToString("X", CultureInfo.InvariantCulture));
-                    sb.AppendLine("  GuardEH Continuation Count: " + pe.LoadConfig.GuardEhContinuationCount.ToString(CultureInfo.InvariantCulture));
-                }
-
-                if (pe.LoadConfig.GuardXfgCheckFunctionPointer != 0 ||
-                    pe.LoadConfig.GuardXfgDispatchFunctionPointer != 0 ||
-                    pe.LoadConfig.GuardXfgTableDispatchFunctionPointer != 0)
-                {
-                    sb.AppendLine("  GuardXFG Check Function: 0x" + pe.LoadConfig.GuardXfgCheckFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
-                    sb.AppendLine("  GuardXFG Dispatch Function: 0x" + pe.LoadConfig.GuardXfgDispatchFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
-                    sb.AppendLine("  GuardXFG Table Dispatch: 0x" + pe.LoadConfig.GuardXfgTableDispatchFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
-                }
-
-                if (pe.LoadConfig.GuardFeatureMatrix != null && pe.LoadConfig.GuardFeatureMatrix.Count > 0)
-                {
-                    sb.AppendLine("  Guard Feature Matrix:");
-                    foreach (GuardFeatureInfo feature in pe.LoadConfig.GuardFeatureMatrix)
-                    {
-                        sb.AppendLine("    - " + Safe(feature.Feature) +
-                                      " | Enabled: " + feature.Enabled +
-                                      " | Table: " + feature.HasTable +
-                                      " | Pointer: " + feature.HasPointer +
-                                      (string.IsNullOrWhiteSpace(feature.Notes) ? string.Empty : " | " + Safe(feature.Notes)));
-                    }
-                }
+                sb.AppendLine();
             }
-            sb.AppendLine();
 
-            sb.AppendLine("Rich Header:");
-            if (pe.RichHeader == null || pe.RichHeader.Entries.Count == 0)
+            if (filter.ShouldInclude("rich-header"))
             {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                sb.AppendLine("  Key: 0x" + pe.RichHeader.Key.ToString("X8", CultureInfo.InvariantCulture));
-                foreach (RichHeaderEntry entry in pe.RichHeader.Entries)
+                sb.AppendLine("Rich Header:");
+                if (pe.RichHeader == null || pe.RichHeader.Entries.Count == 0)
                 {
-                    sb.AppendLine("  - Product: " + entry.ProductId.ToString(CultureInfo.InvariantCulture) +
-                                  " (" + Safe(entry.ProductName) + ")" +
-                                  " | Build: " + entry.BuildNumber.ToString(CultureInfo.InvariantCulture) +
-                                  " | Toolchain: " + Safe(entry.ToolchainVersion) +
-                                  " | Count: " + entry.Count.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("  (none)");
                 }
+                else
+                {
+                    sb.AppendLine("  Key: 0x" + pe.RichHeader.Key.ToString("X8", CultureInfo.InvariantCulture));
+                    foreach (RichHeaderEntry entry in pe.RichHeader.Entries)
+                    {
+                        sb.AppendLine("  - Product: " + entry.ProductId.ToString(CultureInfo.InvariantCulture) +
+                                      " (" + Safe(entry.ProductName) + ")" +
+                                      " | Build: " + entry.BuildNumber.ToString(CultureInfo.InvariantCulture) +
+                                      " | Toolchain: " + Safe(entry.ToolchainVersion) +
+                                      " | Count: " + entry.Count.ToString(CultureInfo.InvariantCulture));
+                    }
+                }
+                sb.AppendLine();
             }
-            sb.AppendLine();
 
-            sb.AppendLine("Version Info Details:");
-            if (pe.VersionInfoDetails == null)
+            if (filter.ShouldInclude("version-info-details"))
             {
-                sb.AppendLine("  (none)");
-            }
-            else
-            {
-                if (pe.VersionInfoDetails.FixedFileInfo != null)
+                sb.AppendLine("Version Info Details:");
+                if (pe.VersionInfoDetails == null)
                 {
-                    sb.AppendLine("  Fixed File Info:");
-                    sb.AppendLine("    FileVersion: " + Safe(pe.VersionInfoDetails.FixedFileInfo.FileVersion));
-                    sb.AppendLine("    ProductVersion: " + Safe(pe.VersionInfoDetails.FixedFileInfo.ProductVersion));
-                    sb.AppendLine("    FileFlags: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileFlags.ToString("X8", CultureInfo.InvariantCulture));
-                    if (pe.VersionInfoDetails.FixedFileInfo.FileFlagNames.Count > 0)
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  FixedFileInfo Signature: 0x" + pe.VersionInfoDetails.FixedFileInfoSignature.ToString("X8", CultureInfo.InvariantCulture));
+                    sb.AppendLine("  Signature Valid: " + pe.VersionInfoDetails.FixedFileInfoSignatureValid);
+                    if (pe.VersionInfoDetails.FixedFileInfo != null)
                     {
-                        sb.AppendLine("    FileFlags Names: " + string.Join(", ", pe.VersionInfoDetails.FixedFileInfo.FileFlagNames));
+                        sb.AppendLine("  Fixed File Info:");
+                        sb.AppendLine("    FileVersion: " + Safe(pe.VersionInfoDetails.FixedFileInfo.FileVersion));
+                        sb.AppendLine("    ProductVersion: " + Safe(pe.VersionInfoDetails.FixedFileInfo.ProductVersion));
+                        sb.AppendLine("    FileFlags: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileFlags.ToString("X8", CultureInfo.InvariantCulture));
+                        if (pe.VersionInfoDetails.FixedFileInfo.FileFlagNames.Count > 0)
+                        {
+                            sb.AppendLine("    FileFlags Names: " + string.Join(", ", pe.VersionInfoDetails.FixedFileInfo.FileFlagNames));
+                        }
+                        sb.AppendLine("    FileOS: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileOs.ToString("X8", CultureInfo.InvariantCulture));
+                        if (!string.IsNullOrWhiteSpace(pe.VersionInfoDetails.FixedFileInfo.FileOsName))
+                        {
+                            sb.AppendLine("    FileOS Name: " + pe.VersionInfoDetails.FixedFileInfo.FileOsName);
+                        }
+                        sb.AppendLine("    FileType: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileType.ToString("X8", CultureInfo.InvariantCulture));
+                        if (!string.IsNullOrWhiteSpace(pe.VersionInfoDetails.FixedFileInfo.FileTypeName))
+                        {
+                            sb.AppendLine("    FileType Name: " + pe.VersionInfoDetails.FixedFileInfo.FileTypeName);
+                        }
+                        if (!string.IsNullOrWhiteSpace(pe.VersionInfoDetails.FixedFileInfo.FileSubtypeName))
+                        {
+                            sb.AppendLine("    FileSubtype Name: " + pe.VersionInfoDetails.FixedFileInfo.FileSubtypeName);
+                        }
                     }
-                    sb.AppendLine("    FileOS: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileOs.ToString("X8", CultureInfo.InvariantCulture));
-                    if (!string.IsNullOrWhiteSpace(pe.VersionInfoDetails.FixedFileInfo.FileOsName))
+                    sb.AppendLine("  Translation: " + Safe(pe.VersionInfoDetails.TranslationText));
+                    if (pe.VersionInfoDetails.StringValues.Count > 0)
                     {
-                        sb.AppendLine("    FileOS Name: " + pe.VersionInfoDetails.FixedFileInfo.FileOsName);
-                    }
-                    sb.AppendLine("    FileType: 0x" + pe.VersionInfoDetails.FixedFileInfo.FileType.ToString("X8", CultureInfo.InvariantCulture));
-                    if (!string.IsNullOrWhiteSpace(pe.VersionInfoDetails.FixedFileInfo.FileTypeName))
-                    {
-                        sb.AppendLine("    FileType Name: " + pe.VersionInfoDetails.FixedFileInfo.FileTypeName);
-                    }
-                    if (!string.IsNullOrWhiteSpace(pe.VersionInfoDetails.FixedFileInfo.FileSubtypeName))
-                    {
-                        sb.AppendLine("    FileSubtype Name: " + pe.VersionInfoDetails.FixedFileInfo.FileSubtypeName);
+                        sb.AppendLine("  String Values:");
+                        foreach (var pair in pe.VersionInfoDetails.StringValues.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+                        {
+                            sb.AppendLine("    - " + pair.Key + ": " + pair.Value);
+                        }
                     }
                 }
-                sb.AppendLine("  Translation: " + Safe(pe.VersionInfoDetails.TranslationText));
-                if (pe.VersionInfoDetails.StringValues.Count > 0)
-                {
-                    sb.AppendLine("  String Values:");
-                    foreach (var pair in pe.VersionInfoDetails.StringValues.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
-                    {
-                        sb.AppendLine("    - " + pair.Key + ": " + pair.Value);
-                    }
-                }
+                sb.AppendLine();
             }
-            sb.AppendLine();
 
+            if (filter.ShouldInclude("icon-groups"))
+            {
             sb.AppendLine("Icon Groups:");
             if (pe.IconGroups.Length == 0)
             {
@@ -1339,7 +1522,10 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("cursor-groups"))
+            {
             sb.AppendLine("Cursor Groups:");
             if (pe.ResourceCursorGroups.Length == 0)
             {
@@ -1373,7 +1559,10 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("bitmaps"))
+            {
             sb.AppendLine("Bitmaps:");
             if (pe.ResourceBitmaps.Length == 0)
             {
@@ -1392,7 +1581,10 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("resources"))
+            {
             sb.AppendLine("Resources:");
             ResourceEntry[] resources = pe.Resources;
             if (resources.Length == 0)
@@ -1435,7 +1627,10 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("resource-string-tables"))
+            {
             sb.AppendLine("Resource String Tables:");
             if (pe.ResourceStringTables.Length == 0)
             {
@@ -1459,7 +1654,39 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("resource-string-coverage"))
+            {
+                sb.AppendLine("Resource String Coverage:");
+                if (pe.ResourceStringCoverage.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (ResourceStringCoverageInfo coverage in pe.ResourceStringCoverage.OrderBy(c => c.LanguageId))
+                    {
+                        sb.AppendLine("  - Lang: 0x" + coverage.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " (" + Safe(coverage.CultureName) + ")" +
+                                      " | Blocks: " + coverage.BlockCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Strings: " + coverage.StringCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Missing: " + coverage.MissingBlockCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Range: " + coverage.MinBlockId.ToString(CultureInfo.InvariantCulture) +
+                                      "-" + coverage.MaxBlockId.ToString(CultureInfo.InvariantCulture) +
+                                      " | Best: " + coverage.IsBestMatch);
+                        if (coverage.MissingBlocks.Count > 0)
+                        {
+                            string missingBlocks = string.Join(", ", coverage.MissingBlocks.Select(id => "0x" + id.ToString("X4", CultureInfo.InvariantCulture)));
+                            sb.AppendLine("    Missing Blocks: " + missingBlocks);
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("resource-message-tables"))
+            {
             sb.AppendLine("Resource Message Tables:");
             if (pe.ResourceMessageTables.Length == 0)
             {
@@ -1485,7 +1712,10 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("resource-dialogs"))
+            {
             sb.AppendLine("Resource Dialogs:");
             if (pe.ResourceDialogs.Length == 0)
             {
@@ -1518,7 +1748,10 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("resource-accelerators"))
+            {
             sb.AppendLine("Resource Accelerators:");
             if (pe.ResourceAccelerators.Length == 0)
             {
@@ -1544,7 +1777,10 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("resource-menus"))
+            {
             sb.AppendLine("Resource Menus:");
             if (pe.ResourceMenus.Length == 0)
             {
@@ -1572,7 +1808,10 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("resource-toolbars"))
+            {
             sb.AppendLine("Resource Toolbars:");
             if (pe.ResourceToolbars.Length == 0)
             {
@@ -1598,7 +1837,10 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
 
+            if (filter.ShouldInclude("resource-manifests"))
+            {
             sb.AppendLine("Resource Manifests:");
             if (pe.ResourceManifests.Length == 0)
             {
@@ -1683,6 +1925,9 @@ namespace PE_FileInspector
             }
 
             sb.AppendLine();
+            }
+            if (filter.ShouldInclude("resource-locale-coverage"))
+            {
             sb.AppendLine("Resource Locale Coverage:");
             if (pe.ResourceLocaleCoverage.Length == 0)
             {
@@ -1701,6 +1946,8 @@ namespace PE_FileInspector
                                   " | Localized: " + coverage.HasLocalizedLanguage +
                                   " | MissingNeutral: " + coverage.MissingNeutralFallback);
                 }
+            }
+            sb.AppendLine();
             }
 
             return sb.ToString();
@@ -1818,6 +2065,40 @@ namespace PE_FileInspector
             }
         }
 
+        private static void WriteFindings(StringBuilder sb, PECOFF pe)
+        {
+            if (pe.ParseResult == null || pe.ParseResult.Issues == null || pe.ParseResult.Issues.Count == 0)
+            {
+                sb.AppendLine("  (none)");
+                return;
+            }
+
+            ParseIssueSeverity[] severities = new[] { ParseIssueSeverity.Error, ParseIssueSeverity.Warning };
+            foreach (ParseIssueSeverity severity in severities)
+            {
+                var grouped = pe.ParseResult.Issues
+                    .Where(issue => issue.Severity == severity)
+                    .GroupBy(issue => issue.Category)
+                    .OrderBy(group => group.Key.ToString(), StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                if (grouped.Length == 0)
+                {
+                    continue;
+                }
+
+                sb.AppendLine("  " + severity + ":");
+                foreach (var group in grouped)
+                {
+                    sb.AppendLine("    " + group.Key + " (" + group.Count().ToString(CultureInfo.InvariantCulture) + "):");
+                    foreach (ParseIssue issue in group)
+                    {
+                        sb.AppendLine("      - " + issue.Message);
+                    }
+                }
+            }
+        }
+
         private static string Safe(string? value)
         {
             return value ?? string.Empty;
@@ -1836,6 +2117,34 @@ namespace PE_FileInspector
                 sb.Append(b.ToString("X2", CultureInfo.InvariantCulture));
             }
             return sb.ToString();
+        }
+
+        private static string NormalizeSectionKey(string value)
+        {
+            return string.IsNullOrWhiteSpace(value)
+                ? string.Empty
+                : value.Trim().ToLowerInvariant();
+        }
+
+        private static HashSet<string> ParseSectionList(string value)
+        {
+            HashSet<string> sections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return sections;
+            }
+
+            string[] parts = value.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string part in parts)
+            {
+                string key = NormalizeSectionKey(part);
+                if (!string.IsNullOrWhiteSpace(key))
+                {
+                    sections.Add(key);
+                }
+            }
+
+            return sections;
         }
 
         private static bool TryParseArgs(string[] args, out Options? options)
@@ -1892,6 +2201,20 @@ namespace PE_FileInspector
                 SuppressCssm = suppressCssm
             };
 
+            if (values.TryGetValue("sections", out string? includeValue))
+            {
+                HashSet<string> include = ParseSectionList(includeValue);
+                if (!include.Contains("all") && !include.Contains("*"))
+                {
+                    options.Filter.Include.UnionWith(include);
+                }
+            }
+
+            if (values.TryGetValue("exclude-sections", out string? excludeValue))
+            {
+                options.Filter.Exclude.UnionWith(ParseSectionList(excludeValue));
+            }
+
             return true;
         }
 
@@ -1931,7 +2254,7 @@ namespace PE_FileInspector
         private static void PrintUsage()
         {
             Console.WriteLine("Usage:");
-            Console.WriteLine("  PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze> [--suppress-cssm <true|false>]");
+            Console.WriteLine("  PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze> [--suppress-cssm <true|false>] [--sections <list>] [--exclude-sections <list>]");
         }
 
         private static string GetUniqueFilePath(string directory, string fileName)
