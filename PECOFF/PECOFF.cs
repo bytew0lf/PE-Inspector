@@ -512,8 +512,10 @@ namespace PECoff
         private bool _peHeaderIsPe32Plus;
         private string _imageKind = "Unknown";
         private CoffObjectInfo _coffObjectInfo;
+        private CoffArchiveInfo _coffArchiveInfo;
         private TeImageInfo _teImageInfo;
         private CatalogSignatureInfo _catalogSignatureInfo;
+        private DosRelocationInfo _dosRelocationInfo;
 
         private static readonly Dictionary<ushort, string> RichProductNameMap = new Dictionary<ushort, string>
         {
@@ -1642,6 +1644,16 @@ namespace PECoff
         public CoffObjectInfo CoffObject
         {
             get { return _coffObjectInfo; }
+        }
+
+        public CoffArchiveInfo CoffArchive
+        {
+            get { return _coffArchiveInfo; }
+        }
+
+        public DosRelocationInfo DosRelocations
+        {
+            get { return _dosRelocationInfo; }
         }
 
         public TeImageInfo TeImage
@@ -4763,6 +4775,7 @@ namespace PECoff
                 _parseResult.Snapshot(),
                 _imageKind,
                 _coffObjectInfo,
+                _coffArchiveInfo,
                 _teImageInfo,
                 _hash ?? string.Empty,
                 _importHash ?? string.Empty,
@@ -4787,6 +4800,7 @@ namespace PECoff
                 _fileAlignment,
                 _sectionAlignment,
                 _sizeOfHeaders,
+                _dosRelocationInfo,
                 _overlayInfo,
                 _overlayContainers.ToArray(),
                 _packingHints.ToArray(),
@@ -10477,6 +10491,41 @@ namespace PECoff
             return TryParseDebugReservedData(data, out info);
         }
 
+        internal static bool TryParseDebugEmbeddedPortablePdbDataForTest(byte[] data, out DebugEmbeddedPortablePdbInfo info)
+        {
+            return TryParseDebugEmbeddedPortablePdbData(data, out info);
+        }
+
+        internal static bool TryParseDebugSpgoDataForTest(byte[] data, out DebugSpgoInfo info)
+        {
+            return TryParseDebugSpgoData(data, out info);
+        }
+
+        internal static bool TryParseDebugPdbHashDataForTest(byte[] data, out DebugPdbHashInfo info)
+        {
+            return TryParseDebugPdbHashData(data, out info);
+        }
+
+        internal static bool TryParseDosRelocationsForTest(byte[] data, out DosRelocationInfo info)
+        {
+            info = null;
+            if (data == null)
+            {
+                return false;
+            }
+
+            int headerSize = Marshal.SizeOf(typeof(IMAGE_DOS_HEADER));
+            if (data.Length < headerSize)
+            {
+                return false;
+            }
+
+            byte[] headerBytes = new byte[headerSize];
+            Array.Copy(data, 0, headerBytes, 0, headerBytes.Length);
+            IMAGE_DOS_HEADER header = headerBytes.ToStructure<IMAGE_DOS_HEADER>();
+            return TryParseDosRelocationsFromBuffer(header, data, out info);
+        }
+
         internal static bool TryParsePdbInfoForTest(string path, out PdbInfo info)
         {
             info = null;
@@ -11439,6 +11488,94 @@ namespace PECoff
             {
                 _richHeader = info;
             }
+        }
+
+        private void ParseDosRelocations(IMAGE_DOS_HEADER header)
+        {
+            _dosRelocationInfo = null;
+            if (header.e_crlc == 0)
+            {
+                return;
+            }
+
+            uint count = header.e_crlc;
+            uint tableOffset = header.e_lfarlc;
+            if (tableOffset == 0)
+            {
+                Warn(ParseIssueCategory.Header, "DOS relocation table offset is zero but relocation count is non-zero.");
+                return;
+            }
+
+            ulong totalBytes = (ulong)count * 4UL;
+            if (totalBytes > int.MaxValue)
+            {
+                Warn(ParseIssueCategory.Header, "DOS relocation table size exceeds supported limits.");
+                return;
+            }
+
+            if (!TrySetPosition(tableOffset, (int)totalBytes))
+            {
+                Warn(ParseIssueCategory.Header, "DOS relocation table exceeds file bounds.");
+                return;
+            }
+
+            int maxEntries = 256;
+            int entriesToRead = (int)Math.Min(count, (uint)maxEntries);
+            List<DosRelocationEntry> entries = new List<DosRelocationEntry>(entriesToRead);
+            for (int i = 0; i < entriesToRead; i++)
+            {
+                ushort offset = PEFile.ReadUInt16();
+                ushort segment = PEFile.ReadUInt16();
+                entries.Add(new DosRelocationEntry(offset, segment));
+            }
+
+            _dosRelocationInfo = new DosRelocationInfo(
+                (int)count,
+                tableOffset,
+                count > maxEntries,
+                entries.ToArray());
+        }
+
+        private static bool TryParseDosRelocationsFromBuffer(IMAGE_DOS_HEADER header, byte[] data, out DosRelocationInfo info)
+        {
+            info = null;
+            if (data == null || header.e_crlc == 0)
+            {
+                return false;
+            }
+
+            uint count = header.e_crlc;
+            uint tableOffset = header.e_lfarlc;
+            if (tableOffset == 0)
+            {
+                return false;
+            }
+
+            ulong totalBytes = (ulong)count * 4UL;
+            if (totalBytes > int.MaxValue)
+            {
+                return false;
+            }
+
+            if (tableOffset + totalBytes > (ulong)data.Length)
+            {
+                return false;
+            }
+
+            int maxEntries = 256;
+            int entriesToRead = (int)Math.Min(count, (uint)maxEntries);
+            List<DosRelocationEntry> entries = new List<DosRelocationEntry>(entriesToRead);
+            int cursor = (int)tableOffset;
+            for (int i = 0; i < entriesToRead; i++)
+            {
+                ushort offset = ReadUInt16(data, cursor);
+                ushort segment = ReadUInt16(data, cursor + 2);
+                entries.Add(new DosRelocationEntry(offset, segment));
+                cursor += 4;
+            }
+
+            info = new DosRelocationInfo((int)count, tableOffset, count > maxEntries, entries.ToArray());
+            return true;
         }
 
         private static bool TryParseRichHeader(byte[] buffer, int length, out RichHeaderInfo info)
@@ -14660,6 +14797,9 @@ namespace PECoff
                 DebugOmapInfo omapToSource = null;
                 DebugOmapInfo omapFromSource = null;
                 DebugReproInfo repro = null;
+                DebugEmbeddedPortablePdbInfo embeddedPortablePdb = null;
+                DebugSpgoInfo spgo = null;
+                DebugPdbHashInfo pdbHash = null;
                 DebugRawInfo iltcg = null;
                 DebugRawInfo mpx = null;
                 DebugClsidInfo clsid = null;
@@ -14815,6 +14955,30 @@ namespace PECoff
                         repro = parsed;
                     }
                 }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.EmbeddedPortablePdb && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseDebugEmbeddedPortablePdbData(data, out DebugEmbeddedPortablePdbInfo parsed))
+                    {
+                        embeddedPortablePdb = parsed;
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Spgo && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseDebugSpgoData(data, out DebugSpgoInfo parsed))
+                    {
+                        spgo = parsed;
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.PdbHash && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseDebugPdbHashData(data, out DebugPdbHashInfo parsed))
+                    {
+                        pdbHash = parsed;
+                    }
+                }
                 else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.ILTCG && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data))
@@ -14861,6 +15025,9 @@ namespace PECoff
                     omapToSource,
                     omapFromSource,
                     repro,
+                    embeddedPortablePdb,
+                    spgo,
+                    pdbHash,
                     iltcg,
                     mpx,
                     clsid,
@@ -15201,6 +15368,76 @@ namespace PECoff
 
             info = new DebugReservedInfo(version, flags, offsets);
             return true;
+        }
+
+        private static bool TryParseDebugEmbeddedPortablePdbData(byte[] data, out DebugEmbeddedPortablePdbInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 8)
+            {
+                return false;
+            }
+
+            string signature = Encoding.ASCII.GetString(data, 0, 4);
+            uint uncompressedSize = ReadUInt32(data, 4);
+            uint compressedSize = data.Length >= 8 ? (uint)(data.Length - 8) : 0;
+            string notes = string.Empty;
+            if (!string.Equals(signature, "MPDB", StringComparison.Ordinal))
+            {
+                notes = "Unexpected signature.";
+            }
+
+            string payloadHash = string.Empty;
+            if (data.Length > 8)
+            {
+                byte[] payload = new byte[data.Length - 8];
+                Array.Copy(data, 8, payload, 0, payload.Length);
+                payloadHash = ToHex(SHA256.HashData(payload));
+            }
+
+            info = new DebugEmbeddedPortablePdbInfo(signature, uncompressedSize, compressedSize, payloadHash, notes);
+            return true;
+        }
+
+        private static bool TryParseDebugSpgoData(byte[] data, out DebugSpgoInfo info)
+        {
+            info = null;
+            if (data == null)
+            {
+                return false;
+            }
+
+            string hash = data.Length > 0 ? ToHex(SHA256.HashData(data)) : string.Empty;
+            string preview = BuildHexPreview(data, 48);
+            info = new DebugSpgoInfo((uint)data.Length, hash, preview);
+            return true;
+        }
+
+        private static bool TryParseDebugPdbHashData(byte[] data, out DebugPdbHashInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 4)
+            {
+                return false;
+            }
+
+            uint algorithm = ReadUInt32(data, 0);
+            string algorithmName = GetPdbHashAlgorithmName(algorithm);
+            string hash = data.Length > 4 ? ToHex(new ReadOnlySpan<byte>(data, 4, data.Length - 4).ToArray()) : string.Empty;
+            info = new DebugPdbHashInfo(algorithm, algorithmName, hash);
+            return true;
+        }
+
+        private static string GetPdbHashAlgorithmName(uint algorithm)
+        {
+            return algorithm switch
+            {
+                1 => "SHA1",
+                2 => "SHA256",
+                3 => "SHA384",
+                4 => "SHA512",
+                _ => "Unknown"
+            };
         }
 
         private static string[] DecodeBitFlags(uint flags)
@@ -18740,8 +18977,10 @@ namespace PECoff
         {
             _imageKind = "TE";
             _coffObjectInfo = null;
+            _coffArchiveInfo = null;
             _teImageInfo = null;
             _catalogSignatureInfo = null;
+            _dosRelocationInfo = null;
 
             if (PEFileStream == null || PEFile == null)
             {
@@ -18848,6 +19087,348 @@ namespace PECoff
                 teHeader.BaseOfCode,
                 teHeader.ImageBase,
                 directories);
+        }
+
+        private bool TryParseCoffArchive()
+        {
+            if (PEFileStream == null || PEFile == null)
+            {
+                return false;
+            }
+
+            if (!TrySetPosition(0, 8))
+            {
+                return false;
+            }
+
+            byte[] signatureBytes = new byte[8];
+            ReadExactly(PEFileStream, signatureBytes, 0, signatureBytes.Length);
+            string signature = Encoding.ASCII.GetString(signatureBytes);
+            if (!string.Equals(signature, "!<arch>\n", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            _imageKind = "COFF-Archive";
+            _coffObjectInfo = null;
+            _coffArchiveInfo = null;
+            _teImageInfo = null;
+            _catalogSignatureInfo = null;
+            _dosRelocationInfo = null;
+
+            List<CoffArchiveMemberInfo> members = new List<CoffArchiveMemberInfo>();
+            CoffArchiveSymbolTableInfo symbolTableInfo = null;
+            string longNameTable = null;
+
+            long cursor = 8;
+            int maxMembers = 4096;
+            while (cursor + 60 <= PEFileStream.Length && members.Count < maxMembers)
+            {
+                if (!TrySetPosition(cursor, 60))
+                {
+                    break;
+                }
+
+                byte[] header = new byte[60];
+                ReadExactly(PEFileStream, header, 0, header.Length);
+                string nameField = Encoding.ASCII.GetString(header, 0, 16);
+                string dateField = Encoding.ASCII.GetString(header, 16, 12);
+                string uidField = Encoding.ASCII.GetString(header, 28, 6);
+                string gidField = Encoding.ASCII.GetString(header, 34, 6);
+                string modeField = Encoding.ASCII.GetString(header, 40, 8);
+                string sizeField = Encoding.ASCII.GetString(header, 48, 10);
+                string endField = Encoding.ASCII.GetString(header, 58, 2);
+
+                if (!string.Equals(endField, "`\n", StringComparison.Ordinal))
+                {
+                    Warn(ParseIssueCategory.Header, "COFF archive member header has invalid trailer.");
+                    break;
+                }
+
+                string name = NormalizeArchiveName(nameField, longNameTable);
+                uint timeDateStamp = ParseArchiveUInt(dateField);
+                int userId = ParseArchiveInt(uidField);
+                int groupId = ParseArchiveInt(gidField);
+                string mode = modeField.Trim();
+
+                if (!TryParseArchiveSize(sizeField, out long size))
+                {
+                    Warn(ParseIssueCategory.Header, "COFF archive member size is invalid.");
+                    break;
+                }
+
+                long dataOffset = cursor + 60;
+                if (dataOffset < 0 || dataOffset + size > PEFileStream.Length)
+                {
+                    Warn(ParseIssueCategory.Header, "COFF archive member data exceeds file bounds.");
+                    break;
+                }
+
+                bool isSymbolTable = string.Equals(name, "/", StringComparison.Ordinal) ||
+                                     string.Equals(name, "/SYM64", StringComparison.Ordinal);
+                bool isLongNameTable = string.Equals(name, "//", StringComparison.Ordinal);
+
+                CoffImportObjectInfo importObject = null;
+                bool isImportObject = false;
+
+                if (isLongNameTable)
+                {
+                    if (size > 0 && size <= int.MaxValue)
+                    {
+                        byte[] data = new byte[size];
+                        PEFileStream.Position = dataOffset;
+                        ReadExactly(PEFileStream, data, 0, data.Length);
+                        longNameTable = Encoding.ASCII.GetString(data).TrimEnd('\0');
+                    }
+                }
+                else if (isSymbolTable)
+                {
+                    if (size > 0 && size <= int.MaxValue)
+                    {
+                        byte[] data = new byte[size];
+                        PEFileStream.Position = dataOffset;
+                        ReadExactly(PEFileStream, data, 0, data.Length);
+                        if (TryParseArchiveSymbolTable(data, out CoffArchiveSymbolTableInfo parsed))
+                        {
+                            symbolTableInfo = parsed;
+                        }
+                    }
+                }
+                else if (size > 0)
+                {
+                    int previewSize = (int)Math.Min(size, 512);
+                    byte[] data = new byte[previewSize];
+                    PEFileStream.Position = dataOffset;
+                    ReadExactly(PEFileStream, data, 0, data.Length);
+                    if (TryParseImportObject(data, out CoffImportObjectInfo parsed))
+                    {
+                        importObject = parsed;
+                        isImportObject = true;
+                    }
+                }
+
+                members.Add(new CoffArchiveMemberInfo(
+                    name,
+                    dataOffset,
+                    size,
+                    timeDateStamp,
+                    userId,
+                    groupId,
+                    mode,
+                    isSymbolTable,
+                    isLongNameTable,
+                    isImportObject,
+                    importObject));
+
+                cursor = dataOffset + size;
+                if ((cursor & 1) == 1)
+                {
+                    cursor++;
+                }
+            }
+
+            _coffArchiveInfo = new CoffArchiveInfo(signature.TrimEnd('\0', ' '), members.Count, symbolTableInfo, members.ToArray());
+            return true;
+        }
+
+        private static bool TryParseArchiveSize(string sizeField, out long size)
+        {
+            size = 0;
+            if (string.IsNullOrWhiteSpace(sizeField))
+            {
+                return false;
+            }
+
+            string trimmed = sizeField.Trim();
+            return long.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out size) && size >= 0;
+        }
+
+        private static uint ParseArchiveUInt(string field)
+        {
+            if (string.IsNullOrWhiteSpace(field))
+            {
+                return 0;
+            }
+
+            if (uint.TryParse(field.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out uint value))
+            {
+                return value;
+            }
+
+            return 0;
+        }
+
+        private static int ParseArchiveInt(string field)
+        {
+            if (string.IsNullOrWhiteSpace(field))
+            {
+                return 0;
+            }
+
+            if (int.TryParse(field.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+            {
+                return value;
+            }
+
+            return 0;
+        }
+
+        private static string NormalizeArchiveName(string nameField, string longNameTable)
+        {
+            string name = nameField?.Trim() ?? string.Empty;
+            if (name.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            if (string.Equals(name, "/", StringComparison.Ordinal) ||
+                string.Equals(name, "//", StringComparison.Ordinal) ||
+                string.Equals(name, "/SYM64", StringComparison.Ordinal))
+            {
+                return name;
+            }
+
+            if (name[0] == '/' && name.Length > 1 && char.IsDigit(name[1]) && !string.IsNullOrWhiteSpace(longNameTable))
+            {
+                if (int.TryParse(name.Substring(1).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int offset) &&
+                    offset >= 0 &&
+                    offset < longNameTable.Length)
+                {
+                    int end = longNameTable.IndexOf('/', offset);
+                    if (end < 0)
+                    {
+                        end = longNameTable.Length;
+                    }
+
+                    return longNameTable.Substring(offset, end - offset);
+                }
+            }
+
+            if (name.EndsWith("/", StringComparison.Ordinal))
+            {
+                name = name.Substring(0, name.Length - 1);
+            }
+
+            return name.Trim();
+        }
+
+        private static bool TryParseArchiveSymbolTable(byte[] data, out CoffArchiveSymbolTableInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 4)
+            {
+                return false;
+            }
+
+            int symbolCount = (int)ReadUInt32BigEndian(data, 0);
+            if (symbolCount < 0)
+            {
+                return false;
+            }
+
+            long offsetsSize = (long)symbolCount * 4;
+            if (offsetsSize + 4 > data.Length)
+            {
+                return false;
+            }
+
+            int nameTableSize = data.Length - (int)(offsetsSize + 4);
+            info = new CoffArchiveSymbolTableInfo(symbolCount, nameTableSize);
+            return true;
+        }
+
+        private static bool TryParseImportObject(ReadOnlySpan<byte> data, out CoffImportObjectInfo info)
+        {
+            info = null;
+            if (data.Length < 20)
+            {
+                return false;
+            }
+
+            ushort sig1 = ReadUInt16(data, 0);
+            ushort sig2 = ReadUInt16(data, 2);
+            if (sig1 != 0 || sig2 != 0xFFFF)
+            {
+                return false;
+            }
+
+            ushort version = ReadUInt16(data, 4);
+            ushort machine = ReadUInt16(data, 6);
+            uint timeDateStamp = ReadUInt32(data, 8);
+            uint sizeOfData = ReadUInt32(data, 12);
+            ushort ordinalOrHint = ReadUInt16(data, 16);
+            ushort flags = ReadUInt16(data, 18);
+            ushort type = (ushort)(flags & 0x3);
+            ushort nameType = (ushort)((flags >> 2) & 0x7);
+
+            int offset = 20;
+            string symbolName = ReadAsciiZ(data, ref offset);
+            string dllName = ReadAsciiZ(data, ref offset);
+
+            info = new CoffImportObjectInfo(
+                version,
+                machine,
+                GetMachineName(machine),
+                timeDateStamp,
+                sizeOfData,
+                ordinalOrHint,
+                type,
+                GetImportObjectTypeName(type),
+                nameType,
+                GetImportObjectNameTypeName(nameType),
+                symbolName,
+                dllName);
+            return true;
+        }
+
+        private static string ReadAsciiZ(ReadOnlySpan<byte> data, ref int offset)
+        {
+            if (offset < 0 || offset >= data.Length)
+            {
+                return string.Empty;
+            }
+
+            int start = offset;
+            while (offset < data.Length && data[offset] != 0)
+            {
+                offset++;
+            }
+
+            int length = offset - start;
+            if (offset < data.Length && data[offset] == 0)
+            {
+                offset++;
+            }
+
+            if (length <= 0)
+            {
+                return string.Empty;
+            }
+
+            return Encoding.ASCII.GetString(data.Slice(start, length));
+        }
+
+        private static string GetImportObjectTypeName(ushort type)
+        {
+            return type switch
+            {
+                0 => "Code",
+                1 => "Data",
+                2 => "Const",
+                _ => "Unknown"
+            };
+        }
+
+        private static string GetImportObjectNameTypeName(ushort nameType)
+        {
+            return nameType switch
+            {
+                0 => "Ordinal",
+                1 => "Name",
+                2 => "NameNoPrefix",
+                3 => "NameUndecorate",
+                _ => "Unknown"
+            };
         }
 
         private bool TryParseCoffObject()
@@ -19019,6 +19600,7 @@ namespace PECoff
                 _parseResult.Clear();
                 _imageKind = "Unknown";
                 _coffObjectInfo = null;
+                _coffArchiveInfo = null;
                 _teImageInfo = null;
                 _catalogSignatureInfo = null;
                 _resources.Clear();
@@ -19098,6 +19680,7 @@ namespace PECoff
                 _numberOfRvaAndSizes = 0;
                 _sizeOfHeaders = 0;
                 _optionalHeaderChecksum = 0;
+                _dosRelocationInfo = null;
                 _subsystemInfo = null;
                 _dllCharacteristicsInfo = null;
                 _importHash = string.Empty;
@@ -19136,6 +19719,11 @@ namespace PECoff
                     signature != (ushort)MagicByteSignature.IMAGE_OS2_SIGNATURE &&
                     signature != (ushort)MagicByteSignature.IMAGE_OS2_SIGNATURE_LE)
                 {
+                    if (TryParseCoffArchive())
+                    {
+                        return;
+                    }
+
                     if (TryParseCoffObject())
                     {
                         return;
@@ -19160,6 +19748,7 @@ namespace PECoff
                 {
                     _imageKind = "PE";
                     ParseRichHeader(header);
+                    ParseDosRelocations(header);
                     if (!TrySetPosition(header.e_lfanew, sizeof(uint) + Marshal.SizeOf(typeof(IMAGE_FILE_HEADER))))
                     {
                         Fail(ParseIssueCategory.Header, "PE header offset is outside the file bounds.");

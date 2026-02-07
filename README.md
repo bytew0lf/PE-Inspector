@@ -142,11 +142,12 @@ Defaults:
 - v19: Architecture/GlobalPtr/IAT content summaries and COFF COMDAT association hints.
 - v20: TLS template sizing/notes, extended base relocation type mapping, and Borland/reserved debug entries.
 - v21: PDB/MSF parsing, WinTrust/CT log policy metadata, and CLR metadata deep-dive (token refs + method bodies).
+- v22: COFF archive/import-library parsing, DOS relocation table summary, and additional debug directory types (Embedded PDB/SPGO/PDBHASH).
 
 ### Coverage map
 High-level PE/COFF structures and current coverage:
 
-- DOS header + stub: implemented
+- DOS header + stub: implemented (including relocation table summary)
 - COFF file header: implemented
 - Optional header (PE32/PE32+): implemented
 - Data directories: implemented (name/section mapping + Architecture/GlobalPtr/IAT content summaries)
@@ -155,7 +156,7 @@ High-level PE/COFF structures and current coverage:
 - Overlay: implemented (size + ZIP/RAR/7z container parsing)
 - Resources: implemented (strings, manifests/MUI, dialogs/menus/toolbars/accelerators, icons/cursors/bitmaps, message tables, HTML/DLGINCLUDE/PLUGPLAY/VXD raw summaries)
 - Resources (extended): implemented (fonts/fontdir, rcdata with format detection including protobuf/flatbuffers/unity bundles, dlginit, animated cursor/icon)
-- Debug directory: implemented (CodeView/PDB, MSF stream directory + PDB signature/age, COFF, POGO, VC_FEATURE, EX_DLLCHARACTERISTICS, FPO, MISC, OMAP, REPRO, ILTCG, MPX, CLSID, FIXUP, Borland, reserved)
+- Debug directory: implemented (CodeView/PDB, MSF stream directory + PDB signature/age, COFF, POGO, VC_FEATURE, EX_DLLCHARACTERISTICS, FPO, MISC, OMAP, REPRO, ILTCG, MPX, CLSID, FIXUP, Borland, reserved, embedded portable PDB, SPGO, PDB hash)
 - Relocations: implemented (summaries + anomalies, extended type mapping)
 - Exception directory: implemented (unwind + validation, AMD64/ARM64 full decode, ARM/IA64 header parsing; IA64 is minimal header decoding, x86 SEH handler table)
 - TLS: implemented (callbacks + raw data mapping/alignment, hash/preview, template sizing/zero-fill notes)
@@ -163,6 +164,7 @@ High-level PE/COFF structures and current coverage:
 - CLR/.NET: implemented (metadata, references, token cross-refs, method body IL sizes, ReadyToRun)
 - Certificates/Authenticode: implemented (PKCS7/signers/timestamps, certificate transparency hints + log IDs, WinTrust status on Windows, catalog lookup on Windows)
 - COFF objects: header/sections (incl. bigobj) + symbols/line numbers/relocations
+- COFF archives/import libraries: archive headers, symbol table summary, longnames, import objects
 - UEFI TE images: header + sections
 - COFF symbols/line numbers/string table: implemented when present (aux symbol decoding + weak extern defaults)
 

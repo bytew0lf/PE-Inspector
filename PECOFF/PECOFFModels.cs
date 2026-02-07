@@ -185,6 +185,9 @@ namespace PECoff
         ILTCG = 14,
         MPX = 15,
         Repro = 16,
+        EmbeddedPortablePdb = 17,
+        Spgo = 18,
+        PdbHash = 19,
         ExDllCharacteristics = 20
     }
 
@@ -238,6 +241,57 @@ namespace PECoff
         public DebugReproInfo(uint dataLength, string hash)
         {
             DataLength = dataLength;
+            Hash = hash ?? string.Empty;
+        }
+    }
+
+    public sealed class DebugEmbeddedPortablePdbInfo
+    {
+        public string Signature { get; }
+        public uint UncompressedSize { get; }
+        public uint CompressedSize { get; }
+        public string PayloadHash { get; }
+        public string Notes { get; }
+
+        public DebugEmbeddedPortablePdbInfo(
+            string signature,
+            uint uncompressedSize,
+            uint compressedSize,
+            string payloadHash,
+            string notes)
+        {
+            Signature = signature ?? string.Empty;
+            UncompressedSize = uncompressedSize;
+            CompressedSize = compressedSize;
+            PayloadHash = payloadHash ?? string.Empty;
+            Notes = notes ?? string.Empty;
+        }
+    }
+
+    public sealed class DebugSpgoInfo
+    {
+        public uint DataLength { get; }
+        public string Hash { get; }
+        public string Preview { get; }
+
+        public DebugSpgoInfo(uint dataLength, string hash, string preview)
+        {
+            DataLength = dataLength;
+            Hash = hash ?? string.Empty;
+            Preview = preview ?? string.Empty;
+        }
+    }
+
+    public sealed class DebugPdbHashInfo
+    {
+        public uint Algorithm { get; }
+        public string AlgorithmName { get; }
+        public string Hash { get; }
+
+        public DebugPdbHashInfo(uint algorithm, string algorithmName, string hash)
+        {
+            Algorithm = algorithm;
+            AlgorithmName = algorithmName ?? string.Empty;
             Hash = hash ?? string.Empty;
         }
     }
@@ -559,6 +613,9 @@ namespace PECoff
         public DebugOmapInfo OmapToSource { get; }
         public DebugOmapInfo OmapFromSource { get; }
         public DebugReproInfo Repro { get; }
+        public DebugEmbeddedPortablePdbInfo EmbeddedPortablePdb { get; }
+        public DebugSpgoInfo Spgo { get; }
+        public DebugPdbHashInfo PdbHash { get; }
         public DebugRawInfo Iltcg { get; }
         public DebugRawInfo Mpx { get; }
         public DebugClsidInfo Clsid { get; }
@@ -587,6 +644,9 @@ namespace PECoff
             DebugOmapInfo omapToSource,
             DebugOmapInfo omapFromSource,
             DebugReproInfo repro,
+            DebugEmbeddedPortablePdbInfo embeddedPortablePdb,
+            DebugSpgoInfo spgo,
+            DebugPdbHashInfo pdbHash,
             DebugRawInfo iltcg,
             DebugRawInfo mpx,
             DebugClsidInfo clsid,
@@ -614,6 +674,9 @@ namespace PECoff
             OmapToSource = omapToSource;
             OmapFromSource = omapFromSource;
             Repro = repro;
+            EmbeddedPortablePdb = embeddedPortablePdb;
+            Spgo = spgo;
+            PdbHash = pdbHash;
             Iltcg = iltcg;
             Mpx = mpx;
             Clsid = clsid;
@@ -978,6 +1041,36 @@ namespace PECoff
             UnwindInfoCount = unwindInfoCount;
             UnwindInfoParseFailures = unwindInfoParseFailures;
             UnwindInfoVersions = Array.AsReadOnly(unwindInfoVersions ?? Array.Empty<UnwindInfoVersionCount>());
+        }
+    }
+
+    public sealed class DosRelocationEntry
+    {
+        public ushort Offset { get; }
+        public ushort Segment { get; }
+        public uint LinearAddress { get; }
+
+        public DosRelocationEntry(ushort offset, ushort segment)
+        {
+            Offset = offset;
+            Segment = segment;
+            LinearAddress = (uint)(segment * 16 + offset);
+        }
+    }
+
+    public sealed class DosRelocationInfo
+    {
+        public int DeclaredCount { get; }
+        public uint TableOffset { get; }
+        public bool IsTruncated { get; }
+        public IReadOnlyList<DosRelocationEntry> Entries { get; }
+
+        public DosRelocationInfo(int declaredCount, uint tableOffset, bool isTruncated, DosRelocationEntry[] entries)
+        {
+            DeclaredCount = declaredCount;
+            TableOffset = tableOffset;
+            IsTruncated = isTruncated;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<DosRelocationEntry>());
         }
     }
 
@@ -2101,6 +2194,123 @@ namespace PECoff
             OptionalHeaderSize = optionalHeaderSize;
             Characteristics = characteristics;
             CharacteristicsFlags = Array.AsReadOnly(characteristicsFlags ?? Array.Empty<string>());
+        }
+    }
+
+    public sealed class CoffArchiveSymbolTableInfo
+    {
+        public int SymbolCount { get; }
+        public int NameTableSize { get; }
+
+        public CoffArchiveSymbolTableInfo(int symbolCount, int nameTableSize)
+        {
+            SymbolCount = symbolCount;
+            NameTableSize = nameTableSize;
+        }
+    }
+
+    public sealed class CoffImportObjectInfo
+    {
+        public ushort Version { get; }
+        public ushort Machine { get; }
+        public string MachineName { get; }
+        public uint TimeDateStamp { get; }
+        public uint SizeOfData { get; }
+        public ushort OrdinalOrHint { get; }
+        public ushort Type { get; }
+        public string TypeName { get; }
+        public ushort NameType { get; }
+        public string NameTypeName { get; }
+        public string SymbolName { get; }
+        public string DllName { get; }
+
+        public CoffImportObjectInfo(
+            ushort version,
+            ushort machine,
+            string machineName,
+            uint timeDateStamp,
+            uint sizeOfData,
+            ushort ordinalOrHint,
+            ushort type,
+            string typeName,
+            ushort nameType,
+            string nameTypeName,
+            string symbolName,
+            string dllName)
+        {
+            Version = version;
+            Machine = machine;
+            MachineName = machineName ?? string.Empty;
+            TimeDateStamp = timeDateStamp;
+            SizeOfData = sizeOfData;
+            OrdinalOrHint = ordinalOrHint;
+            Type = type;
+            TypeName = typeName ?? string.Empty;
+            NameType = nameType;
+            NameTypeName = nameTypeName ?? string.Empty;
+            SymbolName = symbolName ?? string.Empty;
+            DllName = dllName ?? string.Empty;
+        }
+    }
+
+    public sealed class CoffArchiveMemberInfo
+    {
+        public string Name { get; }
+        public long DataOffset { get; }
+        public long Size { get; }
+        public uint TimeDateStamp { get; }
+        public int UserId { get; }
+        public int GroupId { get; }
+        public string Mode { get; }
+        public bool IsSymbolTable { get; }
+        public bool IsLongNameTable { get; }
+        public bool IsImportObject { get; }
+        public CoffImportObjectInfo ImportObject { get; }
+
+        public CoffArchiveMemberInfo(
+            string name,
+            long dataOffset,
+            long size,
+            uint timeDateStamp,
+            int userId,
+            int groupId,
+            string mode,
+            bool isSymbolTable,
+            bool isLongNameTable,
+            bool isImportObject,
+            CoffImportObjectInfo importObject)
+        {
+            Name = name ?? string.Empty;
+            DataOffset = dataOffset;
+            Size = size;
+            TimeDateStamp = timeDateStamp;
+            UserId = userId;
+            GroupId = groupId;
+            Mode = mode ?? string.Empty;
+            IsSymbolTable = isSymbolTable;
+            IsLongNameTable = isLongNameTable;
+            IsImportObject = isImportObject;
+            ImportObject = importObject;
+        }
+    }
+
+    public sealed class CoffArchiveInfo
+    {
+        public string Signature { get; }
+        public int MemberCount { get; }
+        public CoffArchiveSymbolTableInfo SymbolTable { get; }
+        public IReadOnlyList<CoffArchiveMemberInfo> Members { get; }
+
+        public CoffArchiveInfo(
+            string signature,
+            int memberCount,
+            CoffArchiveSymbolTableInfo symbolTable,
+            CoffArchiveMemberInfo[] members)
+        {
+            Signature = signature ?? string.Empty;
+            MemberCount = memberCount;
+            SymbolTable = symbolTable;
+            Members = Array.AsReadOnly(members ?? Array.Empty<CoffArchiveMemberInfo>());
         }
     }
 
@@ -3482,13 +3692,14 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 21;
+        public const int CurrentSchemaVersion = 22;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
         public ParseResultSnapshot ParseResult { get; }
         public string ImageKind { get; }
         public CoffObjectInfo CoffObject { get; }
+        public CoffArchiveInfo CoffArchive { get; }
         public TeImageInfo TeImage { get; }
         public string Hash { get; }
         public string ImportHash { get; }
@@ -3513,6 +3724,7 @@ namespace PECoff
         public uint FileAlignment { get; }
         public uint SectionAlignment { get; }
         public uint SizeOfHeaders { get; }
+        public DosRelocationInfo DosRelocations { get; }
         public OverlayInfo OverlayInfo { get; }
         public IReadOnlyList<OverlayContainerInfo> OverlayContainers { get; }
         public IReadOnlyList<PackingHintInfo> PackingHints { get; }
@@ -3599,6 +3811,7 @@ namespace PECoff
             ParseResultSnapshot parseResult,
             string imageKind,
             CoffObjectInfo coffObject,
+            CoffArchiveInfo coffArchive,
             TeImageInfo teImage,
             string hash,
             string importHash,
@@ -3623,6 +3836,7 @@ namespace PECoff
             uint fileAlignment,
             uint sectionAlignment,
             uint sizeOfHeaders,
+            DosRelocationInfo dosRelocations,
             OverlayInfo overlayInfo,
             OverlayContainerInfo[] overlayContainers,
             PackingHintInfo[] packingHints,
@@ -3709,6 +3923,7 @@ namespace PECoff
             ParseResult = parseResult ?? new ParseResultSnapshot(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<ParseIssue>());
             ImageKind = imageKind ?? string.Empty;
             CoffObject = coffObject;
+            CoffArchive = coffArchive;
             TeImage = teImage;
             Hash = hash ?? string.Empty;
             ImportHash = importHash ?? string.Empty;
@@ -3733,6 +3948,7 @@ namespace PECoff
             FileAlignment = fileAlignment;
             SectionAlignment = sectionAlignment;
             SizeOfHeaders = sizeOfHeaders;
+            DosRelocations = dosRelocations ?? new DosRelocationInfo(0, 0, false, Array.Empty<DosRelocationEntry>());
             OverlayInfo = overlayInfo ?? new OverlayInfo(0, 0);
             OverlayContainers = Array.AsReadOnly(overlayContainers ?? Array.Empty<OverlayContainerInfo>());
             PackingHints = Array.AsReadOnly(packingHints ?? Array.Empty<PackingHintInfo>());

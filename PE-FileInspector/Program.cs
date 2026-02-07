@@ -248,6 +248,18 @@ namespace PE_FileInspector
                 sb.AppendLine("  File Alignment: " + pe.FileAlignment.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Section Alignment: " + pe.SectionAlignment.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Size Of Headers: " + pe.SizeOfHeaders.ToString(CultureInfo.InvariantCulture));
+                if (pe.DosRelocations != null && pe.DosRelocations.DeclaredCount > 0)
+                {
+                    sb.AppendLine("  DOS Relocations: " + pe.DosRelocations.DeclaredCount.ToString(CultureInfo.InvariantCulture) +
+                                  (pe.DosRelocations.IsTruncated ? " (truncated)" : string.Empty));
+                    sb.AppendLine("    Table Offset: 0x" + pe.DosRelocations.TableOffset.ToString("X", CultureInfo.InvariantCulture));
+                    foreach (DosRelocationEntry entry in pe.DosRelocations.Entries.Take(5))
+                    {
+                        sb.AppendLine("    - Segment: 0x" + entry.Segment.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " Offset: 0x" + entry.Offset.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " Linear: 0x" + entry.LinearAddress.ToString("X", CultureInfo.InvariantCulture));
+                    }
+                }
                 if (pe.CoffObject != null)
                 {
                     sb.AppendLine("  COFF Object:");
@@ -282,6 +294,32 @@ namespace PE_FileInspector
                     if (pe.CoffObject.CharacteristicsFlags.Count > 0)
                     {
                         sb.AppendLine("    Characteristics: " + string.Join(", ", pe.CoffObject.CharacteristicsFlags));
+                    }
+                }
+                if (pe.CoffArchive != null)
+                {
+                    sb.AppendLine("  COFF Archive:");
+                    sb.AppendLine("    Members: " + pe.CoffArchive.MemberCount.ToString(CultureInfo.InvariantCulture));
+                    if (pe.CoffArchive.SymbolTable != null)
+                    {
+                        sb.AppendLine("    Symbols: " + pe.CoffArchive.SymbolTable.SymbolCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | NameTable: " + pe.CoffArchive.SymbolTable.NameTableSize.ToString(CultureInfo.InvariantCulture));
+                    }
+                    foreach (CoffArchiveMemberInfo member in pe.CoffArchive.Members.Take(5))
+                    {
+                        sb.AppendLine("    - " + Safe(member.Name) +
+                                      " | Size: " + member.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | Import: " + member.IsImportObject);
+                        if (member.ImportObject != null)
+                        {
+                            sb.AppendLine("      Import: " + Safe(member.ImportObject.SymbolName) +
+                                          " from " + Safe(member.ImportObject.DllName) +
+                                          " (" + Safe(member.ImportObject.MachineName) + ")");
+                        }
+                    }
+                    if (pe.CoffArchive.Members.Count > 5)
+                    {
+                        sb.AppendLine("    (truncated)");
                     }
                 }
                 if (pe.TeImage != null)
@@ -1688,6 +1726,34 @@ namespace PE_FileInspector
                     {
                         sb.AppendLine("    Repro: " + entry.Repro.DataLength.ToString(CultureInfo.InvariantCulture) +
                                       " bytes | " + entry.Repro.Hash);
+                    }
+                    if (entry.EmbeddedPortablePdb != null)
+                    {
+                        sb.AppendLine("    Embedded PDB: " + Safe(entry.EmbeddedPortablePdb.Signature) +
+                                      " | Uncompressed: " + entry.EmbeddedPortablePdb.UncompressedSize.ToString(CultureInfo.InvariantCulture) +
+                                      " | Compressed: " + entry.EmbeddedPortablePdb.CompressedSize.ToString(CultureInfo.InvariantCulture));
+                        if (!string.IsNullOrWhiteSpace(entry.EmbeddedPortablePdb.PayloadHash))
+                        {
+                            sb.AppendLine("      Hash: " + entry.EmbeddedPortablePdb.PayloadHash);
+                        }
+                        if (!string.IsNullOrWhiteSpace(entry.EmbeddedPortablePdb.Notes))
+                        {
+                            sb.AppendLine("      Notes: " + Safe(entry.EmbeddedPortablePdb.Notes));
+                        }
+                    }
+                    if (entry.Spgo != null)
+                    {
+                        sb.AppendLine("    SPGO: " + entry.Spgo.DataLength.ToString(CultureInfo.InvariantCulture) +
+                                      " bytes | " + entry.Spgo.Hash);
+                        if (!string.IsNullOrWhiteSpace(entry.Spgo.Preview))
+                        {
+                            sb.AppendLine("      Preview: " + entry.Spgo.Preview);
+                        }
+                    }
+                    if (entry.PdbHash != null)
+                    {
+                        sb.AppendLine("    PDB Hash: " + Safe(entry.PdbHash.AlgorithmName) +
+                                      " | " + entry.PdbHash.Hash);
                     }
                     if (entry.Iltcg != null)
                     {
