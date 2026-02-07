@@ -945,7 +945,7 @@ namespace PECoff
             Version = 16,
             GroupIcon = 14,
             DlgInclude = 17,
-            DlgInit = 17,
+            DlgInit = 240,
             PlugAndPlay = 19,
             VXD = 20,
             AnimatedCursor = 21,
@@ -1976,6 +1976,46 @@ namespace PECoff
             {
                 EnsureResourcesParsed();
                 return _resourceRcData.ToArray();
+            }
+        }
+
+        private readonly List<ResourceRawInfo> _resourceHtml = new List<ResourceRawInfo>();
+        public ResourceRawInfo[] ResourceHtml
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceHtml.ToArray();
+            }
+        }
+
+        private readonly List<ResourceRawInfo> _resourceDlgInclude = new List<ResourceRawInfo>();
+        public ResourceRawInfo[] ResourceDlgInclude
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceDlgInclude.ToArray();
+            }
+        }
+
+        private readonly List<ResourceRawInfo> _resourcePlugAndPlay = new List<ResourceRawInfo>();
+        public ResourceRawInfo[] ResourcePlugAndPlay
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourcePlugAndPlay.ToArray();
+            }
+        }
+
+        private readonly List<ResourceRawInfo> _resourceVxd = new List<ResourceRawInfo>();
+        public ResourceRawInfo[] ResourceVxd
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceVxd.ToArray();
             }
         }
 
@@ -3702,6 +3742,10 @@ namespace PECoff
                 _resourceAnimatedCursors.ToArray(),
                 _resourceAnimatedIcons.ToArray(),
                 _resourceRcData.ToArray(),
+                _resourceHtml.ToArray(),
+                _resourceDlgInclude.ToArray(),
+                _resourcePlugAndPlay.ToArray(),
+                _resourceVxd.ToArray(),
                 _iconGroups.ToArray(),
                 _clrMetadata,
                 _strongNameSignature,
@@ -5530,6 +5574,61 @@ namespace PECoff
             }
         }
 
+        private void DecodeResourceHtml(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceHtml.Clear();
+            DecodeResourceRawType(resourceBuffer, resourceBaseRva, sections, ResourceType.HTML, _resourceHtml);
+        }
+
+        private void DecodeResourceDlgInclude(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceDlgInclude.Clear();
+            DecodeResourceRawType(resourceBuffer, resourceBaseRva, sections, ResourceType.DlgInclude, _resourceDlgInclude);
+        }
+
+        private void DecodeResourcePlugAndPlay(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourcePlugAndPlay.Clear();
+            DecodeResourceRawType(resourceBuffer, resourceBaseRva, sections, ResourceType.PlugAndPlay, _resourcePlugAndPlay);
+        }
+
+        private void DecodeResourceVxd(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceVxd.Clear();
+            DecodeResourceRawType(resourceBuffer, resourceBaseRva, sections, ResourceType.VXD, _resourceVxd);
+        }
+
+        private void DecodeResourceRawType(
+            ReadOnlySpan<byte> resourceBuffer,
+            uint resourceBaseRva,
+            List<IMAGE_SECTION_HEADER> sections,
+            ResourceType type,
+            List<ResourceRawInfo> target)
+        {
+            if (target == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)type)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] owned))
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> data = owned.Length > 0 ? owned : dataSpan;
+                ResourceRawInfo info = BuildResourceRawInfo(entry, data);
+                target.Add(info);
+            }
+        }
+
         private void ParseResourceSection(
             ReadOnlySpan<byte> resourceSpan,
             int resourceSize,
@@ -5572,6 +5671,10 @@ namespace PECoff
             DecodeResourceDlgInit(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceAnimatedResources(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceRcData(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceHtml(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceDlgInclude(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourcePlugAndPlay(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceVxd(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceVersionInfo(resourceSpan, resourceSection.VirtualAddress, sections);
 
             FileVersionInfo fvi;
@@ -6484,6 +6587,15 @@ namespace PECoff
             return new ResourceRcDataInfo(entry.NameId, entry.LanguageId, entry.Size, isText, preview, entropy);
         }
 
+        private static ResourceRawInfo BuildResourceRawInfo(ResourceEntry entry, ReadOnlySpan<byte> data)
+        {
+            string text = DecodeTextResource(data);
+            bool isText = IsLikelyText(text);
+            string preview = isText ? BuildPreviewText(text, 160) : BuildHexPreview(data, 48);
+            string hash = data.Length > 0 ? ToHex(SHA256.HashData(data)) : string.Empty;
+            return new ResourceRawInfo(entry.NameId, entry.LanguageId, entry.Size, hash, isText, preview);
+        }
+
         private static bool IsLikelyText(string text)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -6596,6 +6708,16 @@ namespace PECoff
             return TryParsePogoData(data, out info);
         }
 
+        internal static bool TryParseDebugCoffDataForTest(byte[] data, out DebugCoffInfo info)
+        {
+            return TryParseDebugCoffData(data, out info);
+        }
+
+        internal static bool TryParseDebugClsidDataForTest(byte[] data, out DebugClsidInfo info)
+        {
+            return TryParseDebugClsidData(data, out info);
+        }
+
         internal static bool TryParseDebugMiscDataForTest(byte[] data, out DebugMiscInfo info)
         {
             return TryParseDebugMiscData(data, out info);
@@ -6609,6 +6731,16 @@ namespace PECoff
         internal static bool TryParseReproDataForTest(byte[] data, out DebugReproInfo info)
         {
             return TryParseReproData(data, out info);
+        }
+
+        internal static ResourceRawInfo BuildResourceRawInfoForTest(ResourceEntry entry, byte[] data)
+        {
+            if (entry == null || data == null)
+            {
+                return null;
+            }
+
+            return BuildResourceRawInfo(entry, data);
         }
 
         internal static bool TryParseVcFeatureDataForTest(byte[] data, out DebugVcFeatureInfo info)
@@ -9556,14 +9688,19 @@ namespace PECoff
                 IMAGE_DEBUG_DIRECTORY entry = ByteArrayToStructure<IMAGE_DEBUG_DIRECTORY>(buffer);
 
                 DebugCodeViewInfo codeView = null;
+                DebugCoffInfo coff = null;
                 DebugPogoInfo pogo = null;
                 DebugVcFeatureInfo vcFeature = null;
                 DebugExDllCharacteristicsInfo exDll = null;
                 DebugFpoInfo fpo = null;
+                DebugRawInfo fixup = null;
                 DebugMiscInfo misc = null;
                 DebugOmapInfo omapToSource = null;
                 DebugOmapInfo omapFromSource = null;
                 DebugReproInfo repro = null;
+                DebugRawInfo iltcg = null;
+                DebugRawInfo mpx = null;
+                DebugClsidInfo clsid = null;
                 string note = string.Empty;
                 if ((DebugDirectoryType)entry.Type == DebugDirectoryType.CodeView && entry.SizeOfData > 0)
                 {
@@ -9615,7 +9752,15 @@ namespace PECoff
                 }
                 else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Coff)
                 {
-                    note = "COFF debug info (likely /Z7).";
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseDebugCoffData(data, out DebugCoffInfo parsed))
+                    {
+                        coff = parsed;
+                    }
+                    else
+                    {
+                        note = "COFF debug info (likely /Z7).";
+                    }
                 }
                 else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Pogo && entry.SizeOfData > 0)
                 {
@@ -9647,6 +9792,13 @@ namespace PECoff
                         TryParseFpoData(data, out DebugFpoInfo parsed))
                     {
                         fpo = parsed;
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Fixup && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data))
+                    {
+                        fixup = BuildDebugRawInfo(data);
                     }
                 }
                 else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Misc && entry.SizeOfData > 0)
@@ -9681,6 +9833,28 @@ namespace PECoff
                         repro = parsed;
                     }
                 }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.ILTCG && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data))
+                    {
+                        iltcg = BuildDebugRawInfo(data);
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.MPX && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data))
+                    {
+                        mpx = BuildDebugRawInfo(data);
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Clsid && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseDebugClsidData(data, out DebugClsidInfo parsed))
+                    {
+                        clsid = parsed;
+                    }
+                }
 
                 _debugDirectories.Add(new DebugDirectoryEntry(
                     entry.Characteristics,
@@ -9692,14 +9866,19 @@ namespace PECoff
                     entry.AddressOfRawData,
                     entry.PointerToRawData,
                     codeView,
+                    coff,
                     pogo,
                     vcFeature,
                     exDll,
                     fpo,
+                    fixup,
                     misc,
                     omapToSource,
                     omapFromSource,
                     repro,
+                    iltcg,
+                    mpx,
+                    clsid,
                     note));
             }
         }
@@ -9869,6 +10048,60 @@ namespace PECoff
 
             info = new DebugReproInfo((uint)data.Length, ToHex(data));
             return true;
+        }
+
+        private static bool TryParseDebugCoffData(byte[] data, out DebugCoffInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 32)
+            {
+                return false;
+            }
+
+            uint numberOfSymbols = ReadUInt32(data, 0);
+            uint lvaToFirstSymbol = ReadUInt32(data, 4);
+            uint numberOfLineNumbers = ReadUInt32(data, 8);
+            uint lvaToFirstLineNumber = ReadUInt32(data, 12);
+            uint rvaToFirstByteOfCode = ReadUInt32(data, 16);
+            uint rvaToLastByteOfCode = ReadUInt32(data, 20);
+            uint rvaToFirstByteOfData = ReadUInt32(data, 24);
+            uint rvaToLastByteOfData = ReadUInt32(data, 28);
+
+            info = new DebugCoffInfo(
+                numberOfSymbols,
+                lvaToFirstSymbol,
+                numberOfLineNumbers,
+                lvaToFirstLineNumber,
+                rvaToFirstByteOfCode,
+                rvaToLastByteOfCode,
+                rvaToFirstByteOfData,
+                rvaToLastByteOfData);
+            return true;
+        }
+
+        private static bool TryParseDebugClsidData(byte[] data, out DebugClsidInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 16)
+            {
+                return false;
+            }
+
+            Guid clsid = new Guid(new ReadOnlySpan<byte>(data, 0, 16));
+            info = new DebugClsidInfo(clsid);
+            return true;
+        }
+
+        private static DebugRawInfo BuildDebugRawInfo(byte[] data)
+        {
+            if (data == null)
+            {
+                return null;
+            }
+
+            string hash = data.Length > 0 ? ToHex(SHA256.HashData(data)) : string.Empty;
+            string preview = BuildHexPreview(data, 48);
+            return new DebugRawInfo((uint)data.Length, hash, preview);
         }
 
         private static bool TryParseVcFeatureData(byte[] data, out DebugVcFeatureInfo info)
@@ -10302,6 +10535,10 @@ namespace PECoff
             LoadConfigGuardFlagsInfo guardFlagsInfo = DecodeGuardFlags(guardFlags);
             LoadConfigGlobalFlagsInfo globalFlagsInfo = DecodeGlobalFlags(globalFlagsClear, globalFlagsSet);
             LoadConfigCodeIntegrityInfo codeIntegrityInfo = null;
+            ulong guardAddressTakenIatEntryTable = 0;
+            ulong guardAddressTakenIatEntryCount = 0;
+            ulong guardLongJumpTargetTable = 0;
+            ulong guardLongJumpTargetCount = 0;
 
             ulong dynamicValueRelocTable = 0;
             uint dynamicValueRelocTableOffset = 0;
@@ -10319,12 +10556,15 @@ namespace PECoff
             ulong guardXfgDispatchFunctionPointer = 0;
             ulong guardXfgTableDispatchFunctionPointer = 0;
             EnclaveConfigurationInfo enclaveConfigInfo = null;
+            GuardRvaTableInfo guardCfFunctionTableInfo = null;
+            GuardRvaTableInfo guardAddressTakenIatTableInfo = null;
+            GuardRvaTableInfo guardLongJumpTargetTableInfo = null;
 
             if (TryReadCodeIntegrity(span, ref offset, limit, out codeIntegrityInfo) && // CodeIntegrity
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardAddressTakenIatEntryTable
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardAddressTakenIatEntryCount
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardLongJumpTargetTable
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardLongJumpTargetCount
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardAddressTakenIatEntryTable) && // GuardAddressTakenIatEntryTable
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardAddressTakenIatEntryCount) && // GuardAddressTakenIatEntryCount
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardLongJumpTargetTable) && // GuardLongJumpTargetTable
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardLongJumpTargetCount) && // GuardLongJumpTargetCount
                 TryReadPointerValue(span, ref offset, limit, isPe32Plus, out dynamicValueRelocTable) && // DynamicValueRelocTable
                 TryReadPointerValue(span, ref offset, limit, isPe32Plus, out chpeMetadataPointer))
             {
@@ -10465,6 +10705,10 @@ namespace PECoff
                 }
             }
 
+            guardCfFunctionTableInfo = BuildGuardRvaTableInfo("Guard CF Function Table", guardCfTable, guardCfCount, 4, sections);
+            guardAddressTakenIatTableInfo = BuildGuardRvaTableInfo("Guard Address Taken IAT Table", guardAddressTakenIatEntryTable, guardAddressTakenIatEntryCount, 4, sections);
+            guardLongJumpTargetTableInfo = BuildGuardRvaTableInfo("Guard Long Jump Target Table", guardLongJumpTargetTable, guardLongJumpTargetCount, 4, sections);
+
             SehHandlerTableInfo sehHandlerTableInfo = null;
             if (!isPe32Plus && seHandlerTable != 0 && seHandlerCount > 0)
             {
@@ -10512,6 +10756,9 @@ namespace PECoff
                 guardXfgCheckFunctionPointer,
                 guardXfgDispatchFunctionPointer,
                 guardXfgTableDispatchFunctionPointer,
+                guardCfFunctionTableInfo,
+                guardAddressTakenIatTableInfo,
+                guardLongJumpTargetTableInfo,
                 guardFeatures.ToArray(),
                 guardTableSanity.ToArray(),
                 sehHandlerTableInfo,
@@ -10560,6 +10807,77 @@ namespace PECoff
             }
 
             return new SehHandlerTableInfo(tableAddress, handlerCount, mapped, sectionName, handlers);
+        }
+
+        private GuardRvaTableInfo BuildGuardRvaTableInfo(string name, ulong tablePointer, ulong count, uint entrySize, List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (tablePointer == 0 || count == 0 || entrySize == 0)
+            {
+                return null;
+            }
+
+            if (_imageBase == 0 || !TryGetRvaFromAddress(tablePointer, _imageBase, out uint rva, out _))
+            {
+                Warn(ParseIssueCategory.LoadConfig, $"{name} pointer could not be mapped to an RVA.");
+                return new GuardRvaTableInfo(name, tablePointer, count, entrySize, false, string.Empty, false, false, Array.Empty<uint>());
+            }
+
+            bool mapped = TryGetSectionByRva(sections, rva, out IMAGE_SECTION_HEADER section);
+            string sectionName = mapped ? NormalizeSectionName(section.Section) : string.Empty;
+            if (!mapped)
+            {
+                Warn(ParseIssueCategory.LoadConfig, $"{name} RVA is not mapped to a section.");
+            }
+
+            bool sizeFits = false;
+            ulong totalSize = 0;
+            try
+            {
+                totalSize = checked(count * entrySize);
+                sizeFits = totalSize <= uint.MaxValue;
+            }
+            catch (OverflowException)
+            {
+                sizeFits = false;
+            }
+
+            int maxEntries = (int)Math.Min(count, 512u);
+            uint[] entries = Array.Empty<uint>();
+            bool truncated = count > (ulong)maxEntries;
+
+            int sampleSize = maxEntries * (int)entrySize;
+            if (sizeFits && TryGetFileOffset(sections, rva, (uint)totalSize, out long fileOffset) &&
+                TrySetPosition(fileOffset, sampleSize))
+            {
+                entries = new uint[maxEntries];
+                for (int i = 0; i < maxEntries; i++)
+                {
+                    entries[i] = PEFile.ReadUInt32();
+                }
+            }
+            else if (TryGetFileOffset(sections, rva, (uint)sampleSize, out long fallbackOffset) &&
+                     TrySetPosition(fallbackOffset, sampleSize))
+            {
+                entries = new uint[maxEntries];
+                for (int i = 0; i < maxEntries; i++)
+                {
+                    entries[i] = PEFile.ReadUInt32();
+                }
+                sizeFits = false;
+            }
+            else
+            {
+                if (!sizeFits)
+                {
+                    Warn(ParseIssueCategory.LoadConfig, $"{name} size exceeds supported limits.");
+                }
+                else
+                {
+                    Warn(ParseIssueCategory.LoadConfig, $"{name} could not be read from file.");
+                }
+            }
+
+            return new GuardRvaTableInfo(name, tablePointer, count, entrySize, mapped, sectionName, sizeFits, truncated, entries);
         }
 
         private static ulong ReadPointer(ReadOnlySpan<byte> span, ref int offset, bool isPe32Plus)

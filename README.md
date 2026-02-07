@@ -131,6 +131,7 @@ Defaults:
 - v10: data directory mapping with Architecture/GlobalPtr/IAT details, plus COFF symbol/string/line table decoding.
 - v11: extra resource parsing (fonts/fontdir/dlginit/animated/rcdata), debug directory POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO summaries, and SEH handler table parsing.
 - v12: debug directory MISC/OMAP/REPRO details, ARM64 unwind summaries, and load-config code-integrity/enclave metadata.
+- v13: debug directory COFF/FIXUP/ILTCG/MPX/CLSID details, load-config guard tables, and raw HTML/DLGINCLUDE/PLUGPLAY/VXD resource summaries.
 
 ### Coverage map
 High-level PE/COFF structures and current coverage:
@@ -141,13 +142,13 @@ High-level PE/COFF structures and current coverage:
 - Data directories: implemented (name/section mapping, Architecture/GlobalPtr/IAT metadata)
 - Sections: implemented (entropy, permissions, padding)
 - Imports/Exports: implemented (INT/IAT, delay/bound, forwarders, anomalies)
-- Resources: implemented (strings, manifests/MUI, dialogs/menus/toolbars/accelerators, icons/cursors/bitmaps, message tables)
+- Resources: implemented (strings, manifests/MUI, dialogs/menus/toolbars/accelerators, icons/cursors/bitmaps, message tables, HTML/DLGINCLUDE/PLUGPLAY/VXD raw summaries)
 - Resources (extended): implemented (fonts/fontdir, rcdata, dlginit, animated cursor/icon)
-- Debug directory: implemented (CodeView/PDB, POGO, VC_FEATURE, EX_DLLCHARACTERISTICS, FPO, MISC, OMAP, REPRO)
+- Debug directory: implemented (CodeView/PDB, COFF, POGO, VC_FEATURE, EX_DLLCHARACTERISTICS, FPO, MISC, OMAP, REPRO, ILTCG, MPX, CLSID, FIXUP)
 - Relocations: implemented (summaries + anomalies)
 - Exception directory: implemented (unwind + validation, AMD64/ARM64 details, x86 SEH handler table)
 - TLS: implemented (callbacks + mapping)
-- Load config: implemented (guard flags, code integrity, enclave config, CHPE, dynamic reloc tables, SEH handler metadata)
+- Load config: implemented (guard flags, guard tables, code integrity, enclave config, CHPE, dynamic reloc tables, SEH handler metadata)
 - CLR/.NET: implemented (metadata, references, ReadyToRun)
 - Certificates/Authenticode: implemented (PKCS7/signers/timestamps)
 - COFF symbols/line numbers/string table: implemented when present

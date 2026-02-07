@@ -1277,6 +1277,13 @@ namespace PE_FileInspector
                         sb.AppendLine("    PDB Path Has Dir: " + entry.CodeView.PdbPathHasDirectory);
                         sb.AppendLine("    Identity Valid: " + entry.CodeView.IdentityLooksValid);
                     }
+                    if (entry.Coff != null)
+                    {
+                        sb.AppendLine("    COFF: Symbols=" + entry.Coff.NumberOfSymbols.ToString(CultureInfo.InvariantCulture) +
+                                      " | LineNumbers=" + entry.Coff.NumberOfLinenumbers.ToString(CultureInfo.InvariantCulture) +
+                                      " | Code RVA: 0x" + entry.Coff.RvaToFirstByteOfCode.ToString("X8", CultureInfo.InvariantCulture) +
+                                      "-0x" + entry.Coff.RvaToLastByteOfCode.ToString("X8", CultureInfo.InvariantCulture));
+                    }
                     if (entry.Pogo != null)
                     {
                         sb.AppendLine("    POGO: " + Safe(entry.Pogo.Signature) +
@@ -1319,6 +1326,15 @@ namespace PE_FileInspector
                                           " | BP: " + fpo.UsesBasePointer);
                         }
                     }
+                    if (entry.Fixup != null)
+                    {
+                        sb.AppendLine("    Fixup: " + entry.Fixup.DataLength.ToString(CultureInfo.InvariantCulture) +
+                                      " bytes | " + entry.Fixup.Sha256);
+                        if (!string.IsNullOrWhiteSpace(entry.Fixup.Preview))
+                        {
+                            sb.AppendLine("      Preview: " + entry.Fixup.Preview);
+                        }
+                    }
                     if (entry.Misc != null)
                     {
                         sb.AppendLine("    Misc: Type=" + entry.Misc.DataType.ToString(CultureInfo.InvariantCulture) +
@@ -1353,6 +1369,28 @@ namespace PE_FileInspector
                     {
                         sb.AppendLine("    Repro: " + entry.Repro.DataLength.ToString(CultureInfo.InvariantCulture) +
                                       " bytes | " + entry.Repro.Hash);
+                    }
+                    if (entry.Iltcg != null)
+                    {
+                        sb.AppendLine("    ILTCG: " + entry.Iltcg.DataLength.ToString(CultureInfo.InvariantCulture) +
+                                      " bytes | " + entry.Iltcg.Sha256);
+                        if (!string.IsNullOrWhiteSpace(entry.Iltcg.Preview))
+                        {
+                            sb.AppendLine("      Preview: " + entry.Iltcg.Preview);
+                        }
+                    }
+                    if (entry.Mpx != null)
+                    {
+                        sb.AppendLine("    MPX: " + entry.Mpx.DataLength.ToString(CultureInfo.InvariantCulture) +
+                                      " bytes | " + entry.Mpx.Sha256);
+                        if (!string.IsNullOrWhiteSpace(entry.Mpx.Preview))
+                        {
+                            sb.AppendLine("      Preview: " + entry.Mpx.Preview);
+                        }
+                    }
+                    if (entry.Clsid != null)
+                    {
+                        sb.AppendLine("    CLSID: " + entry.Clsid.ClassId.ToString());
                     }
                 }
             }
@@ -1623,6 +1661,10 @@ namespace PE_FileInspector
                             sb.AppendLine("    - " + flag);
                         }
                     }
+
+                    AppendGuardRvaTableInfo(sb, pe.LoadConfig.GuardCfFunctionTableInfo, "  Guard CF Function Table:");
+                    AppendGuardRvaTableInfo(sb, pe.LoadConfig.GuardAddressTakenIatTable, "  Guard Address Taken IAT Table:");
+                    AppendGuardRvaTableInfo(sb, pe.LoadConfig.GuardLongJumpTargetTable, "  Guard Long Jump Target Table:");
 
                     if (pe.LoadConfig.ChpeMetadataPointer != 0)
                     {
@@ -2610,6 +2652,31 @@ namespace PE_FileInspector
         private static string Safe(string? value)
         {
             return value ?? string.Empty;
+        }
+
+        private static void AppendGuardRvaTableInfo(StringBuilder sb, GuardRvaTableInfo info, string label)
+        {
+            if (sb == null || info == null)
+            {
+                return;
+            }
+
+            sb.AppendLine(label);
+            sb.AppendLine("    Pointer: 0x" + info.Pointer.ToString("X", CultureInfo.InvariantCulture) +
+                          " | Count: " + info.Count.ToString(CultureInfo.InvariantCulture) +
+                          " | EntrySize: " + info.EntrySize.ToString(CultureInfo.InvariantCulture));
+            if (!string.IsNullOrWhiteSpace(info.SectionName))
+            {
+                sb.AppendLine("    Section: " + Safe(info.SectionName));
+            }
+            sb.AppendLine("    Mapped: " + info.IsMapped +
+                          " | SizeFits: " + info.SizeFits +
+                          " | Truncated: " + info.IsTruncated);
+            if (info.Entries.Count > 0)
+            {
+                sb.AppendLine("    Sample: " + string.Join(", ", info.Entries.Take(10)
+                    .Select(rva => "0x" + rva.ToString("X8", CultureInfo.InvariantCulture))));
+            }
         }
 
         private static string ToHex(byte[]? data)

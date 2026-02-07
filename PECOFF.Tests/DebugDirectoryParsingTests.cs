@@ -27,6 +27,38 @@ public class DebugDirectoryParsingTests
     }
 
     [Fact]
+    public void CoffData_Parses_Header()
+    {
+        byte[] data = new byte[32];
+        BitConverter.GetBytes(12u).CopyTo(data, 0);
+        BitConverter.GetBytes(0x100u).CopyTo(data, 4);
+        BitConverter.GetBytes(4u).CopyTo(data, 8);
+        BitConverter.GetBytes(0x200u).CopyTo(data, 12);
+        BitConverter.GetBytes(0x1000u).CopyTo(data, 16);
+        BitConverter.GetBytes(0x1100u).CopyTo(data, 20);
+        BitConverter.GetBytes(0x2000u).CopyTo(data, 24);
+        BitConverter.GetBytes(0x2100u).CopyTo(data, 28);
+
+        bool parsed = PECOFF.TryParseDebugCoffDataForTest(data, out DebugCoffInfo info);
+        Assert.True(parsed);
+        Assert.Equal(12u, info.NumberOfSymbols);
+        Assert.Equal(0x100u, info.LvaToFirstSymbol);
+        Assert.Equal(4u, info.NumberOfLinenumbers);
+        Assert.Equal(0x1000u, info.RvaToFirstByteOfCode);
+    }
+
+    [Fact]
+    public void ClsidData_Parses_Guid()
+    {
+        Guid expected = new Guid("00112233-4455-6677-8899-aabbccddeeff");
+        byte[] data = expected.ToByteArray();
+
+        bool parsed = PECOFF.TryParseDebugClsidDataForTest(data, out DebugClsidInfo info);
+        Assert.True(parsed);
+        Assert.Equal(expected, info.ClassId);
+    }
+
+    [Fact]
     public void MiscData_Parses_Ascii()
     {
         byte[] payload = Encoding.ASCII.GetBytes("kernel32.dll\0");

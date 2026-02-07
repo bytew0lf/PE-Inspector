@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 12,
+  "SchemaVersion": 13,
   "FilePath": "minimal-x86.exe",
   "ParseResult": {
     "Errors": [],
@@ -296,6 +296,10 @@
   "ResourceAnimatedCursors": [],
   "ResourceAnimatedIcons": [],
   "ResourceRcData": [],
+  "ResourceHtml": [],
+  "ResourceDlgInclude": [],
+  "ResourcePlugAndPlay": [],
+  "ResourceVxd": [],
   "IconGroups": [],
   "ClrMetadata": null,
   "StrongNameSignature": null,
