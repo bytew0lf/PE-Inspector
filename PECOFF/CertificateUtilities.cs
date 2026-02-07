@@ -32,6 +32,8 @@ namespace PECoff
         public bool HasCodeSigningEku { get; }
         public bool HasTimestampEku { get; }
         public bool IsWithinValidityPeriod { get; }
+        public int CertificateTransparencyCount { get; }
+        public bool HasCertificateTransparency { get; }
         public int NestingLevel { get; }
         public Pkcs7SignerInfo[] CounterSigners { get; }
         public Pkcs7SignerInfo[] NestedSigners { get; }
@@ -55,6 +57,7 @@ namespace PECoff
             bool hasCodeSigningEku,
             bool hasTimestampEku,
             bool isWithinValidityPeriod,
+            int certificateTransparencyCount,
             int nestingLevel,
             Pkcs7SignerInfo[] counterSigners,
             Pkcs7SignerInfo[] nestedSigners,
@@ -77,6 +80,8 @@ namespace PECoff
             HasCodeSigningEku = hasCodeSigningEku;
             HasTimestampEku = hasTimestampEku;
             IsWithinValidityPeriod = isWithinValidityPeriod;
+            CertificateTransparencyCount = certificateTransparencyCount;
+            HasCertificateTransparency = certificateTransparencyCount > 0;
             NestingLevel = nestingLevel;
             CounterSigners = counterSigners ?? Array.Empty<Pkcs7SignerInfo>();
             NestedSigners = nestedSigners ?? Array.Empty<Pkcs7SignerInfo>();
@@ -127,10 +132,12 @@ namespace PECoff
             {
                 bool isPolicyCompliant = !policy.RequireSignature && !policy.RequireSignatureValid &&
                                          !policy.RequireChainValid && !policy.RequireTimestamp &&
-                                         !policy.RequireTimestampValid && !policy.RequireCodeSigningEku;
+                                         !policy.RequireTimestampValid && !policy.RequireCodeSigningEku &&
+                                         !policy.RequireCertificateTransparency;
                 return new AuthenticodeStatusInfo(
                     0,
                     0,
+                    0,
                     false,
                     false,
                     false,
@@ -138,15 +145,18 @@ namespace PECoff
                     false,
                     Array.Empty<string>(),
                     Array.Empty<string>(),
+                    !policy.RequireCertificateTransparency,
                     isPolicyCompliant,
                     isPolicyCompliant ? Array.Empty<string>() : new[] { "Missing signature." },
-                    Array.Empty<AuthenticodeSignerStatusInfo>());
+                    Array.Empty<AuthenticodeSignerStatusInfo>(),
+                    policy);
             }
 
             List<string> chainStatus = new List<string>();
             List<string> timestampStatus = new List<string>();
             int signerCount = 0;
             int timestampCount = 0;
+            int ctSignerCount = 0;
             bool signatureValid = false;
             bool chainValid = false;
             bool timestampValid = false;
@@ -207,6 +217,10 @@ namespace PECoff
                     {
                         allCodeSigningEku = false;
                     }
+                    if (signer.HasCertificateTransparency)
+                    {
+                        ctSignerCount++;
+                    }
 
                     if (signer.ChainStatus != null)
                     {
@@ -220,6 +234,8 @@ namespace PECoff
 
             bool hasSignature = signerCount > 0;
             bool hasTimestamp = timestampCount > 0;
+            bool ctRequiredMet = !policy.RequireCertificateTransparency ||
+                                 (signerCount > 0 && ctSignerCount == signerCount);
             if (!hasSignature)
             {
                 allSignatureValid = false;
@@ -263,11 +279,17 @@ namespace PECoff
                 policyCompliant = false;
                 policyFailures.Add("Timestamp validation failed.");
             }
+            if (policy.RequireCertificateTransparency && !ctRequiredMet)
+            {
+                policyCompliant = false;
+                policyFailures.Add("Missing certificate transparency data.");
+            }
 
             List<AuthenticodeSignerStatusInfo> signerStatuses = BuildSignerStatuses(signers);
             return new AuthenticodeStatusInfo(
                 signerCount,
                 timestampCount,
+                ctSignerCount,
                 hasSignature,
                 signatureValid,
                 chainValid,
@@ -275,9 +297,11 @@ namespace PECoff
                 timestampValid,
                 chainStatus.ToArray(),
                 timestampStatus.ToArray(),
+                ctRequiredMet,
                 policyCompliant,
                 policyFailures.ToArray(),
-                signerStatuses.ToArray());
+                signerStatuses.ToArray(),
+                policy);
         }
 
         private static List<AuthenticodeSignerStatusInfo> BuildSignerStatuses(Pkcs7SignerInfo[] signers)
@@ -316,6 +340,8 @@ namespace PECoff
                 signer.ChainValid,
                 signer.HasCodeSigningEku,
                 signer.HasTimestampEku,
+                signer.HasCertificateTransparency,
+                signer.CertificateTransparencyCount,
                 signer.NestingLevel));
 
             if (signer.CounterSigners != null)
@@ -643,6 +669,7 @@ namespace PECoff
             bool hasCodeSigningEku = false;
             bool hasTimestampEku = false;
             bool isWithinValidity = false;
+            int certificateTransparencyCount = 0;
 
             if (signer.Certificate != null)
             {
@@ -652,6 +679,7 @@ namespace PECoff
                 thumbprint = signer.Certificate.Thumbprint ?? string.Empty;
                 hasCodeSigningEku = HasEku(signer.Certificate, "1.3.6.1.5.5.7.3.3");
                 hasTimestampEku = HasEku(signer.Certificate, "1.3.6.1.5.5.7.3.8");
+                certificateTransparencyCount = GetCertificateTransparencyCount(signer.Certificate);
             }
             else if (signer.SignerIdentifier != null && signer.SignerIdentifier.Type == SubjectIdentifierType.IssuerAndSerialNumber)
             {
@@ -795,6 +823,7 @@ namespace PECoff
                 hasCodeSigningEku,
                 hasTimestampEku,
                 isWithinValidity,
+                certificateTransparencyCount,
                 nestingLevel,
                 countersigners.ToArray(),
                 nestedSigners.ToArray(),
@@ -1036,6 +1065,74 @@ namespace PECoff
             }
 
             return false;
+        }
+
+        private static int GetCertificateTransparencyCount(X509Certificate2 certificate)
+        {
+            if (certificate == null)
+            {
+                return 0;
+            }
+
+            foreach (X509Extension extension in certificate.Extensions)
+            {
+                if (extension?.Oid?.Value != "1.3.6.1.4.1.11129.2.4.2")
+                {
+                    continue;
+                }
+
+                byte[] raw = extension.RawData;
+                if (raw == null || raw.Length == 0)
+                {
+                    return 0;
+                }
+
+                byte[] payload = raw;
+                try
+                {
+                    if (raw[0] == 0x04)
+                    {
+                        AsnReader reader = new AsnReader(raw, AsnEncodingRules.DER);
+                        payload = reader.ReadOctetString();
+                    }
+                }
+                catch (Exception)
+                {
+                    payload = raw;
+                }
+
+                return CountSctEntries(payload);
+            }
+
+            return 0;
+        }
+
+        private static int CountSctEntries(byte[] payload)
+        {
+            if (payload == null || payload.Length < 2)
+            {
+                return 0;
+            }
+
+            int listLength = (payload[0] << 8) | payload[1];
+            int limit = Math.Min(payload.Length, listLength + 2);
+            int offset = 2;
+            int count = 0;
+
+            while (offset + 2 <= limit)
+            {
+                int entryLength = (payload[offset] << 8) | payload[offset + 1];
+                offset += 2;
+                if (entryLength <= 0 || offset + entryLength > limit)
+                {
+                    break;
+                }
+
+                count++;
+                offset += entryLength;
+            }
+
+            return count;
         }
 
         private static DateTimeOffset? TryGetSigningTime(SignerInfo signer)

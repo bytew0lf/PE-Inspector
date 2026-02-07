@@ -1110,6 +1110,24 @@ namespace PECoff
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct ANON_OBJECT_HEADER_BIGOBJ
+        {
+            public ushort Sig1;
+            public ushort Sig2;
+            public ushort Version;
+            public ushort Machine;
+            public uint TimeDateStamp;
+            public Guid ClassID;
+            public uint SizeOfData;
+            public uint Flags;
+            public uint MetaDataSize;
+            public uint MetaDataOffset;
+            public uint NumberOfSections;
+            public uint PointerToSymbolTable;
+            public uint NumberOfSymbols;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
         private struct EFI_TE_IMAGE_HEADER
         {
             public ushort Signature;
@@ -2970,6 +2988,7 @@ namespace PECoff
                 uint value = BitConverter.ToUInt32(entry.Slice(8, 4));
                 short sectionNumber = BitConverter.ToInt16(entry.Slice(12, 2));
                 ushort type = BitConverter.ToUInt16(entry.Slice(14, 2));
+                string typeName = DecodeCoffSymbolTypeName(type);
                 byte storageClass = entry[16];
                 byte auxCount = entry[17];
 
@@ -3002,6 +3021,7 @@ namespace PECoff
                     sectionNumber,
                     sectionName,
                     type,
+                    typeName,
                     storageClass,
                     auxCount,
                     auxData,
@@ -3011,6 +3031,13 @@ namespace PECoff
                 {
                     index += auxCount;
                 }
+            }
+
+            CoffSymbolInfo[] resolved = ResolveCoffWeakExternDefaults(_coffSymbols);
+            if (resolved.Length == _coffSymbols.Count && resolved.Length > 0)
+            {
+                _coffSymbols.Clear();
+                _coffSymbols.AddRange(resolved);
             }
         }
 
@@ -3175,9 +3202,11 @@ namespace PECoff
                     0,
                     0,
                     0,
+                    0,
                     string.Empty,
                     0,
                     0,
+                    string.Empty,
                     string.Empty,
                     BuildHexPreview(auxData, 32)));
                 return results.ToArray();
@@ -3203,9 +3232,40 @@ namespace PECoff
                     0,
                     0,
                     0,
+                    0,
                     string.Empty,
                     0,
                     0,
+                    string.Empty,
+                    string.Empty,
+                    BuildHexPreview(auxData, 32)));
+                return results.ToArray();
+            }
+
+            if ((string.Equals(name, ".bf", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(name, ".ef", StringComparison.OrdinalIgnoreCase)) &&
+                auxData.Length >= CoffSymbolSize)
+            {
+                ushort lineNumber = ReadUInt16(auxData, 0);
+                uint nextFn = ReadUInt32(auxData, 4);
+                results.Add(new CoffAuxSymbolInfo(
+                    "FunctionBoundary",
+                    string.Empty,
+                    0,
+                    0,
+                    0,
+                    nextFn,
+                    lineNumber,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    string.Empty,
+                    0,
+                    0,
+                    string.Empty,
                     string.Empty,
                     BuildHexPreview(auxData, 32)));
                 return results.ToArray();
@@ -3226,6 +3286,7 @@ namespace PECoff
                     0,
                     0,
                     0,
+                    0,
                     length,
                     relocations,
                     lineNumbers,
@@ -3235,6 +3296,7 @@ namespace PECoff
                     GetComdatSelectionName(selection),
                     0,
                     0,
+                    string.Empty,
                     string.Empty,
                     BuildHexPreview(auxData, 32)));
                 return results.ToArray();
@@ -3257,10 +3319,12 @@ namespace PECoff
                     0,
                     0,
                     0,
+                    0,
                     string.Empty,
                     tagIndex,
                     characteristics,
                     GetWeakExternalCharacteristicsName(characteristics),
+                    string.Empty,
                     BuildHexPreview(auxData, 32)));
                 return results.ToArray();
             }
@@ -3283,14 +3347,170 @@ namespace PECoff
                     0,
                     0,
                     0,
+                    0,
                     string.Empty,
                     0,
                     0,
+                    string.Empty,
                     string.Empty,
                     BuildHexPreview(slice, 32)));
             }
 
             return results.ToArray();
+        }
+
+        private static CoffSymbolInfo[] ResolveCoffWeakExternDefaults(IReadOnlyList<CoffSymbolInfo> symbols)
+        {
+            if (symbols == null || symbols.Count == 0)
+            {
+                return Array.Empty<CoffSymbolInfo>();
+            }
+
+            bool anyUpdated = false;
+            CoffSymbolInfo[] resolved = new CoffSymbolInfo[symbols.Count];
+            for (int i = 0; i < symbols.Count; i++)
+            {
+                CoffSymbolInfo symbol = symbols[i];
+                if (symbol.AuxSymbols == null || symbol.AuxSymbols.Count == 0)
+                {
+                    resolved[i] = symbol;
+                    continue;
+                }
+
+                bool updated = false;
+                CoffAuxSymbolInfo[] aux = new CoffAuxSymbolInfo[symbol.AuxSymbols.Count];
+                for (int j = 0; j < symbol.AuxSymbols.Count; j++)
+                {
+                    CoffAuxSymbolInfo info = symbol.AuxSymbols[j];
+                    if (info != null &&
+                        string.Equals(info.Kind, "WeakExternal", StringComparison.OrdinalIgnoreCase) &&
+                        info.WeakTagIndex < symbols.Count)
+                    {
+                        string targetName = symbols[(int)info.WeakTagIndex].Name;
+                        if (!string.Equals(info.WeakDefaultSymbol, targetName, StringComparison.Ordinal))
+                        {
+                            aux[j] = new CoffAuxSymbolInfo(
+                                info.Kind,
+                                info.FileName,
+                                info.TagIndex,
+                                info.TotalSize,
+                                info.PointerToLineNumber,
+                                info.PointerToNextFunction,
+                                info.FunctionLineNumber,
+                                info.SectionLength,
+                                info.RelocationCount,
+                                info.LineNumberCount,
+                                info.Checksum,
+                                info.SectionNumber,
+                                info.Selection,
+                                info.SelectionName,
+                                info.WeakTagIndex,
+                                info.WeakCharacteristics,
+                                info.WeakCharacteristicsName,
+                                targetName,
+                                info.RawPreview);
+                            updated = true;
+                        }
+                        else
+                        {
+                            aux[j] = info;
+                        }
+                    }
+                    else
+                    {
+                        aux[j] = info;
+                    }
+                }
+
+                if (updated)
+                {
+                    resolved[i] = new CoffSymbolInfo(
+                        symbol.Index,
+                        symbol.Name,
+                        symbol.Value,
+                        symbol.SectionNumber,
+                        symbol.SectionName,
+                        symbol.Type,
+                        symbol.TypeName,
+                        symbol.StorageClass,
+                        symbol.AuxSymbolCount,
+                        symbol.AuxData,
+                        aux);
+                    anyUpdated = true;
+                }
+                else
+                {
+                    resolved[i] = symbol;
+                }
+            }
+
+            return anyUpdated ? resolved : symbols.ToArray();
+        }
+
+        private static string DecodeCoffSymbolTypeName(ushort type)
+        {
+            ushort baseType = (ushort)(type & 0x0F);
+            string baseName = GetCoffBaseTypeName(baseType);
+            ushort derived = (ushort)(type >> 4);
+
+            if (derived == 0)
+            {
+                return baseName;
+            }
+
+            List<string> chain = new List<string>();
+            for (int i = 0; i < 6 && derived != 0; i++)
+            {
+                int code = derived & 0x03;
+                if (code == 0)
+                {
+                    break;
+                }
+                chain.Add(GetCoffDerivedTypeName(code));
+                derived >>= 2;
+            }
+
+            if (chain.Count == 0)
+            {
+                return baseName;
+            }
+
+            return string.Join("->", chain) + "->" + baseName;
+        }
+
+        private static string GetCoffBaseTypeName(ushort baseType)
+        {
+            switch (baseType)
+            {
+                case 0: return "NULL";
+                case 1: return "VOID";
+                case 2: return "CHAR";
+                case 3: return "SHORT";
+                case 4: return "INT";
+                case 5: return "LONG";
+                case 6: return "FLOAT";
+                case 7: return "DOUBLE";
+                case 8: return "STRUCT";
+                case 9: return "UNION";
+                case 10: return "ENUM";
+                case 11: return "MOE";
+                case 12: return "BYTE";
+                case 13: return "WORD";
+                case 14: return "UINT";
+                case 15: return "DWORD";
+                default: return "TYPE_" + baseType.ToString(CultureInfo.InvariantCulture);
+            }
+        }
+
+        private static string GetCoffDerivedTypeName(int code)
+        {
+            switch (code)
+            {
+                case 1: return "PTR";
+                case 2: return "FUNC";
+                case 3: return "ARRAY";
+                default: return "DTYPE_" + code.ToString(CultureInfo.InvariantCulture);
+            }
         }
 
         private void ParseCoffStringTable(byte[] data, Dictionary<uint, string> table)
@@ -3379,6 +3599,7 @@ namespace PECoff
                 uint value = BitConverter.ToUInt32(entry.Slice(8, 4));
                 short sectionNumber = BitConverter.ToInt16(entry.Slice(12, 2));
                 ushort type = BitConverter.ToUInt16(entry.Slice(14, 2));
+                string typeName = DecodeCoffSymbolTypeName(type);
                 byte storageClass = entry[16];
                 byte auxCount = entry[17];
 
@@ -3411,6 +3632,7 @@ namespace PECoff
                     sectionNumber,
                     sectionName,
                     type,
+                    typeName,
                     storageClass,
                     auxCount,
                     auxData,
@@ -3422,7 +3644,7 @@ namespace PECoff
                 }
             }
 
-            symbols = parsed.ToArray();
+            symbols = ResolveCoffWeakExternDefaults(parsed);
             stringTableEntries = entries.ToArray();
             return true;
         }
@@ -8818,9 +9040,19 @@ namespace PECoff
                 return new RcDataFormatInfo("CAB", "MSCF header");
             }
 
-            if (HasPrefix(data, new byte[] { 0x55, 0x6E, 0x69, 0x74, 0x79, 0x46, 0x53 }))
+            if (TryDetectUnityBundle(data, out string unityFormat, out string unityDetails))
             {
-                return new RcDataFormatInfo("UnityFS", string.Empty);
+                return new RcDataFormatInfo(unityFormat, unityDetails);
+            }
+
+            if (TryDetectFlatBuffers(data, out string flatDetails))
+            {
+                return new RcDataFormatInfo("FlatBuffers", flatDetails);
+            }
+
+            if (TryDetectProtobuf(data, out string protoDetails))
+            {
+                return new RcDataFormatInfo("Protobuf", protoDetails);
             }
 
             if (!string.IsNullOrWhiteSpace(text))
@@ -8851,6 +9083,208 @@ namespace PECoff
             }
 
             return new RcDataFormatInfo("Unknown", string.Empty);
+        }
+
+        private static bool TryDetectUnityBundle(ReadOnlySpan<byte> data, out string format, out string details)
+        {
+            format = string.Empty;
+            details = string.Empty;
+
+            if (data.Length < 7)
+            {
+                return false;
+            }
+
+            if (data[0] == 0x55 && data[1] == 0x6E && data[2] == 0x69 &&
+                data[3] == 0x74 && data[4] == 0x79 && data[5] == 0x46 && data[6] == 0x53)
+            {
+                format = "UnityFS";
+                return true;
+            }
+
+            if (data[0] == 0x55 && data[1] == 0x6E && data[2] == 0x69 &&
+                data[3] == 0x74 && data[4] == 0x79 && data[5] == 0x52 && data[6] == 0x61)
+            {
+                format = "UnityRaw";
+                return true;
+            }
+
+            if (data[0] == 0x55 && data[1] == 0x6E && data[2] == 0x69 &&
+                data[3] == 0x74 && data[4] == 0x79 && data[5] == 0x57 && data[6] == 0x65)
+            {
+                format = "UnityWeb";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryDetectFlatBuffers(ReadOnlySpan<byte> data, out string details)
+        {
+            details = string.Empty;
+            if (data.Length < 8)
+            {
+                return false;
+            }
+
+            int rootOffset = unchecked((int)ReadUInt32(data, 0));
+            if (rootOffset < 4 || rootOffset > data.Length - 4)
+            {
+                return false;
+            }
+
+            int vtableOffset = unchecked((int)ReadUInt32(data, rootOffset));
+            if (vtableOffset >= 0)
+            {
+                return false;
+            }
+
+            int vtablePos = rootOffset - vtableOffset;
+            if (vtablePos < 0 || vtablePos + 4 > data.Length)
+            {
+                return false;
+            }
+
+            ushort vtableLength = ReadUInt16(data, vtablePos);
+            ushort objectSize = ReadUInt16(data, vtablePos + 2);
+            if (vtableLength < 4 || objectSize < 4)
+            {
+                return false;
+            }
+
+            if (rootOffset + objectSize > data.Length)
+            {
+                return false;
+            }
+
+            string fileId = string.Empty;
+            if (data.Length >= 8)
+            {
+                ReadOnlySpan<byte> idBytes = data.Slice(4, 4);
+                if (IsAsciiIdentifier(idBytes))
+                {
+                    fileId = Encoding.ASCII.GetString(idBytes);
+                }
+            }
+
+            details = "root=0x" + rootOffset.ToString("X", CultureInfo.InvariantCulture);
+            if (!string.IsNullOrWhiteSpace(fileId))
+            {
+                details = AppendNote(details, "id=" + fileId);
+            }
+
+            return true;
+        }
+
+        private static bool TryDetectProtobuf(ReadOnlySpan<byte> data, out string details)
+        {
+            details = string.Empty;
+            if (data.Length < 2)
+            {
+                return false;
+            }
+
+            int offset = 0;
+            int fields = 0;
+            while (offset < data.Length && fields < 4)
+            {
+                if (!TryReadVarint(data, ref offset, out ulong tag))
+                {
+                    break;
+                }
+
+                if (tag == 0)
+                {
+                    break;
+                }
+
+                int wireType = (int)(tag & 0x7);
+                if (wireType > 5 || wireType == 3 || wireType == 4)
+                {
+                    break;
+                }
+
+                fields++;
+                switch (wireType)
+                {
+                    case 0:
+                        if (!TryReadVarint(data, ref offset, out _))
+                        {
+                            return false;
+                        }
+                        break;
+                    case 1:
+                        offset += 8;
+                        break;
+                    case 2:
+                        if (!TryReadVarint(data, ref offset, out ulong length))
+                        {
+                            return false;
+                        }
+                        if (length > (ulong)(data.Length - offset))
+                        {
+                            return false;
+                        }
+                        offset += (int)length;
+                        break;
+                    case 5:
+                        offset += 4;
+                        break;
+                }
+
+                if (offset > data.Length)
+                {
+                    return false;
+                }
+            }
+
+            if (fields >= 2)
+            {
+                details = "fields=" + fields.ToString(CultureInfo.InvariantCulture) + " (heuristic)";
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryReadVarint(ReadOnlySpan<byte> data, ref int offset, out ulong value)
+        {
+            value = 0;
+            int shift = 0;
+            while (offset < data.Length && shift <= 63)
+            {
+                byte b = data[offset++];
+                value |= (ulong)(b & 0x7F) << shift;
+                if ((b & 0x80) == 0)
+                {
+                    return true;
+                }
+                shift += 7;
+            }
+
+            return false;
+        }
+
+        private static bool IsAsciiIdentifier(ReadOnlySpan<byte> data)
+        {
+            if (data.Length == 0)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < data.Length; i++)
+            {
+                byte b = data[i];
+                bool isAlpha = (b >= (byte)'A' && b <= (byte)'Z') ||
+                               (b >= (byte)'a' && b <= (byte)'z');
+                bool isDigit = b >= (byte)'0' && b <= (byte)'9';
+                if (!isAlpha && !isDigit && b != (byte)'_')
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private static bool TryParseJsonDetails(string text, out string format, out string details)
@@ -8982,6 +9416,26 @@ namespace PECoff
             return DetectRcDataFormat(data, text).Format;
         }
 
+        internal static bool TryComputeTlsRawDataInfoForTest(
+            byte[] data,
+            out string hash,
+            out bool isText,
+            out string preview)
+        {
+            hash = string.Empty;
+            preview = string.Empty;
+            isText = false;
+
+            if (data == null || data.Length == 0)
+            {
+                return false;
+            }
+
+            BuildRawDataPreview(data, out isText, out preview);
+            hash = ToHex(SHA256.HashData(data));
+            return true;
+        }
+
         private static bool IsLikelyText(string text)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -9040,6 +9494,13 @@ namespace PECoff
             }
 
             return sb.ToString();
+        }
+
+        private static void BuildRawDataPreview(ReadOnlySpan<byte> data, out bool isText, out string preview)
+        {
+            string text = DecodeTextResource(data);
+            isText = IsLikelyText(text);
+            preview = isText ? BuildPreviewText(text, 160) : BuildHexPreview(data, 48);
         }
 
         private static string ExtractAsciiString(ReadOnlySpan<byte> data, int offset, int maxLength)
@@ -10172,7 +10633,8 @@ namespace PECoff
                 entries.Add(new RichHeaderEntry(product, build, count, compid, productName, toolchainVersion));
             }
 
-            info = new RichHeaderInfo(key, entries.ToArray());
+            RichToolchainInfo[] toolchains = BuildRichToolchainHints(entries);
+            info = new RichHeaderInfo(key, entries.ToArray(), toolchains);
             return true;
         }
 
@@ -10189,6 +10651,89 @@ namespace PECoff
         internal static string DecodeRichProductNameForTest(ushort productId)
         {
             return DecodeRichProductName(productId);
+        }
+
+        internal static RichToolchainInfo[] BuildRichToolchainHintsForTest(RichHeaderEntry[] entries)
+        {
+            if (entries == null || entries.Length == 0)
+            {
+                return Array.Empty<RichToolchainInfo>();
+            }
+
+            return BuildRichToolchainHints(entries.ToList());
+        }
+
+        private static RichToolchainInfo[] BuildRichToolchainHints(List<RichHeaderEntry> entries)
+        {
+            if (entries == null || entries.Count == 0)
+            {
+                return Array.Empty<RichToolchainInfo>();
+            }
+
+            Dictionary<string, (HashSet<string> Tools, uint TotalCount)> grouped =
+                new Dictionary<string, (HashSet<string>, uint)>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (RichHeaderEntry entry in entries)
+            {
+                if (entry == null || string.IsNullOrWhiteSpace(entry.ProductName))
+                {
+                    continue;
+                }
+
+                if (!TryExtractRichToolchainVersion(entry.ProductName, out string version, out string toolName))
+                {
+                    version = "Unknown";
+                    toolName = entry.ProductName.Trim();
+                }
+
+                if (!grouped.TryGetValue(version, out var info))
+                {
+                    info = (new HashSet<string>(StringComparer.OrdinalIgnoreCase), 0);
+                }
+
+                if (!string.IsNullOrWhiteSpace(toolName))
+                {
+                    info.Tools.Add(toolName);
+                }
+
+                info.TotalCount += entry.Count;
+                grouped[version] = info;
+            }
+
+            List<RichToolchainInfo> results = new List<RichToolchainInfo>();
+            foreach (KeyValuePair<string, (HashSet<string> Tools, uint TotalCount)> pair in grouped)
+            {
+                string version = pair.Key;
+                string name = version == "Unknown" ? "Unknown" : "MSVC " + version;
+                string[] tools = pair.Value.Tools.OrderBy(t => t, StringComparer.OrdinalIgnoreCase).ToArray();
+                results.Add(new RichToolchainInfo(version, name, pair.Value.TotalCount, tools));
+            }
+
+            return results
+                .OrderByDescending(info => info.TotalCount)
+                .ThenBy(info => info.Version, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        private static bool TryExtractRichToolchainVersion(string productName, out string version, out string toolName)
+        {
+            version = string.Empty;
+            toolName = productName?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(productName))
+            {
+                return false;
+            }
+
+            int open = productName.LastIndexOf('(');
+            int close = productName.LastIndexOf(')');
+            if (open >= 0 && close > open + 1)
+            {
+                version = productName.Substring(open + 1, close - open - 1).Trim();
+                toolName = productName.Substring(0, open).Trim();
+                return !string.IsNullOrWhiteSpace(version);
+            }
+
+            return false;
         }
 
         private static int FindPattern(byte[] buffer, int length, byte[] pattern)
@@ -13868,6 +14413,9 @@ namespace PECoff
             bool rawDataMapped = false;
             string rawDataSectionName = string.Empty;
             int alignmentBytes = DecodeTlsAlignmentBytes(characteristics);
+            string rawDataHash = string.Empty;
+            string rawDataPreview = string.Empty;
+            bool rawDataPreviewIsText = false;
 
             if (startRaw != 0 && endRaw >= startRaw)
             {
@@ -13897,6 +14445,11 @@ namespace PECoff
                         Warn(ParseIssueCategory.Tls, "TLS raw data RVA not mapped to a section.");
                     }
                 }
+            }
+
+            if (rawDataMapped && rawDataSize > 0)
+            {
+                TryComputeTlsRawDataInfo(sections, rawDataRva, rawDataSize, out rawDataHash, out rawDataPreviewIsText, out rawDataPreview);
             }
 
             ulong[] callbacks = Array.Empty<ulong>();
@@ -13986,8 +14539,92 @@ namespace PECoff
                 rawDataMapped,
                 rawDataSectionName,
                 alignmentBytes,
+                rawDataHash,
+                rawDataPreviewIsText,
+                rawDataPreview,
                 callbacks,
                 callbackInfos.ToArray());
+        }
+
+        private bool TryComputeTlsRawDataInfo(
+            List<IMAGE_SECTION_HEADER> sections,
+            uint rawDataRva,
+            uint rawDataSize,
+            out string hash,
+            out bool isText,
+            out string preview)
+        {
+            hash = string.Empty;
+            preview = string.Empty;
+            isText = false;
+
+            if (PEFileStream == null || rawDataSize == 0)
+            {
+                return false;
+            }
+
+            if (!TryGetFileOffset(sections, rawDataRva, out long rawOffset))
+            {
+                return false;
+            }
+
+            long fileLength = PEFileStream.Length;
+            if (rawOffset < 0 || rawOffset >= fileLength)
+            {
+                return false;
+            }
+
+            long available = Math.Min((long)rawDataSize, fileLength - rawOffset);
+            if (available <= 0)
+            {
+                return false;
+            }
+
+            long originalPosition = PEFileStream.CanSeek ? PEFileStream.Position : 0;
+            try
+            {
+                int previewBytes = (int)Math.Min(available, 96);
+                if (previewBytes > 0 && TrySetPosition(rawOffset, previewBytes))
+                {
+                    byte[] previewBuffer = new byte[previewBytes];
+                    ReadExactly(PEFileStream, previewBuffer, 0, previewBuffer.Length);
+                    BuildRawDataPreview(previewBuffer, out isText, out preview);
+                }
+
+                using (IncrementalHash hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
+                {
+                    byte[] buffer = new byte[8192];
+                    long remaining = available;
+                    long offset = rawOffset;
+                    while (remaining > 0)
+                    {
+                        int read = (int)Math.Min(remaining, buffer.Length);
+                        if (!TrySetPosition(offset, read))
+                        {
+                            break;
+                        }
+
+                        ReadExactly(PEFileStream, buffer, 0, read);
+                        hasher.AppendData(buffer, 0, read);
+                        offset += read;
+                        remaining -= read;
+                    }
+
+                    if (remaining == 0)
+                    {
+                        hash = ToHex(hasher.GetHashAndReset());
+                    }
+                }
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+
+            return !string.IsNullOrWhiteSpace(hash) || !string.IsNullOrWhiteSpace(preview);
         }
 
         private void ParseLoadConfigDirectory(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections, bool isPe32Plus)
@@ -16888,14 +17525,59 @@ namespace PECoff
             ReadExactly(PEFileStream, buffer, 0, buffer.Length);
             IMAGE_FILE_HEADER coffHeader = ByteArrayToStructure<IMAGE_FILE_HEADER>(buffer);
 
-            if (coffHeader.SizeOfOptionalHeader != 0)
+            bool isBigObj = coffHeader.Machine == 0 && coffHeader.NumberOfSections == 0xFFFF;
+            uint numberOfSections = coffHeader.NumberOfSections;
+            uint pointerToSymbolTable = coffHeader.PointerToSymbolTable;
+            uint numberOfSymbols = coffHeader.NumberOfSymbols;
+            ushort machine = (ushort)coffHeader.Machine;
+            uint timeDateStamp = coffHeader.TimeDateStamp;
+            ushort characteristics = (ushort)coffHeader.Characteristics;
+            uint bigObjFlags = 0;
+            uint bigObjMetaDataSize = 0;
+            uint bigObjMetaDataOffset = 0;
+            string bigObjClassId = string.Empty;
+            long sectionTableOffset = headerSize;
+
+            if (isBigObj)
+            {
+                int bigObjSize = Marshal.SizeOf(typeof(ANON_OBJECT_HEADER_BIGOBJ));
+                if (!TrySetPosition(0, bigObjSize))
+                {
+                    return false;
+                }
+
+                byte[] bigBuffer = new byte[bigObjSize];
+                ReadExactly(PEFileStream, bigBuffer, 0, bigBuffer.Length);
+                ANON_OBJECT_HEADER_BIGOBJ bigObj = ByteArrayToStructure<ANON_OBJECT_HEADER_BIGOBJ>(bigBuffer);
+                if (bigObj.Sig1 != 0 || bigObj.Sig2 != 0xFFFF)
+                {
+                    return false;
+                }
+
+                machine = bigObj.Machine;
+                numberOfSections = bigObj.NumberOfSections;
+                pointerToSymbolTable = bigObj.PointerToSymbolTable;
+                numberOfSymbols = bigObj.NumberOfSymbols;
+                timeDateStamp = bigObj.TimeDateStamp;
+                bigObjFlags = bigObj.Flags;
+                bigObjMetaDataSize = bigObj.MetaDataSize;
+                bigObjMetaDataOffset = bigObj.MetaDataOffset;
+                bigObjClassId = bigObj.ClassID.ToString("D");
+                characteristics = 0;
+                sectionTableOffset = bigObjSize;
+            }
+            else if (coffHeader.SizeOfOptionalHeader != 0)
             {
                 return false;
             }
 
             long fileLength = PEFileStream.Length;
-            long sectionTableOffset = headerSize + coffHeader.SizeOfOptionalHeader;
-            long sectionTableSize = (long)coffHeader.NumberOfSections * Marshal.SizeOf(typeof(IMAGE_SECTION_HEADER));
+            long sectionTableSize = (long)numberOfSections * Marshal.SizeOf(typeof(IMAGE_SECTION_HEADER));
+            if (sectionTableSize > int.MaxValue)
+            {
+                Warn(ParseIssueCategory.Sections, "COFF section table size exceeds supported range.");
+                return false;
+            }
             if (sectionTableOffset + sectionTableSize > fileLength)
             {
                 return false;
@@ -16904,8 +17586,8 @@ namespace PECoff
             _imageKind = "COFF";
             _teImageInfo = null;
             _catalogSignatureInfo = null;
-            _machineType = coffHeader.Machine;
-            _timeDateStamp = coffHeader.TimeDateStamp;
+            _machineType = (MachineTypes)machine;
+            _timeDateStamp = timeDateStamp;
             _fileAlignment = 0;
             _sectionAlignment = 0;
             _imageBase = 0;
@@ -16938,7 +17620,7 @@ namespace PECoff
             _peHeaderIsPe32Plus = false;
 
             List<IMAGE_SECTION_HEADER> sections = new List<IMAGE_SECTION_HEADER>();
-            if (coffHeader.NumberOfSections > 0)
+            if (numberOfSections > 0)
             {
                 if (!TrySetPosition(sectionTableOffset, (int)sectionTableSize))
                 {
@@ -16946,7 +17628,13 @@ namespace PECoff
                     return true;
                 }
 
-                for (int i = 0; i < coffHeader.NumberOfSections; i++)
+                if (numberOfSections > int.MaxValue)
+                {
+                    Warn(ParseIssueCategory.Sections, "COFF bigobj section count exceeds supported range.");
+                }
+
+                int sectionCount = numberOfSections > int.MaxValue ? int.MaxValue : (int)numberOfSections;
+                for (int i = 0; i < sectionCount; i++)
                 {
                     sections.Add(new IMAGE_SECTION_HEADER(PEFile));
                 }
@@ -16954,7 +17642,7 @@ namespace PECoff
 
             _sections = sections;
             BuildSectionPermissionInfos(sections);
-            ParseCoffSymbolTable(coffHeader.PointerToSymbolTable, coffHeader.NumberOfSymbols, sections);
+            ParseCoffSymbolTable(pointerToSymbolTable, numberOfSymbols, sections);
             ParseCoffLineNumbers(sections);
             ParseCoffRelocations(sections);
             ComputeOverlayInfo(sections);
@@ -16962,16 +17650,22 @@ namespace PECoff
             ComputePackingHints(sections);
 
             _coffObjectInfo = new CoffObjectInfo(
-                (ushort)coffHeader.Machine,
-                GetMachineName((ushort)coffHeader.Machine),
-                coffHeader.NumberOfSections,
-                coffHeader.TimeDateStamp,
+                machine,
+                GetMachineName(machine),
+                (ushort)Math.Min(numberOfSections, ushort.MaxValue),
+                isBigObj,
+                numberOfSections,
+                bigObjFlags,
+                bigObjMetaDataSize,
+                bigObjMetaDataOffset,
+                bigObjClassId,
+                timeDateStamp,
                 TimeDateStampUtc,
-                coffHeader.PointerToSymbolTable,
-                coffHeader.NumberOfSymbols,
+                pointerToSymbolTable,
+                numberOfSymbols,
                 coffHeader.SizeOfOptionalHeader,
-                (ushort)coffHeader.Characteristics,
-                DecodeCoffCharacteristics((ushort)coffHeader.Characteristics));
+                characteristics,
+                DecodeCoffCharacteristics(characteristics));
 
             return true;
         }

@@ -252,7 +252,28 @@ namespace PE_FileInspector
                 {
                     sb.AppendLine("  COFF Object:");
                     sb.AppendLine("    Machine: " + Safe(pe.CoffObject.MachineName) + " (0x" + pe.CoffObject.Machine.ToString("X4", CultureInfo.InvariantCulture) + ")");
-                    sb.AppendLine("    Sections: " + pe.CoffObject.SectionCount.ToString(CultureInfo.InvariantCulture));
+                    if (pe.CoffObject.IsBigObj)
+                    {
+                        sb.AppendLine("    Sections: " + pe.CoffObject.BigObjSectionCount.ToString(CultureInfo.InvariantCulture));
+                        sb.AppendLine("    BigObj: true");
+                        if (pe.CoffObject.BigObjFlags != 0)
+                        {
+                            sb.AppendLine("    BigObj Flags: 0x" + pe.CoffObject.BigObjFlags.ToString("X8", CultureInfo.InvariantCulture));
+                        }
+                        if (pe.CoffObject.BigObjMetaDataSize != 0 || pe.CoffObject.BigObjMetaDataOffset != 0)
+                        {
+                            sb.AppendLine("    BigObj MetaData: Size=" + pe.CoffObject.BigObjMetaDataSize.ToString(CultureInfo.InvariantCulture) +
+                                          " Offset=0x" + pe.CoffObject.BigObjMetaDataOffset.ToString("X", CultureInfo.InvariantCulture));
+                        }
+                        if (!string.IsNullOrWhiteSpace(pe.CoffObject.BigObjClassId))
+                        {
+                            sb.AppendLine("    BigObj ClassId: " + Safe(pe.CoffObject.BigObjClassId));
+                        }
+                    }
+                    else
+                    {
+                        sb.AppendLine("    Sections: " + pe.CoffObject.SectionCount.ToString(CultureInfo.InvariantCulture));
+                    }
                     sb.AppendLine("    TimeDateStamp: " + pe.CoffObject.TimeDateStamp.ToString(CultureInfo.InvariantCulture));
                     if (pe.CoffObject.TimeDateStampUtc.HasValue)
                     {
@@ -574,6 +595,16 @@ namespace PE_FileInspector
                                           " | ChainValid=" + entry.AuthenticodeStatus.ChainValid +
                                           " | Timestamp=" + entry.AuthenticodeStatus.HasTimestamp +
                                           " | TimestampValid=" + entry.AuthenticodeStatus.TimestampValid);
+                            sb.AppendLine("    Certificate Transparency: " + entry.AuthenticodeStatus.CertificateTransparencySignerCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Required Met=" + entry.AuthenticodeStatus.CertificateTransparencyRequiredMet);
+                            if (entry.AuthenticodeStatus.Policy != null)
+                            {
+                                sb.AppendLine("    Policy: RevocationMode=" + entry.AuthenticodeStatus.Policy.RevocationMode +
+                                              " | RevocationFlag=" + entry.AuthenticodeStatus.Policy.RevocationFlag +
+                                              " | TrustStore=" + entry.AuthenticodeStatus.Policy.EnableTrustStoreCheck +
+                                              " | Offline=" + entry.AuthenticodeStatus.Policy.OfflineChainCheck +
+                                              " | RequireCT=" + entry.AuthenticodeStatus.Policy.RequireCertificateTransparency);
+                            }
                             sb.AppendLine("    Policy Compliant: " + entry.AuthenticodeStatus.PolicyCompliant);
                             if (entry.AuthenticodeStatus.PolicyFailures.Count > 0)
                             {
@@ -640,6 +671,16 @@ namespace PE_FileInspector
                                       " | ChainValid=" + catalogInfo.Status.ChainValid +
                                       " | Timestamp=" + catalogInfo.Status.HasTimestamp +
                                       " | TimestampValid=" + catalogInfo.Status.TimestampValid);
+                        sb.AppendLine("    Certificate Transparency: " + catalogInfo.Status.CertificateTransparencySignerCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Required Met=" + catalogInfo.Status.CertificateTransparencyRequiredMet);
+                        if (catalogInfo.Status.Policy != null)
+                        {
+                            sb.AppendLine("    Policy: RevocationMode=" + catalogInfo.Status.Policy.RevocationMode +
+                                          " | RevocationFlag=" + catalogInfo.Status.Policy.RevocationFlag +
+                                          " | TrustStore=" + catalogInfo.Status.Policy.EnableTrustStoreCheck +
+                                          " | Offline=" + catalogInfo.Status.Policy.OfflineChainCheck +
+                                          " | RequireCT=" + catalogInfo.Status.Policy.RequireCertificateTransparency);
+                        }
                         sb.AppendLine("    Policy Compliant: " + catalogInfo.Status.PolicyCompliant);
                         if (catalogInfo.Status.PolicyFailures.Count > 0)
                         {
@@ -1581,6 +1622,7 @@ namespace PE_FileInspector
                                       " | Section: " + Safe(symbol.SectionName) +
                                       " (" + symbol.SectionNumber.ToString(CultureInfo.InvariantCulture) + ")" +
                                       " | Type: 0x" + symbol.Type.ToString("X4", CultureInfo.InvariantCulture) +
+                                      (string.IsNullOrWhiteSpace(symbol.TypeName) ? string.Empty : " (" + Safe(symbol.TypeName) + ")") +
                                       " | StorageClass: " + symbol.StorageClass.ToString(CultureInfo.InvariantCulture) +
                                       " | Aux: " + symbol.AuxSymbolCount.ToString(CultureInfo.InvariantCulture));
                     }
@@ -1725,6 +1767,14 @@ namespace PE_FileInspector
                 if (!string.IsNullOrWhiteSpace(pe.TlsInfo.RawDataSectionName))
                 {
                     sb.AppendLine("  RawDataSection: " + Safe(pe.TlsInfo.RawDataSectionName));
+                }
+                if (!string.IsNullOrWhiteSpace(pe.TlsInfo.RawDataSha256))
+                {
+                    sb.AppendLine("  RawDataSha256: " + Safe(pe.TlsInfo.RawDataSha256));
+                }
+                if (!string.IsNullOrWhiteSpace(pe.TlsInfo.RawDataPreview))
+                {
+                    sb.AppendLine("  RawDataPreview: " + pe.TlsInfo.RawDataPreview);
                 }
                 if (pe.TlsInfo.AlignmentBytes > 0)
                 {
@@ -2038,6 +2088,20 @@ namespace PE_FileInspector
                 else
                 {
                     sb.AppendLine("  Key: 0x" + pe.RichHeader.Key.ToString("X8", CultureInfo.InvariantCulture));
+                    if (pe.RichHeader.Toolchains.Count > 0)
+                    {
+                        sb.AppendLine("  Toolchains:");
+                        foreach (RichToolchainInfo toolchain in pe.RichHeader.Toolchains)
+                        {
+                            sb.AppendLine("    - " + Safe(toolchain.Name) +
+                                          " | Version: " + Safe(toolchain.Version) +
+                                          " | Count: " + toolchain.TotalCount.ToString(CultureInfo.InvariantCulture));
+                            if (toolchain.Tools.Count > 0)
+                            {
+                                sb.AppendLine("      Tools: " + string.Join(", ", toolchain.Tools));
+                            }
+                        }
+                    }
                     foreach (RichHeaderEntry entry in pe.RichHeader.Entries)
                     {
                         sb.AppendLine("  - Product: " + entry.ProductId.ToString(CultureInfo.InvariantCulture) +
@@ -2868,6 +2932,10 @@ namespace PE_FileInspector
             sb.AppendLine(prefix + "  Chain Valid: " + signer.ChainValid);
             sb.AppendLine(prefix + "  Code Signing EKU: " + signer.HasCodeSigningEku);
             sb.AppendLine(prefix + "  Timestamp EKU: " + signer.HasTimestampEku);
+            if (signer.CertificateTransparencyCount > 0)
+            {
+                sb.AppendLine(prefix + "  Certificate Transparency: " + signer.CertificateTransparencyCount.ToString(CultureInfo.InvariantCulture));
+            }
             sb.AppendLine(prefix + "  Within Validity: " + signer.IsWithinValidityPeriod);
             if (signer.NestingLevel > 0)
             {

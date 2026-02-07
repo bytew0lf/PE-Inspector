@@ -81,4 +81,46 @@ public class CoffSymbolTests
         Assert.Equal("File", symbols[0].AuxSymbols[0].Kind);
         Assert.Equal("main.c", symbols[0].AuxSymbols[0].FileName);
     }
+
+    [Fact]
+    public void Coff_Symbols_Resolve_WeakExtern_Default()
+    {
+        byte[] baseSymbol = new byte[18];
+        Encoding.ASCII.GetBytes("base").CopyTo(baseSymbol, 0);
+        BitConverter.GetBytes(0u).CopyTo(baseSymbol, 8);
+        BitConverter.GetBytes((short)1).CopyTo(baseSymbol, 12);
+        BitConverter.GetBytes((ushort)0).CopyTo(baseSymbol, 14);
+        baseSymbol[16] = 2;
+        baseSymbol[17] = 0;
+
+        byte[] weakSymbol = new byte[18];
+        Encoding.ASCII.GetBytes("weak").CopyTo(weakSymbol, 0);
+        BitConverter.GetBytes(0u).CopyTo(weakSymbol, 8);
+        BitConverter.GetBytes((short)1).CopyTo(weakSymbol, 12);
+        BitConverter.GetBytes((ushort)0).CopyTo(weakSymbol, 14);
+        weakSymbol[16] = 0x69;
+        weakSymbol[17] = 1;
+
+        byte[] weakAux = new byte[18];
+        BitConverter.GetBytes(0u).CopyTo(weakAux, 0); // tag index -> base symbol
+        BitConverter.GetBytes(2u).CopyTo(weakAux, 4); // SEARCH_LIBRARY
+
+        byte[] symbolData = new byte[54];
+        Array.Copy(baseSymbol, 0, symbolData, 0, baseSymbol.Length);
+        Array.Copy(weakSymbol, 0, symbolData, baseSymbol.Length, weakSymbol.Length);
+        Array.Copy(weakAux, 0, symbolData, baseSymbol.Length + weakSymbol.Length, weakAux.Length);
+
+        bool parsed = PECOFF.TryParseCoffSymbolTableForTest(
+            symbolData,
+            Array.Empty<byte>(),
+            new[] { ".text" },
+            out CoffSymbolInfo[] symbols,
+            out CoffStringTableEntry[] _);
+
+        Assert.True(parsed);
+        Assert.Equal(2, symbols.Length);
+        Assert.Single(symbols[1].AuxSymbols);
+        Assert.Equal("WeakExternal", symbols[1].AuxSymbols[0].Kind);
+        Assert.Equal("base", symbols[1].AuxSymbols[0].WeakDefaultSymbol);
+    }
 }

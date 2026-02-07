@@ -131,6 +131,7 @@ namespace PECoff
         public bool RequireTimestamp { get; init; }
         public bool RequireTimestampValid { get; init; }
         public bool RequireCodeSigningEku { get; init; }
+        public bool RequireCertificateTransparency { get; init; }
         public bool EnableCatalogSignatureCheck { get; init; }
         public bool EnableTrustStoreCheck { get; init; } = true;
         public bool OfflineChainCheck { get; init; }
@@ -568,11 +569,29 @@ namespace PECoff
     {
         public uint Key { get; }
         public IReadOnlyList<RichHeaderEntry> Entries { get; }
+        public IReadOnlyList<RichToolchainInfo> Toolchains { get; }
 
-        public RichHeaderInfo(uint key, RichHeaderEntry[] entries)
+        public RichHeaderInfo(uint key, RichHeaderEntry[] entries, RichToolchainInfo[] toolchains)
         {
             Key = key;
             Entries = Array.AsReadOnly(entries ?? Array.Empty<RichHeaderEntry>());
+            Toolchains = Array.AsReadOnly(toolchains ?? Array.Empty<RichToolchainInfo>());
+        }
+    }
+
+    public sealed class RichToolchainInfo
+    {
+        public string Version { get; }
+        public string Name { get; }
+        public uint TotalCount { get; }
+        public IReadOnlyList<string> Tools { get; }
+
+        public RichToolchainInfo(string version, string name, uint totalCount, string[] tools)
+        {
+            Version = version ?? string.Empty;
+            Name = name ?? string.Empty;
+            TotalCount = totalCount;
+            Tools = Array.AsReadOnly(tools ?? Array.Empty<string>());
         }
     }
 
@@ -1017,6 +1036,9 @@ namespace PECoff
         public bool RawDataMapped { get; }
         public string RawDataSectionName { get; }
         public int AlignmentBytes { get; }
+        public string RawDataSha256 { get; }
+        public bool RawDataPreviewIsText { get; }
+        public string RawDataPreview { get; }
         public IReadOnlyList<ulong> CallbackAddresses { get; }
         public IReadOnlyList<TlsCallbackInfo> CallbackInfos { get; }
 
@@ -1032,6 +1054,9 @@ namespace PECoff
             bool rawDataMapped,
             string rawDataSectionName,
             int alignmentBytes,
+            string rawDataSha256,
+            bool rawDataPreviewIsText,
+            string rawDataPreview,
             ulong[] callbackAddresses,
             TlsCallbackInfo[] callbackInfos)
         {
@@ -1046,6 +1071,9 @@ namespace PECoff
             RawDataMapped = rawDataMapped;
             RawDataSectionName = rawDataSectionName ?? string.Empty;
             AlignmentBytes = alignmentBytes;
+            RawDataSha256 = rawDataSha256 ?? string.Empty;
+            RawDataPreviewIsText = rawDataPreviewIsText;
+            RawDataPreview = rawDataPreview ?? string.Empty;
             CallbackAddresses = Array.AsReadOnly(callbackAddresses ?? Array.Empty<ulong>());
             CallbackInfos = Array.AsReadOnly(callbackInfos ?? Array.Empty<TlsCallbackInfo>());
         }
@@ -1899,6 +1927,12 @@ namespace PECoff
         public ushort Machine { get; }
         public string MachineName { get; }
         public ushort SectionCount { get; }
+        public bool IsBigObj { get; }
+        public uint BigObjSectionCount { get; }
+        public uint BigObjFlags { get; }
+        public uint BigObjMetaDataSize { get; }
+        public uint BigObjMetaDataOffset { get; }
+        public string BigObjClassId { get; }
         public uint TimeDateStamp { get; }
         public DateTimeOffset? TimeDateStampUtc { get; }
         public uint PointerToSymbolTable { get; }
@@ -1911,6 +1945,12 @@ namespace PECoff
             ushort machine,
             string machineName,
             ushort sectionCount,
+            bool isBigObj,
+            uint bigObjSectionCount,
+            uint bigObjFlags,
+            uint bigObjMetaDataSize,
+            uint bigObjMetaDataOffset,
+            string bigObjClassId,
             uint timeDateStamp,
             DateTimeOffset? timeDateStampUtc,
             uint pointerToSymbolTable,
@@ -1922,6 +1962,12 @@ namespace PECoff
             Machine = machine;
             MachineName = machineName ?? string.Empty;
             SectionCount = sectionCount;
+            IsBigObj = isBigObj;
+            BigObjSectionCount = bigObjSectionCount;
+            BigObjFlags = bigObjFlags;
+            BigObjMetaDataSize = bigObjMetaDataSize;
+            BigObjMetaDataOffset = bigObjMetaDataOffset;
+            BigObjClassId = bigObjClassId ?? string.Empty;
             TimeDateStamp = timeDateStamp;
             TimeDateStampUtc = timeDateStampUtc;
             PointerToSymbolTable = pointerToSymbolTable;
@@ -2133,6 +2179,7 @@ namespace PECoff
         public uint TotalSize { get; }
         public uint PointerToLineNumber { get; }
         public uint PointerToNextFunction { get; }
+        public ushort FunctionLineNumber { get; }
         public uint SectionLength { get; }
         public ushort RelocationCount { get; }
         public ushort LineNumberCount { get; }
@@ -2143,6 +2190,7 @@ namespace PECoff
         public uint WeakTagIndex { get; }
         public uint WeakCharacteristics { get; }
         public string WeakCharacteristicsName { get; }
+        public string WeakDefaultSymbol { get; }
         public string RawPreview { get; }
 
         public CoffAuxSymbolInfo(
@@ -2152,6 +2200,7 @@ namespace PECoff
             uint totalSize,
             uint pointerToLineNumber,
             uint pointerToNextFunction,
+            ushort functionLineNumber,
             uint sectionLength,
             ushort relocationCount,
             ushort lineNumberCount,
@@ -2162,6 +2211,7 @@ namespace PECoff
             uint weakTagIndex,
             uint weakCharacteristics,
             string weakCharacteristicsName,
+            string weakDefaultSymbol,
             string rawPreview)
         {
             Kind = kind ?? string.Empty;
@@ -2170,6 +2220,7 @@ namespace PECoff
             TotalSize = totalSize;
             PointerToLineNumber = pointerToLineNumber;
             PointerToNextFunction = pointerToNextFunction;
+            FunctionLineNumber = functionLineNumber;
             SectionLength = sectionLength;
             RelocationCount = relocationCount;
             LineNumberCount = lineNumberCount;
@@ -2180,6 +2231,7 @@ namespace PECoff
             WeakTagIndex = weakTagIndex;
             WeakCharacteristics = weakCharacteristics;
             WeakCharacteristicsName = weakCharacteristicsName ?? string.Empty;
+            WeakDefaultSymbol = weakDefaultSymbol ?? string.Empty;
             RawPreview = rawPreview ?? string.Empty;
         }
     }
@@ -2192,6 +2244,7 @@ namespace PECoff
         public short SectionNumber { get; }
         public string SectionName { get; }
         public ushort Type { get; }
+        public string TypeName { get; }
         public byte StorageClass { get; }
         public byte AuxSymbolCount { get; }
         public byte[] AuxData { get; }
@@ -2204,6 +2257,7 @@ namespace PECoff
             short sectionNumber,
             string sectionName,
             ushort type,
+            string typeName,
             byte storageClass,
             byte auxSymbolCount,
             byte[] auxData,
@@ -2215,6 +2269,7 @@ namespace PECoff
             SectionNumber = sectionNumber;
             SectionName = sectionName ?? string.Empty;
             Type = type;
+            TypeName = typeName ?? string.Empty;
             StorageClass = storageClass;
             AuxSymbolCount = auxSymbolCount;
             AuxData = auxData ?? Array.Empty<byte>();
@@ -2261,6 +2316,8 @@ namespace PECoff
         public bool ChainValid { get; }
         public bool HasCodeSigningEku { get; }
         public bool HasTimestampEku { get; }
+        public bool HasCertificateTransparency { get; }
+        public int CertificateTransparencyCount { get; }
         public int NestingLevel { get; }
 
         public AuthenticodeSignerStatusInfo(
@@ -2272,6 +2329,8 @@ namespace PECoff
             bool chainValid,
             bool hasCodeSigningEku,
             bool hasTimestampEku,
+            bool hasCertificateTransparency,
+            int certificateTransparencyCount,
             int nestingLevel)
         {
             Subject = subject ?? string.Empty;
@@ -2282,6 +2341,8 @@ namespace PECoff
             ChainValid = chainValid;
             HasCodeSigningEku = hasCodeSigningEku;
             HasTimestampEku = hasTimestampEku;
+            HasCertificateTransparency = hasCertificateTransparency;
+            CertificateTransparencyCount = certificateTransparencyCount;
             NestingLevel = nestingLevel;
         }
     }
@@ -2290,6 +2351,7 @@ namespace PECoff
     {
         public int SignerCount { get; }
         public int TimestampSignerCount { get; }
+        public int CertificateTransparencySignerCount { get; }
         public bool HasSignature { get; }
         public bool SignatureValid { get; }
         public bool ChainValid { get; }
@@ -2297,13 +2359,16 @@ namespace PECoff
         public bool TimestampValid { get; }
         public IReadOnlyList<string> ChainStatus { get; }
         public IReadOnlyList<string> TimestampChainStatus { get; }
+        public bool CertificateTransparencyRequiredMet { get; }
         public bool PolicyCompliant { get; }
         public IReadOnlyList<string> PolicyFailures { get; }
         public IReadOnlyList<AuthenticodeSignerStatusInfo> SignerStatuses { get; }
+        public AuthenticodePolicy Policy { get; }
 
         public AuthenticodeStatusInfo(
             int signerCount,
             int timestampSignerCount,
+            int certificateTransparencySignerCount,
             bool hasSignature,
             bool signatureValid,
             bool chainValid,
@@ -2311,12 +2376,15 @@ namespace PECoff
             bool timestampValid,
             string[] chainStatus,
             string[] timestampChainStatus,
+            bool certificateTransparencyRequiredMet,
             bool policyCompliant,
             string[] policyFailures,
-            AuthenticodeSignerStatusInfo[] signerStatuses)
+            AuthenticodeSignerStatusInfo[] signerStatuses,
+            AuthenticodePolicy policy)
         {
             SignerCount = signerCount;
             TimestampSignerCount = timestampSignerCount;
+            CertificateTransparencySignerCount = certificateTransparencySignerCount;
             HasSignature = hasSignature;
             SignatureValid = signatureValid;
             ChainValid = chainValid;
@@ -2324,9 +2392,11 @@ namespace PECoff
             TimestampValid = timestampValid;
             ChainStatus = Array.AsReadOnly(chainStatus ?? Array.Empty<string>());
             TimestampChainStatus = Array.AsReadOnly(timestampChainStatus ?? Array.Empty<string>());
+            CertificateTransparencyRequiredMet = certificateTransparencyRequiredMet;
             PolicyCompliant = policyCompliant;
             PolicyFailures = Array.AsReadOnly(policyFailures ?? Array.Empty<string>());
             SignerStatuses = Array.AsReadOnly(signerStatuses ?? Array.Empty<AuthenticodeSignerStatusInfo>());
+            Policy = policy ?? new AuthenticodePolicy();
         }
     }
 
@@ -3163,7 +3233,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 17;
+        public const int CurrentSchemaVersion = 18;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }

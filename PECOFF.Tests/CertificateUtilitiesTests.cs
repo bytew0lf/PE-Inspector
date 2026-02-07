@@ -96,6 +96,7 @@ public class CertificateUtilitiesTests
             hasCodeSigningEku: hasCodeSigningEku,
             hasTimestampEku: hasTimestampEku,
             isWithinValidityPeriod: true,
+            certificateTransparencyCount: 0,
             nestingLevel: nestingLevel,
             counterSigners: counterSigners ?? Array.Empty<Pkcs7SignerInfo>(),
             nestedSigners: nestedSigners ?? Array.Empty<Pkcs7SignerInfo>(),
