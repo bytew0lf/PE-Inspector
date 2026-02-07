@@ -2068,6 +2068,20 @@ namespace PE_FileInspector
                 else
                 {
                     sb.AppendLine("  Size: " + pe.LoadConfig.Size.ToString(CultureInfo.InvariantCulture));
+                    if (pe.LoadConfig.VersionInfo != null)
+                    {
+                        sb.AppendLine("  Layout: " + Safe(pe.LoadConfig.VersionInfo.VersionHint) +
+                                      " | Parsed: " + pe.LoadConfig.VersionInfo.ParsedBytes.ToString(CultureInfo.InvariantCulture) +
+                                      " | Trailing: " + pe.LoadConfig.VersionInfo.TrailingBytes.ToString(CultureInfo.InvariantCulture));
+                        if (pe.LoadConfig.VersionInfo.FieldGroups.Count > 0)
+                        {
+                            sb.AppendLine("  Field Groups: " + string.Join(", ", pe.LoadConfig.VersionInfo.FieldGroups));
+                        }
+                        if (pe.LoadConfig.VersionInfo.TrailingBytes > 0)
+                        {
+                            sb.AppendLine("  Trailing Preview: " + pe.LoadConfig.VersionInfo.TrailingPreview);
+                        }
+                    }
                     sb.AppendLine("  TimeDateStamp: 0x" + pe.LoadConfig.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture));
                     if (pe.LoadConfig.GlobalFlagsInfo != null)
                     {
@@ -2354,6 +2368,18 @@ namespace PE_FileInspector
                 {
                     sb.AppendLine("  FixedFileInfo Signature: 0x" + pe.VersionInfoDetails.FixedFileInfoSignature.ToString("X8", CultureInfo.InvariantCulture));
                     sb.AppendLine("  Signature Valid: " + pe.VersionInfoDetails.FixedFileInfoSignatureValid);
+                    if (pe.VersionInfoDetails.ResourceLength > 0)
+                    {
+                        sb.AppendLine("  Resource Header: Length=" + pe.VersionInfoDetails.ResourceLength.ToString(CultureInfo.InvariantCulture) +
+                                      " | ValueLength=" + pe.VersionInfoDetails.ResourceValueLength.ToString(CultureInfo.InvariantCulture) +
+                                      " | Type=" + pe.VersionInfoDetails.ResourceType.ToString(CultureInfo.InvariantCulture) +
+                                      " | Key=" + Safe(pe.VersionInfoDetails.ResourceKey));
+                        if (pe.VersionInfoDetails.ExtraDataBytes > 0)
+                        {
+                            sb.AppendLine("  Resource Extra: " + pe.VersionInfoDetails.ExtraDataBytes.ToString(CultureInfo.InvariantCulture) +
+                                          " | Preview=" + pe.VersionInfoDetails.ExtraDataPreview);
+                        }
+                    }
                     if (pe.VersionInfoDetails.FixedFileInfo != null)
                     {
                         sb.AppendLine("  Fixed File Info:");
@@ -2405,8 +2431,17 @@ namespace PE_FileInspector
                 {
                     sb.AppendLine("  - NameId: " + group.NameId.ToString(CultureInfo.InvariantCulture) +
                                   " | Lang: 0x" + group.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Type: " + group.HeaderType.ToString(CultureInfo.InvariantCulture) +
+                                  " | Reserved: " + group.HeaderReserved.ToString(CultureInfo.InvariantCulture) +
                                   " | Entries: " + group.Entries.Count.ToString(CultureInfo.InvariantCulture) +
                                   " | IcoBytes: " + group.IcoData.Length.ToString(CultureInfo.InvariantCulture));
+                    if (group.EntrySize != 14 || !group.HeaderValid || group.EntriesTruncated)
+                    {
+                        sb.AppendLine("    Header: EntrySize=" + group.EntrySize.ToString(CultureInfo.InvariantCulture) +
+                                      " | Declared: " + group.DeclaredEntryCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Valid: " + group.HeaderValid +
+                                      " | Truncated: " + group.EntriesTruncated);
+                    }
                     if (group.Entries.Count > 0)
                     {
                         foreach (IconEntryInfo entry in group.Entries.Take(10))
@@ -2447,7 +2482,16 @@ namespace PE_FileInspector
                 {
                     sb.AppendLine("  Group: Id#" + group.NameId.ToString(CultureInfo.InvariantCulture) +
                                   " | Lang: 0x" + group.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Type: " + group.HeaderType.ToString(CultureInfo.InvariantCulture) +
+                                  " | Reserved: " + group.HeaderReserved.ToString(CultureInfo.InvariantCulture) +
                                   " | Entries: " + group.Entries.Count.ToString(CultureInfo.InvariantCulture));
+                    if (group.EntrySize != 14 || !group.HeaderValid || group.EntriesTruncated)
+                    {
+                        sb.AppendLine("    Header: EntrySize=" + group.EntrySize.ToString(CultureInfo.InvariantCulture) +
+                                      " | Declared: " + group.DeclaredEntryCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Valid: " + group.HeaderValid +
+                                      " | Truncated: " + group.EntriesTruncated);
+                    }
                     foreach (ResourceCursorEntryInfo entry in group.Entries.Take(10))
                     {
                         string line = "    - " + entry.Width.ToString(CultureInfo.InvariantCulture) +

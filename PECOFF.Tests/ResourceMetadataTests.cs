@@ -56,10 +56,46 @@ public class ResourceMetadataTests
         Assert.True(parsed);
         Assert.NotNull(group);
         Assert.Single(group.Entries);
+        Assert.True(group.HeaderValid);
+        Assert.Equal(14, group.EntrySize);
+        Assert.False(group.EntriesTruncated);
         Assert.Equal((byte)32, group.Entries[0].Width);
         Assert.Equal((byte)32, group.Entries[0].Height);
         Assert.Equal((ushort)1, group.Entries[0].HotspotX);
         Assert.Equal((ushort)2, group.Entries[0].HotspotY);
         Assert.Equal((ushort)5, group.Entries[0].ResourceId);
+    }
+
+    [Fact]
+    public void IconGroup_Parse_Allows_Variant_Header()
+    {
+        byte[] data = new byte[6 + 14];
+        // reserved = 1 (non-standard)
+        data[0] = 1;
+        // type = 1
+        data[2] = 1;
+        // count = 1
+        data[4] = 1;
+        // entry width/height
+        data[6] = 16;
+        data[7] = 16;
+        // planes
+        data[10] = 1;
+        // bitcount = 32
+        data[12] = 32;
+        // bytesInRes = 0x20
+        data[14] = 0x20;
+        // resourceId = 7
+        data[18] = 7;
+
+        bool parsed = PECOFF.TryParseIconGroupForTest(data, out IconGroupInfo group);
+
+        Assert.True(parsed);
+        Assert.NotNull(group);
+        Assert.Single(group.Entries);
+        Assert.False(group.HeaderValid);
+        Assert.Equal((ushort)1, group.DeclaredEntryCount);
+        Assert.Equal(14, group.EntrySize);
+        Assert.Equal((ushort)7, group.Entries[0].ResourceId);
     }
 }

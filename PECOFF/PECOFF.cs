@@ -9245,20 +9245,25 @@ namespace PECoff
             {
                 return false;
             }
-
-            ushort reserved = ReadUInt16(groupData, 0);
-            ushort type = ReadUInt16(groupData, 2);
-            ushort count = ReadUInt16(groupData, 4);
-            if (reserved != 0 || type != 1 || count == 0)
+            if (!TryReadGroupResourceHeader(groupData, 1, out ushort reserved, out ushort type, out ushort count, out int entrySize, out int parsedCount, out bool headerValid, out bool entriesTruncated))
             {
                 return false;
             }
 
+            if (!headerValid)
+            {
+                Warn(ParseIssueCategory.Resources, "Icon group header has unexpected reserved/type values.");
+            }
+            if (entriesTruncated)
+            {
+                Warn(ParseIssueCategory.Resources, "Icon group data is truncated.");
+            }
+
             List<IconEntryInfo> entries = new List<IconEntryInfo>();
             List<byte[]> iconImages = new List<byte[]>();
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < parsedCount; i++)
             {
-                int offset = 6 + (i * 14);
+                int offset = 6 + (i * entrySize);
                 if (offset + 14 > groupData.Length)
                 {
                     break;
@@ -9310,7 +9315,17 @@ namespace PECoff
             }
 
             byte[] icoData = BuildIconFile(entries, iconImages);
-            group = new IconGroupInfo(entry.NameId, entry.LanguageId, entries.ToArray(), icoData);
+            group = new IconGroupInfo(
+                entry.NameId,
+                entry.LanguageId,
+                reserved,
+                type,
+                count,
+                entrySize,
+                headerValid,
+                entriesTruncated,
+                entries.ToArray(),
+                icoData);
             return true;
         }
 
@@ -9330,19 +9345,24 @@ namespace PECoff
             {
                 return false;
             }
-
-            ushort reserved = ReadUInt16(groupData, 0);
-            ushort type = ReadUInt16(groupData, 2);
-            ushort count = ReadUInt16(groupData, 4);
-            if (reserved != 0 || type != 2 || count == 0)
+            if (!TryReadGroupResourceHeader(groupData, 2, out ushort reserved, out ushort type, out ushort count, out int entrySize, out int parsedCount, out bool headerValid, out bool entriesTruncated))
             {
                 return false;
             }
 
-            List<ResourceCursorEntryInfo> entries = new List<ResourceCursorEntryInfo>();
-            for (int i = 0; i < count; i++)
+            if (!headerValid)
             {
-                int offset = 6 + (i * 14);
+                Warn(ParseIssueCategory.Resources, "Cursor group header has unexpected reserved/type values.");
+            }
+            if (entriesTruncated)
+            {
+                Warn(ParseIssueCategory.Resources, "Cursor group data is truncated.");
+            }
+
+            List<ResourceCursorEntryInfo> entries = new List<ResourceCursorEntryInfo>();
+            for (int i = 0; i < parsedCount; i++)
+            {
+                int offset = 6 + (i * entrySize);
                 if (offset + 14 > groupData.Length)
                 {
                     break;
@@ -9386,8 +9406,71 @@ namespace PECoff
                     pngHeight));
             }
 
-            group = new ResourceCursorGroupInfo(entry.NameId, entry.LanguageId, entries.ToArray());
+            group = new ResourceCursorGroupInfo(
+                entry.NameId,
+                entry.LanguageId,
+                reserved,
+                type,
+                count,
+                entrySize,
+                headerValid,
+                entriesTruncated,
+                entries.ToArray());
             return true;
+        }
+
+        private static bool TryReadGroupResourceHeader(
+            byte[] groupData,
+            ushort expectedType,
+            out ushort reserved,
+            out ushort type,
+            out ushort count,
+            out int entrySize,
+            out int parsedCount,
+            out bool headerValid,
+            out bool entriesTruncated)
+        {
+            reserved = 0;
+            type = 0;
+            count = 0;
+            entrySize = 14;
+            parsedCount = 0;
+            headerValid = false;
+            entriesTruncated = false;
+
+            if (groupData == null || groupData.Length < 6)
+            {
+                return false;
+            }
+
+            reserved = ReadUInt16(groupData, 0);
+            type = ReadUInt16(groupData, 2);
+            count = ReadUInt16(groupData, 4);
+            headerValid = reserved == 0 && type == expectedType;
+
+            if (count == 0)
+            {
+                return false;
+            }
+
+            int available = groupData.Length - 6;
+            if (available < 14)
+            {
+                return false;
+            }
+
+            if (available % count == 0)
+            {
+                int candidate = available / count;
+                if (candidate >= 14)
+                {
+                    entrySize = candidate;
+                }
+            }
+
+            parsedCount = Math.Min(count, available / entrySize);
+            entriesTruncated = parsedCount < count;
+            return parsedCount > 0;
         }
 
         private static bool TryParseBitmapInfoHeader(
@@ -10822,6 +10905,120 @@ namespace PECoff
             return TryReadCodeIntegrity(data, ref offset, data.Length, out info);
         }
 
+        internal static bool TryParseLoadConfigVersionInfoForTest(byte[] data, bool isPe32Plus, out LoadConfigVersionInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 4)
+            {
+                return false;
+            }
+
+            ReadOnlySpan<byte> span = new ReadOnlySpan<byte>(data);
+            int offset = 0;
+            uint size = ReadUInt32(span, offset);
+            offset += 4;
+
+            int limit = span.Length;
+            if (size > 0 && size < (uint)limit)
+            {
+                limit = (int)size;
+            }
+
+            if (!TryAdvance(ref offset, limit, 4)) return false; // TimeDateStamp
+            if (!TryAdvance(ref offset, limit, 2)) return false; // Major
+            if (!TryAdvance(ref offset, limit, 2)) return false; // Minor
+            if (!TryAdvance(ref offset, limit, 4)) return false; // GlobalFlagsClear
+            if (!TryAdvance(ref offset, limit, 4)) return false; // GlobalFlagsSet
+            if (!TryAdvance(ref offset, limit, 4)) return false; // CriticalSectionDefaultTimeout
+
+            int pointerSize = isPe32Plus ? 8 : 4;
+            if (!TryAdvance(ref offset, limit, pointerSize * 5)) return false; // DeCommit/LockPrefix/MaxAlloc/VMThreshold
+            if (!TryAdvance(ref offset, limit, 4)) return false; // ProcessHeapFlags
+            if (!TryAdvance(ref offset, limit, pointerSize)) return false; // ProcessAffinityMask
+            if (!TryAdvance(ref offset, limit, 2)) return false; // CsdVersion
+            if (!TryAdvance(ref offset, limit, 2)) return false; // DependentLoadFlags
+            if (!TryAdvance(ref offset, limit, pointerSize)) return false; // EditList
+            if (!TryAdvance(ref offset, limit, pointerSize)) return false; // SecurityCookie
+            if (!TryAdvance(ref offset, limit, pointerSize)) return false; // SEHandlerTable
+            if (!TryAdvance(ref offset, limit, pointerSize)) return false; // SEHandlerCount
+            if (!TryAdvance(ref offset, limit, pointerSize)) return false; // GuardCfCheck
+            if (!TryAdvance(ref offset, limit, pointerSize)) return false; // GuardCfDispatch
+            if (!TryAdvance(ref offset, limit, pointerSize)) return false; // GuardCfTable
+            if (!TryAdvance(ref offset, limit, pointerSize)) return false; // GuardCfCount
+            if (!TryAdvance(ref offset, limit, 4)) return false; // GuardFlags
+
+            LoadConfigCodeIntegrityInfo codeIntegrityInfo = null;
+            bool readCodeIntegrity = TryReadCodeIntegrity(span, ref offset, limit, out codeIntegrityInfo);
+            bool readGuardIat = false;
+            bool readDynamicReloc = false;
+            bool readChpe = false;
+            bool readGuardRf = false;
+            bool readHotPatch = false;
+            bool readEnclave = false;
+            bool readVolatile = false;
+            bool readEhContinuation = false;
+            bool readXfg = false;
+
+            if (readCodeIntegrity &&
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _))
+            {
+                readGuardIat = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) &&
+                               TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) &&
+                               TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _);
+                if (readGuardIat)
+                {
+                    readDynamicReloc = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _);
+                    readChpe = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _);
+                }
+            }
+
+            if (readChpe)
+            {
+                readGuardRf = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _);
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _);
+                if (TryReadUInt32Value(span, ref offset, limit, out _))
+                {
+                    TryReadUInt16Value(span, ref offset, limit, out _);
+                    TryReadUInt16Value(span, ref offset, limit, out _);
+                }
+
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _);
+                readHotPatch = TryReadUInt32Value(span, ref offset, limit, out _);
+                if (readHotPatch)
+                {
+                    TryReadUInt32Value(span, ref offset, limit, out _);
+                }
+
+                readEnclave = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _);
+                readVolatile = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _);
+                if (TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _))
+                {
+                    readEhContinuation = true;
+                    TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _);
+                    readXfg = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) ||
+                              TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) ||
+                              TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _);
+                }
+            }
+
+            info = BuildLoadConfigVersionInfo(
+                size,
+                (uint)limit,
+                (uint)Math.Min(offset, limit),
+                readCodeIntegrity,
+                readGuardIat,
+                readDynamicReloc,
+                readChpe,
+                readGuardRf,
+                readHotPatch,
+                readEnclave,
+                readVolatile,
+                readEhContinuation,
+                readXfg,
+                span);
+            return info != null;
+        }
+
         internal static bool TryParseBitmapInfoHeaderForTest(
             byte[] data,
             out int width,
@@ -10836,23 +11033,15 @@ namespace PECoff
         internal static bool TryParseCursorGroupForTest(byte[] groupData, out ResourceCursorGroupInfo group)
         {
             group = null;
-            if (groupData == null || groupData.Length < 6)
-            {
-                return false;
-            }
-
-            ushort reserved = ReadUInt16(groupData, 0);
-            ushort type = ReadUInt16(groupData, 2);
-            ushort count = ReadUInt16(groupData, 4);
-            if (reserved != 0 || type != 2 || count == 0)
+            if (!TryReadGroupResourceHeader(groupData, 2, out ushort reserved, out ushort type, out ushort count, out int entrySize, out int parsedCount, out bool headerValid, out bool entriesTruncated))
             {
                 return false;
             }
 
             List<ResourceCursorEntryInfo> entries = new List<ResourceCursorEntryInfo>();
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < parsedCount; i++)
             {
-                int offset = 6 + (i * 14);
+                int offset = 6 + (i * entrySize);
                 if (offset + 14 > groupData.Length)
                 {
                     break;
@@ -10876,7 +11065,39 @@ namespace PECoff
                     0));
             }
 
-            group = new ResourceCursorGroupInfo(1, 0, entries.ToArray());
+            group = new ResourceCursorGroupInfo(1, 0, reserved, type, count, entrySize, headerValid, entriesTruncated, entries.ToArray());
+            return true;
+        }
+
+        internal static bool TryParseIconGroupForTest(byte[] groupData, out IconGroupInfo group)
+        {
+            group = null;
+            if (!TryReadGroupResourceHeader(groupData, 1, out ushort reserved, out ushort type, out ushort count, out int entrySize, out int parsedCount, out bool headerValid, out bool entriesTruncated))
+            {
+                return false;
+            }
+
+            List<IconEntryInfo> entries = new List<IconEntryInfo>();
+            for (int i = 0; i < parsedCount; i++)
+            {
+                int offset = 6 + (i * entrySize);
+                if (offset + 14 > groupData.Length)
+                {
+                    break;
+                }
+
+                byte width = groupData[offset];
+                byte height = groupData[offset + 1];
+                byte colorCount = groupData[offset + 2];
+                byte reservedEntry = groupData[offset + 3];
+                ushort planes = ReadUInt16(groupData, offset + 4);
+                ushort bitCount = ReadUInt16(groupData, offset + 6);
+                uint bytesInRes = ReadUInt32(groupData, offset + 8);
+                ushort resourceId = ReadUInt16(groupData, offset + 12);
+                entries.Add(new IconEntryInfo(width, height, colorCount, reservedEntry, planes, bitCount, bytesInRes, resourceId, false, 0, 0));
+            }
+
+            group = new IconGroupInfo(1, 0, reserved, type, count, entrySize, headerValid, entriesTruncated, entries.ToArray(), Array.Empty<byte>());
             return true;
         }
 
@@ -16471,6 +16692,8 @@ namespace PECoff
             ulong dynamicValueRelocTable = 0;
             uint dynamicValueRelocTableOffset = 0;
             ushort dynamicValueRelocTableSection = 0;
+            uint dynamicValueRelocTableOffsetRaw = 0;
+            ushort dynamicValueRelocTableSectionRaw = 0;
             ulong chpeMetadataPointer = 0;
             ulong guardRFFailureRoutine = 0;
             ulong guardRFFailureRoutineFunctionPointer = 0;
@@ -16488,35 +16711,69 @@ namespace PECoff
             GuardRvaTableInfo guardAddressTakenIatTableInfo = null;
             GuardRvaTableInfo guardLongJumpTargetTableInfo = null;
 
-            if (TryReadCodeIntegrity(span, ref offset, limit, out codeIntegrityInfo) && // CodeIntegrity
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardAddressTakenIatEntryTable) && // GuardAddressTakenIatEntryTable
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardAddressTakenIatEntryCount) && // GuardAddressTakenIatEntryCount
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardLongJumpTargetTable) && // GuardLongJumpTargetTable
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardLongJumpTargetCount) && // GuardLongJumpTargetCount
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out dynamicValueRelocTable) && // DynamicValueRelocTable
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out chpeMetadataPointer))
+            bool readCodeIntegrity = TryReadCodeIntegrity(span, ref offset, limit, out codeIntegrityInfo);
+            bool readGuardAddressTakenIatTable = false;
+            bool readGuardAddressTakenIatCount = false;
+            bool readGuardLongJumpTargetTable = false;
+            bool readGuardLongJumpTargetCount = false;
+            bool readDynamicValueRelocTable = false;
+            bool readChpeMetadataPointer = false;
+            bool readGuardRFFailureRoutine = false;
+            bool readGuardRFFailureRoutineFunctionPointer = false;
+            bool readDynamicRelocMetadata = false;
+            bool readGuardRFVerifyStackPointer = false;
+            bool readHotPatchTableOffset = false;
+            bool readEnclaveConfigurationPointer = false;
+            bool readVolatileMetadataPointer = false;
+            bool readGuardEhContinuationTable = false;
+            bool readGuardEhContinuationCount = false;
+            bool readGuardXfgCheckFunctionPointer = false;
+            bool readGuardXfgDispatchFunctionPointer = false;
+            bool readGuardXfgTableDispatchFunctionPointer = false;
+
+            if (readCodeIntegrity &&
+                (readGuardAddressTakenIatTable = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardAddressTakenIatEntryTable)) &&
+                (readGuardAddressTakenIatCount = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardAddressTakenIatEntryCount)) &&
+                (readGuardLongJumpTargetTable = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardLongJumpTargetTable)) &&
+                (readGuardLongJumpTargetCount = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardLongJumpTargetCount)) &&
+                (readDynamicValueRelocTable = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out dynamicValueRelocTable)) &&
+                (readChpeMetadataPointer = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out chpeMetadataPointer)))
             {
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardRFFailureRoutine); // GuardRFFailureRoutine
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardRFFailureRoutineFunctionPointer); // GuardRFFailureRoutineFunctionPointer
-                if (TryReadUInt32Value(span, ref offset, limit, out _))
+                readGuardRFFailureRoutine = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardRFFailureRoutine); // GuardRFFailureRoutine
+                readGuardRFFailureRoutineFunctionPointer = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardRFFailureRoutineFunctionPointer); // GuardRFFailureRoutineFunctionPointer
+                if (TryReadUInt32Value(span, ref offset, limit, out dynamicValueRelocTableOffsetRaw))
                 {
-                    TryReadUInt16Value(span, ref offset, limit, out _);
-                    TryReadUInt16Value(span, ref offset, limit, out _);
+                    readDynamicRelocMetadata = true;
+                    if (TryReadUInt16Value(span, ref offset, limit, out dynamicValueRelocTableSectionRaw))
+                    {
+                        TryReadUInt16Value(span, ref offset, limit, out _);
+                    }
                 }
 
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardRFVerifyStackPointerFunctionPointer); // GuardRFVerifyStackPointerFunctionPointer
-                TryReadUInt32Value(span, ref offset, limit, out hotPatchTableOffset); // HotPatchTableOffset
-                TryReadUInt32Value(span, ref offset, limit, out _); // Reserved3
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out enclaveConfigurationPointer); // EnclaveConfigurationPointer
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out volatileMetadataPointer); // VolatileMetadataPointer
+                readGuardRFVerifyStackPointer = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardRFVerifyStackPointerFunctionPointer); // GuardRFVerifyStackPointerFunctionPointer
+                readHotPatchTableOffset = TryReadUInt32Value(span, ref offset, limit, out hotPatchTableOffset); // HotPatchTableOffset
+                if (readHotPatchTableOffset)
+                {
+                    TryReadUInt32Value(span, ref offset, limit, out _); // Reserved3
+                }
+
+                readEnclaveConfigurationPointer = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out enclaveConfigurationPointer); // EnclaveConfigurationPointer
+                readVolatileMetadataPointer = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out volatileMetadataPointer); // VolatileMetadataPointer
 
                 if (TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardEhContinuationTable))
                 {
-                    TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardEhContinuationCount);
-                    TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgCheckFunctionPointer);
-                    TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgDispatchFunctionPointer);
-                    TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgTableDispatchFunctionPointer);
+                    readGuardEhContinuationTable = true;
+                    readGuardEhContinuationCount = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardEhContinuationCount);
+                    readGuardXfgCheckFunctionPointer = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgCheckFunctionPointer);
+                    readGuardXfgDispatchFunctionPointer = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgDispatchFunctionPointer);
+                    readGuardXfgTableDispatchFunctionPointer = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgTableDispatchFunctionPointer);
                 }
+            }
+
+            if (readDynamicRelocMetadata)
+            {
+                dynamicValueRelocTableOffset = dynamicValueRelocTableOffsetRaw;
+                dynamicValueRelocTableSection = dynamicValueRelocTableSectionRaw;
             }
 
             if (dynamicValueRelocTable != 0)
@@ -16537,6 +16794,11 @@ namespace PECoff
                         Warn(ParseIssueCategory.LoadConfig, "Dynamic value relocation table pointer is not mapped to a section.");
                     }
                 }
+            }
+            else if (!readDynamicRelocMetadata)
+            {
+                dynamicValueRelocTableOffset = 0;
+                dynamicValueRelocTableSection = 0;
             }
 
             if (guardFlagsInfo.CfFunctionTablePresent && (guardCfTable == 0 || guardCfCount == 0))
@@ -16648,8 +16910,25 @@ namespace PECoff
                 enclaveConfigInfo = TryReadEnclaveConfiguration(enclaveConfigurationPointer, sections);
             }
 
+            LoadConfigVersionInfo versionInfo = BuildLoadConfigVersionInfo(
+                size,
+                (uint)limit,
+                (uint)Math.Min(offset, limit),
+                readCodeIntegrity,
+                readGuardAddressTakenIatTable,
+                readDynamicValueRelocTable,
+                readChpeMetadataPointer,
+                readGuardRFFailureRoutine || readGuardRFFailureRoutineFunctionPointer || readGuardRFVerifyStackPointer,
+                readHotPatchTableOffset,
+                readEnclaveConfigurationPointer,
+                readVolatileMetadataPointer,
+                readGuardEhContinuationTable,
+                readGuardXfgCheckFunctionPointer || readGuardXfgDispatchFunctionPointer || readGuardXfgTableDispatchFunctionPointer,
+                span);
+
             _loadConfig = new LoadConfigInfo(
                 size,
+                versionInfo,
                 timeDateStamp,
                 major,
                 minor,
@@ -16749,6 +17028,108 @@ namespace PECoff
             }
 
             return new SehHandlerTableInfo(tableAddress, handlerCount, mapped, sectionName, handlers, entries.ToArray());
+        }
+
+        private static LoadConfigVersionInfo BuildLoadConfigVersionInfo(
+            uint declaredSize,
+            uint limitBytes,
+            uint parsedBytes,
+            bool hasCodeIntegrity,
+            bool hasGuardIat,
+            bool hasDynamicReloc,
+            bool hasChpe,
+            bool hasGuardRf,
+            bool hasHotPatch,
+            bool hasEnclave,
+            bool hasVolatileMetadata,
+            bool hasEhContinuation,
+            bool hasXfg,
+            ReadOnlySpan<byte> span)
+        {
+            if (parsedBytes > limitBytes)
+            {
+                parsedBytes = limitBytes;
+            }
+
+            uint trailingBytes = limitBytes > parsedBytes ? limitBytes - parsedBytes : 0;
+            string trailingHash = string.Empty;
+            string trailingPreview = string.Empty;
+            if (trailingBytes > 0 && parsedBytes < span.Length)
+            {
+                ReadOnlySpan<byte> trailing = span.Slice((int)parsedBytes, (int)Math.Min(trailingBytes, (uint)(span.Length - (int)parsedBytes)));
+                trailingPreview = BuildHexPreview(trailing, 64);
+                trailingHash = ToHex(SHA256.HashData(trailing));
+            }
+
+            List<string> groups = new List<string> { "Base" };
+            if (hasCodeIntegrity)
+            {
+                groups.Add("CodeIntegrity");
+            }
+            if (hasGuardIat)
+            {
+                groups.Add("GuardIAT");
+            }
+            if (hasDynamicReloc || hasChpe)
+            {
+                groups.Add("DynamicReloc/CHPE");
+            }
+            if (hasGuardRf)
+            {
+                groups.Add("GuardRF");
+            }
+            if (hasHotPatch)
+            {
+                groups.Add("HotPatch");
+            }
+            if (hasEnclave)
+            {
+                groups.Add("Enclave");
+            }
+            if (hasVolatileMetadata)
+            {
+                groups.Add("VolatileMetadata");
+            }
+            if (hasEhContinuation)
+            {
+                groups.Add("EHContinuation");
+            }
+            if (hasXfg)
+            {
+                groups.Add("XFG");
+            }
+
+            string versionHint = "pre-Win8";
+            if (hasDynamicReloc || hasChpe)
+            {
+                versionHint = "Win8+";
+            }
+            if (hasGuardRf || hasHotPatch)
+            {
+                versionHint = "Win8.1+";
+            }
+            if (hasEnclave || hasVolatileMetadata)
+            {
+                versionHint = "Win10+";
+            }
+            if (hasXfg)
+            {
+                versionHint = "Win10+ (XFG)";
+            }
+            if (trailingBytes > 0 && (hasXfg || hasEnclave || hasVolatileMetadata))
+            {
+                versionHint = "Win11+ (extra fields)";
+            }
+
+            return new LoadConfigVersionInfo(
+                declaredSize,
+                limitBytes,
+                parsedBytes,
+                trailingBytes,
+                versionHint,
+                groups.ToArray(),
+                trailingHash,
+                trailingPreview);
         }
 
         private GuardRvaTableInfo BuildGuardRvaTableInfo(string name, ulong tablePointer, ulong count, uint entrySize, List<IMAGE_SECTION_HEADER> sections)

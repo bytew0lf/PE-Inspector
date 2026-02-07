@@ -215,6 +215,10 @@ namespace PECoff
     {
         private MemoryStream _ms;
         private VS_VERSIONINFO vi;
+        private readonly byte[] _buffer;
+        private readonly int _bufferLength;
+        private int _resourceOffset = -1;
+        private string _extraDataPreview = string.Empty;
         private readonly Dictionary<string, string> _stringValues = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, Dictionary<string, string>> _stringTables = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
         private readonly List<uint> _translations = new List<uint>();
@@ -469,6 +473,8 @@ namespace PECoff
         {
             if (buffer == null || length <= 0)
             {
+                _buffer = Array.Empty<byte>();
+                _bufferLength = 0;
                 _ms = new MemoryStream(Array.Empty<byte>());
                 return;
             }
@@ -479,6 +485,8 @@ namespace PECoff
             }
 
             // Constructor
+            _buffer = buffer;
+            _bufferLength = length;
             _ms = new MemoryStream(buffer, 0, length, false, true);
 
             // VS_VERSION_INFO
@@ -489,9 +497,11 @@ namespace PECoff
                 return; // No VersionInfo found
             }
 
-            _ms.Position = pos - 6; // setup the correct offset
+            _resourceOffset = (int)(pos - 6);
+            _ms.Position = _resourceOffset; // setup the correct offset
             vi = new VS_VERSIONINFO(new BinaryReader(_ms));
             ParseVersionResource(buffer, (int)(pos - 6));
+            ComputeExtraDataPreview();
         }
 
         ~FileVersionInfo()
@@ -594,6 +604,36 @@ namespace PECoff
 
         public bool FixedFileInfoSignatureValid => vi.Value.dwSignature == 0xFEEF04BD;
 
+        public ushort ResourceLength => vi.wLength;
+
+        public ushort ResourceValueLength => vi.wValueLength;
+
+        public ushort ResourceType => vi.wType;
+
+        public string ResourceKey => vi.szKey ?? string.Empty;
+
+        public int ExtraDataBytes
+        {
+            get
+            {
+                if (_resourceOffset < 0 || _bufferLength == 0)
+                {
+                    return 0;
+                }
+
+                int available = _bufferLength - _resourceOffset;
+                int declared = vi.wLength;
+                if (available <= declared)
+                {
+                    return 0;
+                }
+
+                return available - declared;
+            }
+        }
+
+        public string ExtraDataPreview => _extraDataPreview ?? string.Empty;
+
         public VersionInfoDetails ToVersionInfoDetails()
         {
             VersionFixedFileInfo fixedInfo = FixedFileInfo;
@@ -613,11 +653,47 @@ namespace PECoff
                 fixedInfo,
                 FixedFileInfoSignature,
                 FixedFileInfoSignatureValid,
+                ResourceLength,
+                ResourceValueLength,
+                ResourceType,
+                ResourceKey,
+                ExtraDataBytes,
+                ExtraDataPreview,
                 new ReadOnlyDictionary<string, string>(_stringValues),
                 stringTables,
                 _translation,
                 translations,
                 GetLanguage());
+        }
+
+        private void ComputeExtraDataPreview()
+        {
+            _extraDataPreview = string.Empty;
+            int extraBytes = ExtraDataBytes;
+            if (extraBytes <= 0)
+            {
+                return;
+            }
+
+            int start = _resourceOffset + vi.wLength;
+            if (start < 0 || start >= _bufferLength)
+            {
+                return;
+            }
+
+            int length = Math.Min(extraBytes, 32);
+            _extraDataPreview = BuildHexPreview(new ReadOnlySpan<byte>(_buffer, start, length), 32);
+        }
+
+        private static string BuildHexPreview(ReadOnlySpan<byte> data, int maxBytes)
+        {
+            if (data.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            int length = Math.Min(data.Length, maxBytes);
+            return Convert.ToHexString(data.Slice(0, length));
         }
         #endregion
 

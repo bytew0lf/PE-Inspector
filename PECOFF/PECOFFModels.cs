@@ -1425,6 +1425,38 @@ namespace PECoff
         }
     }
 
+    public sealed class LoadConfigVersionInfo
+    {
+        public uint DeclaredSize { get; }
+        public uint LimitBytes { get; }
+        public uint ParsedBytes { get; }
+        public uint TrailingBytes { get; }
+        public string VersionHint { get; }
+        public IReadOnlyList<string> FieldGroups { get; }
+        public string TrailingHash { get; }
+        public string TrailingPreview { get; }
+
+        public LoadConfigVersionInfo(
+            uint declaredSize,
+            uint limitBytes,
+            uint parsedBytes,
+            uint trailingBytes,
+            string versionHint,
+            string[] fieldGroups,
+            string trailingHash,
+            string trailingPreview)
+        {
+            DeclaredSize = declaredSize;
+            LimitBytes = limitBytes;
+            ParsedBytes = parsedBytes;
+            TrailingBytes = trailingBytes;
+            VersionHint = versionHint ?? string.Empty;
+            FieldGroups = Array.AsReadOnly(fieldGroups ?? Array.Empty<string>());
+            TrailingHash = trailingHash ?? string.Empty;
+            TrailingPreview = trailingPreview ?? string.Empty;
+        }
+    }
+
     public sealed class LoadConfigCodeIntegrityInfo
     {
         public ushort Flags { get; }
@@ -1604,6 +1636,7 @@ namespace PECoff
     public sealed class LoadConfigInfo
     {
         public uint Size { get; }
+        public LoadConfigVersionInfo VersionInfo { get; }
         public uint TimeDateStamp { get; }
         public ushort MajorVersion { get; }
         public ushort MinorVersion { get; }
@@ -1648,6 +1681,7 @@ namespace PECoff
 
         public LoadConfigInfo(
             uint size,
+            LoadConfigVersionInfo versionInfo,
             uint timeDateStamp,
             ushort majorVersion,
             ushort minorVersion,
@@ -1691,6 +1725,7 @@ namespace PECoff
             EnclaveConfigurationInfo enclaveConfiguration)
         {
             Size = size;
+            VersionInfo = versionInfo;
             TimeDateStamp = timeDateStamp;
             MajorVersion = majorVersion;
             MinorVersion = minorVersion;
@@ -1867,6 +1902,12 @@ namespace PECoff
         public VersionFixedFileInfo FixedFileInfo { get; }
         public uint FixedFileInfoSignature { get; }
         public bool FixedFileInfoSignatureValid { get; }
+        public ushort ResourceLength { get; }
+        public ushort ResourceValueLength { get; }
+        public ushort ResourceType { get; }
+        public string ResourceKey { get; }
+        public int ExtraDataBytes { get; }
+        public string ExtraDataPreview { get; }
         public IReadOnlyDictionary<string, string> StringValues { get; }
         public IReadOnlyList<VersionStringTableInfo> StringTables { get; }
         public uint? Translation { get; }
@@ -1877,6 +1918,12 @@ namespace PECoff
             VersionFixedFileInfo fixedFileInfo,
             uint fixedFileInfoSignature,
             bool fixedFileInfoSignatureValid,
+            ushort resourceLength,
+            ushort resourceValueLength,
+            ushort resourceType,
+            string resourceKey,
+            int extraDataBytes,
+            string extraDataPreview,
             IReadOnlyDictionary<string, string> stringValues,
             VersionStringTableInfo[] stringTables,
             uint? translation,
@@ -1886,6 +1933,12 @@ namespace PECoff
             FixedFileInfo = fixedFileInfo;
             FixedFileInfoSignature = fixedFileInfoSignature;
             FixedFileInfoSignatureValid = fixedFileInfoSignatureValid;
+            ResourceLength = resourceLength;
+            ResourceValueLength = resourceValueLength;
+            ResourceType = resourceType;
+            ResourceKey = resourceKey ?? string.Empty;
+            ExtraDataBytes = extraDataBytes;
+            ExtraDataPreview = extraDataPreview ?? string.Empty;
             StringValues = stringValues ?? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             StringTables = Array.AsReadOnly(stringTables ?? Array.Empty<VersionStringTableInfo>());
             Translation = translation;
@@ -2008,13 +2061,35 @@ namespace PECoff
     {
         public uint NameId { get; }
         public ushort LanguageId { get; }
+        public ushort HeaderReserved { get; }
+        public ushort HeaderType { get; }
+        public ushort DeclaredEntryCount { get; }
+        public int EntrySize { get; }
+        public bool HeaderValid { get; }
+        public bool EntriesTruncated { get; }
         public IReadOnlyList<IconEntryInfo> Entries { get; }
         public byte[] IcoData { get; }
 
-        public IconGroupInfo(uint nameId, ushort languageId, IconEntryInfo[] entries, byte[] icoData)
+        public IconGroupInfo(
+            uint nameId,
+            ushort languageId,
+            ushort headerReserved,
+            ushort headerType,
+            ushort declaredEntryCount,
+            int entrySize,
+            bool headerValid,
+            bool entriesTruncated,
+            IconEntryInfo[] entries,
+            byte[] icoData)
         {
             NameId = nameId;
             LanguageId = languageId;
+            HeaderReserved = headerReserved;
+            HeaderType = headerType;
+            DeclaredEntryCount = declaredEntryCount;
+            EntrySize = entrySize;
+            HeaderValid = headerValid;
+            EntriesTruncated = entriesTruncated;
             Entries = Array.AsReadOnly(entries ?? Array.Empty<IconEntryInfo>());
             IcoData = icoData ?? Array.Empty<byte>();
         }
@@ -3804,7 +3879,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 23;
+        public const int CurrentSchemaVersion = 24;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -4168,6 +4243,12 @@ namespace PECoff
                 {
                     group.NameId,
                     group.LanguageId,
+                    group.HeaderReserved,
+                    group.HeaderType,
+                    group.DeclaredEntryCount,
+                    group.EntrySize,
+                    group.HeaderValid,
+                    group.EntriesTruncated,
                     group.Entries,
                     IcoSize = group.IcoData?.Length ?? 0
                 }).ToArray();
@@ -4504,12 +4585,33 @@ namespace PECoff
     {
         public uint NameId { get; }
         public ushort LanguageId { get; }
+        public ushort HeaderReserved { get; }
+        public ushort HeaderType { get; }
+        public ushort DeclaredEntryCount { get; }
+        public int EntrySize { get; }
+        public bool HeaderValid { get; }
+        public bool EntriesTruncated { get; }
         public IReadOnlyList<ResourceCursorEntryInfo> Entries { get; }
 
-        public ResourceCursorGroupInfo(uint nameId, ushort languageId, ResourceCursorEntryInfo[] entries)
+        public ResourceCursorGroupInfo(
+            uint nameId,
+            ushort languageId,
+            ushort headerReserved,
+            ushort headerType,
+            ushort declaredEntryCount,
+            int entrySize,
+            bool headerValid,
+            bool entriesTruncated,
+            ResourceCursorEntryInfo[] entries)
         {
             NameId = nameId;
             LanguageId = languageId;
+            HeaderReserved = headerReserved;
+            HeaderType = headerType;
+            DeclaredEntryCount = declaredEntryCount;
+            EntrySize = entrySize;
+            HeaderValid = headerValid;
+            EntriesTruncated = entriesTruncated;
             Entries = Array.AsReadOnly(entries ?? Array.Empty<ResourceCursorEntryInfo>());
         }
     }
