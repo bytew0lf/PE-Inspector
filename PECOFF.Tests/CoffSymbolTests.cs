@@ -123,4 +123,41 @@ public class CoffSymbolTests
         Assert.Equal("WeakExternal", symbols[1].AuxSymbols[0].Kind);
         Assert.Equal("base", symbols[1].AuxSymbols[0].WeakDefaultSymbol);
     }
+
+    [Fact]
+    public void Coff_Symbols_Associative_Comdat_Section()
+    {
+        byte[] symbol = new byte[18];
+        Encoding.ASCII.GetBytes(".text").CopyTo(symbol, 0);
+        BitConverter.GetBytes(0u).CopyTo(symbol, 8);
+        BitConverter.GetBytes((short)1).CopyTo(symbol, 12);
+        BitConverter.GetBytes((ushort)0).CopyTo(symbol, 14);
+        symbol[16] = 0x03; // IMAGE_SYM_CLASS_SECTION
+        symbol[17] = 1;
+
+        byte[] aux = new byte[18];
+        BitConverter.GetBytes(0u).CopyTo(aux, 0); // length
+        BitConverter.GetBytes((ushort)0).CopyTo(aux, 4); // relocations
+        BitConverter.GetBytes((ushort)0).CopyTo(aux, 6); // line numbers
+        BitConverter.GetBytes(0u).CopyTo(aux, 8); // checksum
+        BitConverter.GetBytes((ushort)2).CopyTo(aux, 12); // associated section index
+        aux[14] = 5; // ASSOCIATIVE
+
+        byte[] symbolData = new byte[36];
+        Array.Copy(symbol, 0, symbolData, 0, symbol.Length);
+        Array.Copy(aux, 0, symbolData, symbol.Length, aux.Length);
+
+        bool parsed = PECOFF.TryParseCoffSymbolTableForTest(
+            symbolData,
+            Array.Empty<byte>(),
+            new[] { ".text", ".rdata" },
+            out CoffSymbolInfo[] symbols,
+            out CoffStringTableEntry[] _);
+
+        Assert.True(parsed);
+        Assert.Single(symbols);
+        Assert.Single(symbols[0].AuxSymbols);
+        Assert.Equal("SectionDefinition", symbols[0].AuxSymbols[0].Kind);
+        Assert.Equal(".rdata", symbols[0].AuxSymbols[0].AssociatedSectionName);
+    }
 }

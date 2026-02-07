@@ -447,6 +447,15 @@ namespace PE_FileInspector
                                       " | Size: " + pe.ArchitectureDirectory.Size.ToString(CultureInfo.InvariantCulture) +
                                       " | Mapped: " + pe.ArchitectureDirectory.IsMapped +
                                       " | Section: " + Safe(pe.ArchitectureDirectory.SectionName));
+                        if (pe.ArchitectureDirectory.Parsed)
+                        {
+                            sb.AppendLine("      Magic: 0x" + pe.ArchitectureDirectory.Magic.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | Version: " + pe.ArchitectureDirectory.MajorVersion.ToString(CultureInfo.InvariantCulture) +
+                                          "." + pe.ArchitectureDirectory.MinorVersion.ToString(CultureInfo.InvariantCulture) +
+                                          " | Entries: " + pe.ArchitectureDirectory.NumberOfEntries.ToString(CultureInfo.InvariantCulture));
+                            sb.AppendLine("      FirstEntryRva: 0x" + pe.ArchitectureDirectory.FirstEntryRva.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | SizeOfData: " + pe.ArchitectureDirectory.SizeOfData.ToString(CultureInfo.InvariantCulture));
+                        }
                     }
                     if (pe.GlobalPtrDirectory != null)
                     {
@@ -454,6 +463,10 @@ namespace PE_FileInspector
                                       " | Size: " + pe.GlobalPtrDirectory.Size.ToString(CultureInfo.InvariantCulture) +
                                       " | Mapped: " + pe.GlobalPtrDirectory.IsMapped +
                                       " | Section: " + Safe(pe.GlobalPtrDirectory.SectionName));
+                        if (pe.GlobalPtrDirectory.ValueMapped)
+                        {
+                            sb.AppendLine("      Value: 0x" + pe.GlobalPtrDirectory.Value.ToString("X", CultureInfo.InvariantCulture));
+                        }
                     }
                     if (pe.IatDirectory != null)
                     {
@@ -464,6 +477,11 @@ namespace PE_FileInspector
                                       " | Aligned: " + pe.IatDirectory.SizeAligned +
                                       " | Mapped: " + pe.IatDirectory.IsMapped +
                                       " | Section: " + Safe(pe.IatDirectory.SectionName));
+                        if (pe.IatDirectory.EntryCount > 0)
+                        {
+                            sb.AppendLine("      NonZero: " + pe.IatDirectory.NonZeroEntryCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Zero: " + pe.IatDirectory.ZeroEntryCount.ToString(CultureInfo.InvariantCulture));
+                        }
                     }
                 }
 
@@ -597,13 +615,35 @@ namespace PE_FileInspector
                                           " | TimestampValid=" + entry.AuthenticodeStatus.TimestampValid);
                             sb.AppendLine("    Certificate Transparency: " + entry.AuthenticodeStatus.CertificateTransparencySignerCount.ToString(CultureInfo.InvariantCulture) +
                                           " | Required Met=" + entry.AuthenticodeStatus.CertificateTransparencyRequiredMet);
+                            if (entry.AuthenticodeStatus.CertificateTransparencyLogIds.Count > 0)
+                            {
+                                sb.AppendLine("    CT Logs: " + entry.AuthenticodeStatus.CertificateTransparencyLogCount.ToString(CultureInfo.InvariantCulture));
+                                foreach (string logId in entry.AuthenticodeStatus.CertificateTransparencyLogIds.Take(5))
+                                {
+                                    sb.AppendLine("      - " + logId);
+                                }
+                                if (entry.AuthenticodeStatus.CertificateTransparencyLogIds.Count > 5)
+                                {
+                                    sb.AppendLine("      (truncated)");
+                                }
+                            }
+                            if (entry.AuthenticodeStatus.WinTrust != null)
+                            {
+                                sb.AppendLine("    WinTrust: " + entry.AuthenticodeStatus.WinTrust.Status +
+                                              " | Code=" + entry.AuthenticodeStatus.WinTrust.StatusCode.ToString(CultureInfo.InvariantCulture));
+                                if (!string.IsNullOrWhiteSpace(entry.AuthenticodeStatus.WinTrust.Message))
+                                {
+                                    sb.AppendLine("      " + Safe(entry.AuthenticodeStatus.WinTrust.Message));
+                                }
+                            }
                             if (entry.AuthenticodeStatus.Policy != null)
                             {
                                 sb.AppendLine("    Policy: RevocationMode=" + entry.AuthenticodeStatus.Policy.RevocationMode +
                                               " | RevocationFlag=" + entry.AuthenticodeStatus.Policy.RevocationFlag +
                                               " | TrustStore=" + entry.AuthenticodeStatus.Policy.EnableTrustStoreCheck +
                                               " | Offline=" + entry.AuthenticodeStatus.Policy.OfflineChainCheck +
-                                              " | RequireCT=" + entry.AuthenticodeStatus.Policy.RequireCertificateTransparency);
+                                              " | RequireCT=" + entry.AuthenticodeStatus.Policy.RequireCertificateTransparency +
+                                              " | WinTrust=" + entry.AuthenticodeStatus.Policy.EnableWinTrustCheck);
                             }
                             sb.AppendLine("    Policy Compliant: " + entry.AuthenticodeStatus.PolicyCompliant);
                             if (entry.AuthenticodeStatus.PolicyFailures.Count > 0)
@@ -783,6 +823,16 @@ namespace PE_FileInspector
                 sb.AppendLine("  Field Count: " + pe.ClrMetadata.FieldDefinitionCount.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Property Count: " + pe.ClrMetadata.PropertyDefinitionCount.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Event Count: " + pe.ClrMetadata.EventDefinitionCount.ToString(CultureInfo.InvariantCulture));
+                if (pe.ClrMetadata.MethodBodySummary != null)
+                {
+                    sb.AppendLine("  Method Bodies: " + pe.ClrMetadata.MethodBodySummary.MethodBodyCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Tiny: " + pe.ClrMetadata.MethodBodySummary.TinyHeaderCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Fat: " + pe.ClrMetadata.MethodBodySummary.FatHeaderCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Invalid: " + pe.ClrMetadata.MethodBodySummary.InvalidHeaderCount.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("  IL Bytes: Total=" + pe.ClrMetadata.MethodBodySummary.TotalIlBytes.ToString(CultureInfo.InvariantCulture) +
+                                  " | Max=" + pe.ClrMetadata.MethodBodySummary.MaxIlBytes.ToString(CultureInfo.InvariantCulture) +
+                                  " | Avg=" + pe.ClrMetadata.MethodBodySummary.AverageIlBytes.ToString(CultureInfo.InvariantCulture));
+                }
                 if (pe.ClrMetadata.HasDebuggableAttribute || !string.IsNullOrWhiteSpace(pe.ClrMetadata.DebuggableModes))
                 {
                     sb.AppendLine("  Debuggable: " + Safe(pe.ClrMetadata.DebuggableModes));
@@ -805,6 +855,19 @@ namespace PE_FileInspector
                               "-0x" + table.LastToken.ToString("X8", CultureInfo.InvariantCulture) + ")"
                             : string.Empty;
                         sb.AppendLine("    - " + table.TableName + ": " + table.Count.ToString(CultureInfo.InvariantCulture) + tokenRange);
+                    }
+                }
+                if (pe.ClrMetadata.TokenReferences.Length > 0)
+                {
+                    sb.AppendLine("  Token References:");
+                    foreach (ClrTokenReferenceInfo info in pe.ClrMetadata.TokenReferences)
+                    {
+                        if (info.Counts.Count == 0)
+                        {
+                            continue;
+                        }
+                        string summary = string.Join(", ", info.Counts.Select(c => c.Target + "=" + c.Count.ToString(CultureInfo.InvariantCulture)));
+                        sb.AppendLine("    - " + info.Name + ": " + summary);
                     }
                 }
                 if (pe.ClrMetadata.AssemblyReferences.Length == 0)
@@ -1485,6 +1548,34 @@ namespace PE_FileInspector
                         sb.AppendLine("    PDB Path Has Dir: " + entry.CodeView.PdbPathHasDirectory);
                         sb.AppendLine("    Identity Valid: " + entry.CodeView.IdentityLooksValid);
                     }
+                    if (entry.Pdb != null)
+                    {
+                        sb.AppendLine("    PDB Info: " + Safe(entry.Pdb.Format) +
+                                      " | Streams: " + entry.Pdb.StreamCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | PageSize: " + entry.Pdb.PageSize.ToString(CultureInfo.InvariantCulture));
+                        sb.AppendLine("    PDB Signature: 0x" + entry.Pdb.PdbSignature.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Age: " + entry.Pdb.Age.ToString(CultureInfo.InvariantCulture));
+                        if (entry.Pdb.Guid != Guid.Empty)
+                        {
+                            sb.AppendLine("    PDB GUID: " + entry.Pdb.Guid.ToString());
+                        }
+                        if (entry.Pdb.PublicSymbols.Count > 0)
+                        {
+                            sb.AppendLine("    Public Symbols: " + entry.Pdb.PublicSymbolCount.ToString(CultureInfo.InvariantCulture));
+                            foreach (string name in entry.Pdb.PublicSymbols.Take(10))
+                            {
+                                sb.AppendLine("      - " + Safe(name));
+                            }
+                            if (entry.Pdb.PublicSymbols.Count > 10)
+                            {
+                                sb.AppendLine("      (truncated)");
+                            }
+                        }
+                        if (!string.IsNullOrWhiteSpace(entry.Pdb.Notes))
+                        {
+                            sb.AppendLine("    PDB Notes: " + Safe(entry.Pdb.Notes));
+                        }
+                    }
                     if (entry.Coff != null)
                     {
                         sb.AppendLine("    COFF: Symbols=" + entry.Coff.NumberOfSymbols.ToString(CultureInfo.InvariantCulture) +
@@ -1532,6 +1623,26 @@ namespace PE_FileInspector
                                           " | Regs: " + fpo.SavedRegisterCount.ToString(CultureInfo.InvariantCulture) +
                                           " | SEH: " + fpo.HasSeh +
                                           " | BP: " + fpo.UsesBasePointer);
+                        }
+                    }
+                    if (entry.Borland != null)
+                    {
+                        sb.AppendLine("    Borland: Version=" + entry.Borland.Version.ToString(CultureInfo.InvariantCulture) +
+                                      " | Flags=0x" + entry.Borland.Flags.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Offsets=" + entry.Borland.Offsets.Count.ToString(CultureInfo.InvariantCulture));
+                        foreach (uint offset in entry.Borland.Offsets.Take(5))
+                        {
+                            sb.AppendLine("      - 0x" + offset.ToString("X8", CultureInfo.InvariantCulture));
+                        }
+                    }
+                    if (entry.Reserved != null)
+                    {
+                        sb.AppendLine("    Reserved: Version=" + entry.Reserved.Version.ToString(CultureInfo.InvariantCulture) +
+                                      " | Flags=0x" + entry.Reserved.Flags.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Offsets=" + entry.Reserved.Offsets.Count.ToString(CultureInfo.InvariantCulture));
+                        foreach (uint offset in entry.Reserved.Offsets.Take(5))
+                        {
+                            sb.AppendLine("      - 0x" + offset.ToString("X8", CultureInfo.InvariantCulture));
                         }
                     }
                     if (entry.Fixup != null)
@@ -1775,6 +1886,22 @@ namespace PE_FileInspector
                 if (!string.IsNullOrWhiteSpace(pe.TlsInfo.RawDataPreview))
                 {
                     sb.AppendLine("  RawDataPreview: " + pe.TlsInfo.RawDataPreview);
+                }
+                if (pe.TlsInfo.Template != null)
+                {
+                    sb.AppendLine("  TemplateRawSize: " + pe.TlsInfo.Template.RawDataSize.ToString(CultureInfo.InvariantCulture) +
+                                  " | ZeroFill: " + pe.TlsInfo.Template.ZeroFillSize.ToString(CultureInfo.InvariantCulture) +
+                                  " | Total: " + pe.TlsInfo.Template.TotalSize.ToString(CultureInfo.InvariantCulture));
+                    if (pe.TlsInfo.Template.RangeValid)
+                    {
+                        sb.AppendLine("  TemplateRange: " + pe.TlsInfo.Template.RangeSize.ToString(CultureInfo.InvariantCulture) +
+                                      " | MatchesRaw: " + pe.TlsInfo.Template.SizeMatchesRange.ToString(CultureInfo.InvariantCulture) +
+                                      " | Aligned: " + pe.TlsInfo.Template.IsAligned.ToString(CultureInfo.InvariantCulture));
+                    }
+                    if (!string.IsNullOrWhiteSpace(pe.TlsInfo.Template.Notes))
+                    {
+                        sb.AppendLine("  TemplateNotes: " + Safe(pe.TlsInfo.Template.Notes));
+                    }
                 }
                 if (pe.TlsInfo.AlignmentBytes > 0)
                 {
@@ -2935,6 +3062,18 @@ namespace PE_FileInspector
             if (signer.CertificateTransparencyCount > 0)
             {
                 sb.AppendLine(prefix + "  Certificate Transparency: " + signer.CertificateTransparencyCount.ToString(CultureInfo.InvariantCulture));
+            }
+            if (signer.CertificateTransparencyLogIds != null && signer.CertificateTransparencyLogIds.Count > 0)
+            {
+                sb.AppendLine(prefix + "  CT Logs: " + signer.CertificateTransparencyLogIds.Count.ToString(CultureInfo.InvariantCulture));
+                foreach (string logId in signer.CertificateTransparencyLogIds.Take(5))
+                {
+                    sb.AppendLine(prefix + "    - " + logId);
+                }
+                if (signer.CertificateTransparencyLogIds.Count > 5)
+                {
+                    sb.AppendLine(prefix + "    (truncated)");
+                }
             }
             sb.AppendLine(prefix + "  Within Validity: " + signer.IsWithinValidityPeriod);
             if (signer.NestingLevel > 0)

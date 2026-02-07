@@ -114,8 +114,10 @@ namespace PECoff
                     RequireTimestamp = true,
                     RequireTimestampValid = true,
                     RequireCodeSigningEku = true,
+                    EnableCertificateTransparencyLogCheck = true,
                     EnableCatalogSignatureCheck = true,
                     EnableTrustStoreCheck = true,
+                    EnableWinTrustCheck = true,
                     RevocationMode = X509RevocationMode.Online,
                     RevocationFlag = X509RevocationFlag.ExcludeRoot
                 }
@@ -132,8 +134,10 @@ namespace PECoff
         public bool RequireTimestampValid { get; init; }
         public bool RequireCodeSigningEku { get; init; }
         public bool RequireCertificateTransparency { get; init; }
+        public bool EnableCertificateTransparencyLogCheck { get; init; }
         public bool EnableCatalogSignatureCheck { get; init; }
         public bool EnableTrustStoreCheck { get; init; } = true;
+        public bool EnableWinTrustCheck { get; init; }
         public bool OfflineChainCheck { get; init; }
         public X509RevocationMode RevocationMode { get; init; } = X509RevocationMode.NoCheck;
         public X509RevocationFlag RevocationFlag { get; init; } = X509RevocationFlag.ExcludeRoot;
@@ -397,6 +401,34 @@ namespace PECoff
         }
     }
 
+    public sealed class DebugBorlandInfo
+    {
+        public uint Version { get; }
+        public uint Flags { get; }
+        public IReadOnlyList<uint> Offsets { get; }
+
+        public DebugBorlandInfo(uint version, uint flags, uint[] offsets)
+        {
+            Version = version;
+            Flags = flags;
+            Offsets = Array.AsReadOnly(offsets ?? Array.Empty<uint>());
+        }
+    }
+
+    public sealed class DebugReservedInfo
+    {
+        public uint Version { get; }
+        public uint Flags { get; }
+        public IReadOnlyList<uint> Offsets { get; }
+
+        public DebugReservedInfo(uint version, uint flags, uint[] offsets)
+        {
+            Version = version;
+            Flags = flags;
+            Offsets = Array.AsReadOnly(offsets ?? Array.Empty<uint>());
+        }
+    }
+
     public sealed class DebugCodeViewInfo
     {
         public string Signature { get; }
@@ -462,6 +494,47 @@ namespace PECoff
         }
     }
 
+    public sealed class PdbInfo
+    {
+        public string Path { get; }
+        public string Format { get; }
+        public uint PageSize { get; }
+        public uint StreamCount { get; }
+        public uint DirectorySize { get; }
+        public uint PdbSignature { get; }
+        public Guid Guid { get; }
+        public uint Age { get; }
+        public int PublicSymbolCount { get; }
+        public IReadOnlyList<string> PublicSymbols { get; }
+        public string Notes { get; }
+
+        public PdbInfo(
+            string path,
+            string format,
+            uint pageSize,
+            uint streamCount,
+            uint directorySize,
+            uint pdbSignature,
+            Guid guid,
+            uint age,
+            int publicSymbolCount,
+            string[] publicSymbols,
+            string notes)
+        {
+            Path = path ?? string.Empty;
+            Format = format ?? string.Empty;
+            PageSize = pageSize;
+            StreamCount = streamCount;
+            DirectorySize = directorySize;
+            PdbSignature = pdbSignature;
+            Guid = guid;
+            Age = age;
+            PublicSymbolCount = publicSymbolCount;
+            PublicSymbols = Array.AsReadOnly(publicSymbols ?? Array.Empty<string>());
+            Notes = notes ?? string.Empty;
+        }
+    }
+
     public sealed class DebugDirectoryEntry
     {
         public uint Characteristics { get; }
@@ -473,11 +546,14 @@ namespace PECoff
         public uint AddressOfRawData { get; }
         public uint PointerToRawData { get; }
         public DebugCodeViewInfo CodeView { get; }
+        public PdbInfo Pdb { get; }
         public DebugCoffInfo Coff { get; }
         public DebugPogoInfo Pogo { get; }
         public DebugVcFeatureInfo VcFeature { get; }
         public DebugExDllCharacteristicsInfo ExDllCharacteristics { get; }
         public DebugFpoInfo Fpo { get; }
+        public DebugBorlandInfo Borland { get; }
+        public DebugReservedInfo Reserved { get; }
         public DebugRawInfo Fixup { get; }
         public DebugMiscInfo Misc { get; }
         public DebugOmapInfo OmapToSource { get; }
@@ -498,11 +574,14 @@ namespace PECoff
             uint addressOfRawData,
             uint pointerToRawData,
             DebugCodeViewInfo codeView,
+            PdbInfo pdb,
             DebugCoffInfo coff,
             DebugPogoInfo pogo,
             DebugVcFeatureInfo vcFeature,
             DebugExDllCharacteristicsInfo exDllCharacteristics,
             DebugFpoInfo fpo,
+            DebugBorlandInfo borland,
+            DebugReservedInfo reserved,
             DebugRawInfo fixup,
             DebugMiscInfo misc,
             DebugOmapInfo omapToSource,
@@ -522,11 +601,14 @@ namespace PECoff
             AddressOfRawData = addressOfRawData;
             PointerToRawData = pointerToRawData;
             CodeView = codeView;
+            Pdb = pdb;
             Coff = coff;
             Pogo = pogo;
             VcFeature = vcFeature;
             ExDllCharacteristics = exDllCharacteristics;
             Fpo = fpo;
+            Borland = borland;
+            Reserved = reserved;
             Fixup = fixup;
             Misc = misc;
             OmapToSource = omapToSource;
@@ -1036,6 +1118,7 @@ namespace PECoff
         public bool RawDataMapped { get; }
         public string RawDataSectionName { get; }
         public int AlignmentBytes { get; }
+        public TlsTemplateInfo Template { get; }
         public string RawDataSha256 { get; }
         public bool RawDataPreviewIsText { get; }
         public string RawDataPreview { get; }
@@ -1054,6 +1137,7 @@ namespace PECoff
             bool rawDataMapped,
             string rawDataSectionName,
             int alignmentBytes,
+            TlsTemplateInfo template,
             string rawDataSha256,
             bool rawDataPreviewIsText,
             string rawDataPreview,
@@ -1071,11 +1155,53 @@ namespace PECoff
             RawDataMapped = rawDataMapped;
             RawDataSectionName = rawDataSectionName ?? string.Empty;
             AlignmentBytes = alignmentBytes;
+            Template = template;
             RawDataSha256 = rawDataSha256 ?? string.Empty;
             RawDataPreviewIsText = rawDataPreviewIsText;
             RawDataPreview = rawDataPreview ?? string.Empty;
             CallbackAddresses = Array.AsReadOnly(callbackAddresses ?? Array.Empty<ulong>());
             CallbackInfos = Array.AsReadOnly(callbackInfos ?? Array.Empty<TlsCallbackInfo>());
+        }
+    }
+
+    public sealed class TlsTemplateInfo
+    {
+        public uint RawDataSize { get; }
+        public uint ZeroFillSize { get; }
+        public uint TotalSize { get; }
+        public bool RangeValid { get; }
+        public uint RangeSize { get; }
+        public bool SizeMatchesRange { get; }
+        public bool IsAligned { get; }
+        public string Notes { get; }
+        public string Sha256 { get; }
+        public bool PreviewIsText { get; }
+        public string Preview { get; }
+
+        public TlsTemplateInfo(
+            uint rawDataSize,
+            uint zeroFillSize,
+            uint totalSize,
+            bool rangeValid,
+            uint rangeSize,
+            bool sizeMatchesRange,
+            bool isAligned,
+            string notes,
+            string sha256,
+            bool previewIsText,
+            string preview)
+        {
+            RawDataSize = rawDataSize;
+            ZeroFillSize = zeroFillSize;
+            TotalSize = totalSize;
+            RangeValid = rangeValid;
+            RangeSize = rangeSize;
+            SizeMatchesRange = sizeMatchesRange;
+            IsAligned = isAligned;
+            Notes = notes ?? string.Empty;
+            Sha256 = sha256 ?? string.Empty;
+            PreviewIsText = previewIsText;
+            Preview = preview ?? string.Empty;
         }
     }
 
@@ -2072,13 +2198,38 @@ namespace PECoff
         public uint Size { get; }
         public bool IsMapped { get; }
         public string SectionName { get; }
+        public bool Parsed { get; }
+        public uint Magic { get; }
+        public uint MajorVersion { get; }
+        public uint MinorVersion { get; }
+        public uint SizeOfData { get; }
+        public uint FirstEntryRva { get; }
+        public uint NumberOfEntries { get; }
 
-        public ArchitectureDirectoryInfo(uint virtualAddress, uint size, bool isMapped, string sectionName)
+        public ArchitectureDirectoryInfo(
+            uint virtualAddress,
+            uint size,
+            bool isMapped,
+            string sectionName,
+            bool parsed,
+            uint magic,
+            uint majorVersion,
+            uint minorVersion,
+            uint sizeOfData,
+            uint firstEntryRva,
+            uint numberOfEntries)
         {
             VirtualAddress = virtualAddress;
             Size = size;
             IsMapped = isMapped;
             SectionName = sectionName ?? string.Empty;
+            Parsed = parsed;
+            Magic = magic;
+            MajorVersion = majorVersion;
+            MinorVersion = minorVersion;
+            SizeOfData = sizeOfData;
+            FirstEntryRva = firstEntryRva;
+            NumberOfEntries = numberOfEntries;
         }
     }
 
@@ -2088,13 +2239,23 @@ namespace PECoff
         public uint Size { get; }
         public bool IsMapped { get; }
         public string SectionName { get; }
+        public bool ValueMapped { get; }
+        public ulong Value { get; }
 
-        public GlobalPtrDirectoryInfo(uint virtualAddress, uint size, bool isMapped, string sectionName)
+        public GlobalPtrDirectoryInfo(
+            uint virtualAddress,
+            uint size,
+            bool isMapped,
+            string sectionName,
+            bool valueMapped,
+            ulong value)
         {
             VirtualAddress = virtualAddress;
             Size = size;
             IsMapped = isMapped;
             SectionName = sectionName ?? string.Empty;
+            ValueMapped = valueMapped;
+            Value = value;
         }
     }
 
@@ -2107,6 +2268,8 @@ namespace PECoff
         public uint EntryCount { get; }
         public uint EntrySize { get; }
         public bool SizeAligned { get; }
+        public uint NonZeroEntryCount { get; }
+        public uint ZeroEntryCount { get; }
 
         public IatDirectoryInfo(
             uint virtualAddress,
@@ -2115,7 +2278,9 @@ namespace PECoff
             string sectionName,
             uint entryCount,
             uint entrySize,
-            bool sizeAligned)
+            bool sizeAligned,
+            uint nonZeroEntryCount,
+            uint zeroEntryCount)
         {
             VirtualAddress = virtualAddress;
             Size = size;
@@ -2124,6 +2289,8 @@ namespace PECoff
             EntryCount = entryCount;
             EntrySize = entrySize;
             SizeAligned = sizeAligned;
+            NonZeroEntryCount = nonZeroEntryCount;
+            ZeroEntryCount = zeroEntryCount;
         }
     }
 
@@ -2187,6 +2354,7 @@ namespace PECoff
         public ushort SectionNumber { get; }
         public byte Selection { get; }
         public string SelectionName { get; }
+        public string AssociatedSectionName { get; }
         public uint WeakTagIndex { get; }
         public uint WeakCharacteristics { get; }
         public string WeakCharacteristicsName { get; }
@@ -2208,6 +2376,7 @@ namespace PECoff
             ushort sectionNumber,
             byte selection,
             string selectionName,
+            string associatedSectionName,
             uint weakTagIndex,
             uint weakCharacteristics,
             string weakCharacteristicsName,
@@ -2228,6 +2397,7 @@ namespace PECoff
             SectionNumber = sectionNumber;
             Selection = selection;
             SelectionName = selectionName ?? string.Empty;
+            AssociatedSectionName = associatedSectionName ?? string.Empty;
             WeakTagIndex = weakTagIndex;
             WeakCharacteristics = weakCharacteristics;
             WeakCharacteristicsName = weakCharacteristicsName ?? string.Empty;
@@ -2352,6 +2522,7 @@ namespace PECoff
         public int SignerCount { get; }
         public int TimestampSignerCount { get; }
         public int CertificateTransparencySignerCount { get; }
+        public int CertificateTransparencyLogCount { get; }
         public bool HasSignature { get; }
         public bool SignatureValid { get; }
         public bool ChainValid { get; }
@@ -2359,6 +2530,8 @@ namespace PECoff
         public bool TimestampValid { get; }
         public IReadOnlyList<string> ChainStatus { get; }
         public IReadOnlyList<string> TimestampChainStatus { get; }
+        public IReadOnlyList<string> CertificateTransparencyLogIds { get; }
+        public WinTrustResultInfo WinTrust { get; }
         public bool CertificateTransparencyRequiredMet { get; }
         public bool PolicyCompliant { get; }
         public IReadOnlyList<string> PolicyFailures { get; }
@@ -2369,6 +2542,7 @@ namespace PECoff
             int signerCount,
             int timestampSignerCount,
             int certificateTransparencySignerCount,
+            int certificateTransparencyLogCount,
             bool hasSignature,
             bool signatureValid,
             bool chainValid,
@@ -2376,6 +2550,8 @@ namespace PECoff
             bool timestampValid,
             string[] chainStatus,
             string[] timestampChainStatus,
+            string[] certificateTransparencyLogIds,
+            WinTrustResultInfo winTrust,
             bool certificateTransparencyRequiredMet,
             bool policyCompliant,
             string[] policyFailures,
@@ -2385,6 +2561,7 @@ namespace PECoff
             SignerCount = signerCount;
             TimestampSignerCount = timestampSignerCount;
             CertificateTransparencySignerCount = certificateTransparencySignerCount;
+            CertificateTransparencyLogCount = certificateTransparencyLogCount;
             HasSignature = hasSignature;
             SignatureValid = signatureValid;
             ChainValid = chainValid;
@@ -2392,11 +2569,27 @@ namespace PECoff
             TimestampValid = timestampValid;
             ChainStatus = Array.AsReadOnly(chainStatus ?? Array.Empty<string>());
             TimestampChainStatus = Array.AsReadOnly(timestampChainStatus ?? Array.Empty<string>());
+            CertificateTransparencyLogIds = Array.AsReadOnly(certificateTransparencyLogIds ?? Array.Empty<string>());
+            WinTrust = winTrust;
             CertificateTransparencyRequiredMet = certificateTransparencyRequiredMet;
             PolicyCompliant = policyCompliant;
             PolicyFailures = Array.AsReadOnly(policyFailures ?? Array.Empty<string>());
             SignerStatuses = Array.AsReadOnly(signerStatuses ?? Array.Empty<AuthenticodeSignerStatusInfo>());
             Policy = policy ?? new AuthenticodePolicy();
+        }
+    }
+
+    public sealed class WinTrustResultInfo
+    {
+        public string Status { get; }
+        public int StatusCode { get; }
+        public string Message { get; }
+
+        public WinTrustResultInfo(string status, int statusCode, string message)
+        {
+            Status = status ?? string.Empty;
+            StatusCode = statusCode;
+            Message = message ?? string.Empty;
         }
     }
 
@@ -2779,6 +2972,62 @@ namespace PECoff
             Count = count;
             FirstToken = firstToken;
             LastToken = lastToken;
+        }
+    }
+
+    public sealed class ClrTokenReferenceCount
+    {
+        public string Target { get; }
+        public int Count { get; }
+
+        public ClrTokenReferenceCount(string target, int count)
+        {
+            Target = target ?? string.Empty;
+            Count = count;
+        }
+    }
+
+    public sealed class ClrTokenReferenceInfo
+    {
+        public string Name { get; }
+        public IReadOnlyList<ClrTokenReferenceCount> Counts { get; }
+
+        public ClrTokenReferenceInfo(string name, ClrTokenReferenceCount[] counts)
+        {
+            Name = name ?? string.Empty;
+            Counts = Array.AsReadOnly(counts ?? Array.Empty<ClrTokenReferenceCount>());
+        }
+    }
+
+    public sealed class ClrMethodBodySummaryInfo
+    {
+        public int MethodCount { get; }
+        public int MethodBodyCount { get; }
+        public int TinyHeaderCount { get; }
+        public int FatHeaderCount { get; }
+        public int InvalidHeaderCount { get; }
+        public int TotalIlBytes { get; }
+        public int MaxIlBytes { get; }
+        public int AverageIlBytes { get; }
+
+        public ClrMethodBodySummaryInfo(
+            int methodCount,
+            int methodBodyCount,
+            int tinyHeaderCount,
+            int fatHeaderCount,
+            int invalidHeaderCount,
+            int totalIlBytes,
+            int maxIlBytes,
+            int averageIlBytes)
+        {
+            MethodCount = methodCount;
+            MethodBodyCount = methodBodyCount;
+            TinyHeaderCount = tinyHeaderCount;
+            FatHeaderCount = fatHeaderCount;
+            InvalidHeaderCount = invalidHeaderCount;
+            TotalIlBytes = totalIlBytes;
+            MaxIlBytes = maxIlBytes;
+            AverageIlBytes = averageIlBytes;
         }
     }
 
@@ -3233,7 +3482,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 18;
+        public const int CurrentSchemaVersion = 21;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }

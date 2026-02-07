@@ -30,6 +30,42 @@ public class TlsInfoTests
         Assert.Equal(ToHex(SHA256.HashData(data)), hash);
     }
 
+    [Fact]
+    public void Tls_Template_Info_ZeroFill_Only()
+    {
+        TlsTemplateInfo info = PECOFF.BuildTlsTemplateInfoForTest(
+            0,
+            0,
+            0,
+            32,
+            16,
+            rawDataMapped: true,
+            rawDataHash: string.Empty,
+            rawDataPreviewIsText: false,
+            rawDataPreview: string.Empty);
+
+        Assert.Equal((uint)32, info.TotalSize);
+        Assert.Contains("zero-fill only", info.Notes, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Tls_Template_Info_Alignment_Check()
+    {
+        TlsTemplateInfo info = PECOFF.BuildTlsTemplateInfoForTest(
+            0x1000,
+            0x100A,
+            10,
+            0,
+            8,
+            rawDataMapped: true,
+            rawDataHash: "hash",
+            rawDataPreviewIsText: false,
+            rawDataPreview: "preview");
+
+        Assert.False(info.IsAligned);
+        Assert.Contains("template size not aligned", info.Notes, StringComparison.Ordinal);
+    }
+
     private static string ToHex(byte[] data)
     {
         StringBuilder sb = new StringBuilder(data.Length * 2);

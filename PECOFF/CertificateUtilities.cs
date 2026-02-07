@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Formats.Asn1;
+using System.Linq;
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
@@ -34,6 +35,7 @@ namespace PECoff
         public bool IsWithinValidityPeriod { get; }
         public int CertificateTransparencyCount { get; }
         public bool HasCertificateTransparency { get; }
+        public IReadOnlyList<string> CertificateTransparencyLogIds { get; }
         public int NestingLevel { get; }
         public Pkcs7SignerInfo[] CounterSigners { get; }
         public Pkcs7SignerInfo[] NestedSigners { get; }
@@ -58,6 +60,7 @@ namespace PECoff
             bool hasTimestampEku,
             bool isWithinValidityPeriod,
             int certificateTransparencyCount,
+            string[] certificateTransparencyLogIds,
             int nestingLevel,
             Pkcs7SignerInfo[] counterSigners,
             Pkcs7SignerInfo[] nestedSigners,
@@ -82,6 +85,7 @@ namespace PECoff
             IsWithinValidityPeriod = isWithinValidityPeriod;
             CertificateTransparencyCount = certificateTransparencyCount;
             HasCertificateTransparency = certificateTransparencyCount > 0;
+            CertificateTransparencyLogIds = Array.AsReadOnly(certificateTransparencyLogIds ?? Array.Empty<string>());
             NestingLevel = nestingLevel;
             CounterSigners = counterSigners ?? Array.Empty<Pkcs7SignerInfo>();
             NestedSigners = nestedSigners ?? Array.Empty<Pkcs7SignerInfo>();
@@ -125,7 +129,7 @@ namespace PECoff
 
     public static class CertificateUtilities
     {
-        public static AuthenticodeStatusInfo BuildAuthenticodeStatus(Pkcs7SignerInfo[] signers, AuthenticodePolicy policy = null)
+        public static AuthenticodeStatusInfo BuildAuthenticodeStatus(Pkcs7SignerInfo[] signers, AuthenticodePolicy policy = null, string filePath = null)
         {
             policy ??= new AuthenticodePolicy();
             if (signers == null || signers.Length == 0)
@@ -138,6 +142,7 @@ namespace PECoff
                     0,
                     0,
                     0,
+                    0,
                     false,
                     false,
                     false,
@@ -145,6 +150,8 @@ namespace PECoff
                     false,
                     Array.Empty<string>(),
                     Array.Empty<string>(),
+                    Array.Empty<string>(),
+                    BuildWinTrustResult(policy, filePath),
                     !policy.RequireCertificateTransparency,
                     isPolicyCompliant,
                     isPolicyCompliant ? Array.Empty<string>() : new[] { "Missing signature." },
@@ -157,6 +164,7 @@ namespace PECoff
             int signerCount = 0;
             int timestampCount = 0;
             int ctSignerCount = 0;
+            HashSet<string> ctLogs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             bool signatureValid = false;
             bool chainValid = false;
             bool timestampValid = false;
@@ -220,6 +228,16 @@ namespace PECoff
                     if (signer.HasCertificateTransparency)
                     {
                         ctSignerCount++;
+                    }
+                    if (policy.EnableCertificateTransparencyLogCheck && signer.CertificateTransparencyLogIds != null)
+                    {
+                        foreach (string logId in signer.CertificateTransparencyLogIds)
+                        {
+                            if (!string.IsNullOrWhiteSpace(logId))
+                            {
+                                ctLogs.Add(logId);
+                            }
+                        }
                     }
 
                     if (signer.ChainStatus != null)
@@ -290,6 +308,7 @@ namespace PECoff
                 signerCount,
                 timestampCount,
                 ctSignerCount,
+                ctLogs.Count,
                 hasSignature,
                 signatureValid,
                 chainValid,
@@ -297,6 +316,8 @@ namespace PECoff
                 timestampValid,
                 chainStatus.ToArray(),
                 timestampStatus.ToArray(),
+                ctLogs.Count == 0 ? Array.Empty<string>() : ctLogs.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+                BuildWinTrustResult(policy, filePath),
                 ctRequiredMet,
                 policyCompliant,
                 policyFailures.ToArray(),
@@ -670,6 +691,7 @@ namespace PECoff
             bool hasTimestampEku = false;
             bool isWithinValidity = false;
             int certificateTransparencyCount = 0;
+            string[] certificateTransparencyLogIds = Array.Empty<string>();
 
             if (signer.Certificate != null)
             {
@@ -680,6 +702,7 @@ namespace PECoff
                 hasCodeSigningEku = HasEku(signer.Certificate, "1.3.6.1.5.5.7.3.3");
                 hasTimestampEku = HasEku(signer.Certificate, "1.3.6.1.5.5.7.3.8");
                 certificateTransparencyCount = GetCertificateTransparencyCount(signer.Certificate);
+                certificateTransparencyLogIds = GetCertificateTransparencyLogIds(signer.Certificate);
             }
             else if (signer.SignerIdentifier != null && signer.SignerIdentifier.Type == SubjectIdentifierType.IssuerAndSerialNumber)
             {
@@ -824,6 +847,7 @@ namespace PECoff
                 hasTimestampEku,
                 isWithinValidity,
                 certificateTransparencyCount,
+                certificateTransparencyLogIds,
                 nestingLevel,
                 countersigners.ToArray(),
                 nestedSigners.ToArray(),
@@ -1107,6 +1131,46 @@ namespace PECoff
             return 0;
         }
 
+        private static string[] GetCertificateTransparencyLogIds(X509Certificate2 certificate)
+        {
+            if (certificate == null)
+            {
+                return Array.Empty<string>();
+            }
+
+            foreach (X509Extension extension in certificate.Extensions)
+            {
+                if (extension?.Oid?.Value != "1.3.6.1.4.1.11129.2.4.2")
+                {
+                    continue;
+                }
+
+                byte[] raw = extension.RawData;
+                if (raw == null || raw.Length == 0)
+                {
+                    return Array.Empty<string>();
+                }
+
+                byte[] payload = raw;
+                try
+                {
+                    if (raw[0] == 0x04)
+                    {
+                        AsnReader reader = new AsnReader(raw, AsnEncodingRules.DER);
+                        payload = reader.ReadOctetString();
+                    }
+                }
+                catch (Exception)
+                {
+                    payload = raw;
+                }
+
+                return ParseSctLogIds(payload);
+            }
+
+            return Array.Empty<string>();
+        }
+
         private static int CountSctEntries(byte[] payload)
         {
             if (payload == null || payload.Length < 2)
@@ -1133,6 +1197,57 @@ namespace PECoff
             }
 
             return count;
+        }
+
+        private static string[] ParseSctLogIds(byte[] payload)
+        {
+            if (payload == null || payload.Length < 2)
+            {
+                return Array.Empty<string>();
+            }
+
+            int listLength = (payload[0] << 8) | payload[1];
+            int limit = Math.Min(payload.Length, listLength + 2);
+            int offset = 2;
+            HashSet<string> logs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            while (offset + 2 <= limit)
+            {
+                int entryLength = (payload[offset] << 8) | payload[offset + 1];
+                offset += 2;
+                if (entryLength <= 0 || offset + entryLength > limit)
+                {
+                    break;
+                }
+
+                int entryStart = offset;
+                if (entryLength >= 33 && entryStart + 33 <= limit)
+                {
+                    ReadOnlySpan<byte> logId = new ReadOnlySpan<byte>(payload, entryStart + 1, 32);
+                    logs.Add(ToHex(logId.ToArray()));
+                }
+
+                offset += entryLength;
+            }
+
+            return logs.Count == 0
+                ? Array.Empty<string>()
+                : logs.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+        }
+
+        private static string ToHex(byte[] data)
+        {
+            if (data == null || data.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            StringBuilder sb = new StringBuilder(data.Length * 2);
+            foreach (byte b in data)
+            {
+                sb.Append(b.ToString("X2", CultureInfo.InvariantCulture));
+            }
+            return sb.ToString();
         }
 
         private static DateTimeOffset? TryGetSigningTime(SignerInfo signer)
@@ -1169,6 +1284,134 @@ namespace PECoff
 
             return null;
         }
+
+        private static WinTrustResultInfo BuildWinTrustResult(AuthenticodePolicy policy, string filePath)
+        {
+            if (policy == null || !policy.EnableWinTrustCheck)
+            {
+                return null;
+            }
+
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                return new WinTrustResultInfo("NotSupported", -1, "WinTrust is only available on Windows.");
+            }
+
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            {
+                return new WinTrustResultInfo("Unavailable", -2, "File not found for WinTrust.");
+            }
+
+            return TryGetWinTrustResult(filePath);
+        }
+
+        private static WinTrustResultInfo TryGetWinTrustResult(string filePath)
+        {
+            const uint WTD_UI_NONE = 2;
+            const uint WTD_REVOKE_NONE = 0;
+            const uint WTD_CHOICE_FILE = 1;
+            const uint WTD_STATEACTION_IGNORE = 0;
+            const uint WTD_SAFER_FLAG = 0x00000100;
+
+            Guid action = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+            WinTrustFileInfo fileInfo = new WinTrustFileInfo(filePath);
+            IntPtr fileInfoPtr = IntPtr.Zero;
+            try
+            {
+                fileInfoPtr = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(WinTrustFileInfo)));
+                Marshal.StructureToPtr(fileInfo, fileInfoPtr, false);
+
+                WinTrustData data = new WinTrustData
+                {
+                    cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustData)),
+                    pPolicyCallbackData = IntPtr.Zero,
+                    pSIPClientData = IntPtr.Zero,
+                    dwUIChoice = WTD_UI_NONE,
+                    fdwRevocationChecks = WTD_REVOKE_NONE,
+                    dwUnionChoice = WTD_CHOICE_FILE,
+                    pInfoStruct = fileInfoPtr,
+                    dwStateAction = WTD_STATEACTION_IGNORE,
+                    hWVTStateData = IntPtr.Zero,
+                    pwszURLReference = IntPtr.Zero,
+                    dwProvFlags = WTD_SAFER_FLAG,
+                    dwUIContext = 0
+                };
+
+                uint result = WinVerifyTrust(IntPtr.Zero, action, ref data);
+                if (result == 0)
+                {
+                    return new WinTrustResultInfo("Valid", 0, "WinTrust signature validation succeeded.");
+                }
+
+                string message = GetWinTrustMessage(result);
+                return new WinTrustResultInfo("Invalid", unchecked((int)result), message);
+            }
+            catch (Exception ex)
+            {
+                return new WinTrustResultInfo("Error", -3, ex.Message);
+            }
+            finally
+            {
+                if (fileInfoPtr != IntPtr.Zero)
+                {
+                    Marshal.FreeHGlobal(fileInfoPtr);
+                }
+            }
+        }
+
+        private static string GetWinTrustMessage(uint status)
+        {
+            switch (status)
+            {
+                case 0x800B0100: return "No signature was present.";
+                case 0x800B0109: return "The certificate chain could not be built.";
+                case 0x80096010: return "The signature is invalid.";
+                case 0x800B010A: return "The certificate is not trusted.";
+                case 0x800B0004: return "The subject is not trusted.";
+                case 0x800B0101: return "A required certificate is not within its validity period.";
+                default: return "WinTrust error: 0x" + status.ToString("X8", CultureInfo.InvariantCulture);
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private sealed class WinTrustFileInfo
+        {
+            public uint cbStruct;
+            public string pcwszFilePath;
+            public IntPtr hFile;
+            public IntPtr pgKnownSubject;
+
+            public WinTrustFileInfo(string filePath)
+            {
+                cbStruct = (uint)Marshal.SizeOf(typeof(WinTrustFileInfo));
+                pcwszFilePath = filePath;
+                hFile = IntPtr.Zero;
+                pgKnownSubject = IntPtr.Zero;
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WinTrustData
+        {
+            public uint cbStruct;
+            public IntPtr pPolicyCallbackData;
+            public IntPtr pSIPClientData;
+            public uint dwUIChoice;
+            public uint fdwRevocationChecks;
+            public uint dwUnionChoice;
+            public IntPtr pInfoStruct;
+            public uint dwStateAction;
+            public IntPtr hWVTStateData;
+            public IntPtr pwszURLReference;
+            public uint dwProvFlags;
+            public uint dwUIContext;
+        }
+
+        [DllImport("wintrust.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern uint WinVerifyTrust(
+            IntPtr hwnd,
+            [MarshalAs(UnmanagedType.LPStruct)] Guid pgActionID,
+            ref WinTrustData pWvtData);
 
         public static CatalogSignatureInfo GetCatalogSignatureInfo(string filePath, AuthenticodePolicy policy)
         {
@@ -1230,7 +1473,7 @@ namespace PECoff
                 signerError = ex.Message;
             }
 
-            AuthenticodeStatusInfo status = BuildAuthenticodeStatus(signers, policy);
+            AuthenticodeStatusInfo status = BuildAuthenticodeStatus(signers, policy, filePath);
             bool trustCheckPerformed = policy.EnableTrustStoreCheck;
             bool trustVerified = trustCheckPerformed && status != null && status.ChainValid;
 
