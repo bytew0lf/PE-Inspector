@@ -38,7 +38,7 @@ public class ImportDescriptorTests
             internalType!,
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
             null,
-            new object[] { "test.dll", (uint)1, (uint)0x1000, (uint)0x2000 },
+            new object[] { "test.dll", (uint)1, (uint)0x1000, (uint)0x2000, 0, 0, true, true },
             null);
         internalList.Add(internalDescriptor!);
         SetField(parser, "_importDescriptorInternals", internalList);
@@ -50,6 +50,8 @@ public class ImportDescriptorTests
         Assert.True(descriptors[0].IntOnlyFunctions.Count > 0);
         Assert.True(descriptors[0].IatOnlyFunctions.Count > 0);
         Assert.True(descriptors[0].IsBoundStale);
+        Assert.True(descriptors[0].IntTerminated);
+        Assert.True(descriptors[0].IatTerminated);
 
         Assert.Contains(parser.ParseResult.Warnings, w => w.Contains("INT/IAT mismatch", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(parser.ParseResult.Warnings, w => w.Contains("stale", StringComparison.OrdinalIgnoreCase));

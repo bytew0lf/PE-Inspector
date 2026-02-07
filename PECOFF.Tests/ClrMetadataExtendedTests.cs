@@ -17,8 +17,10 @@ public class ClrMetadataExtendedTests
         Assert.NotNull(parser.ClrMetadata);
 
         ClrMetadataInfo metadata = parser.ClrMetadata;
-        int moduleRefCount = GetTableCount(metadata, TableIndex.ModuleRef);
-        int resourceCount = GetTableCount(metadata, TableIndex.ManifestResource);
+        MetadataTableCountInfo? moduleRefInfo = GetTableInfo(metadata, TableIndex.ModuleRef);
+        MetadataTableCountInfo? resourceInfo = GetTableInfo(metadata, TableIndex.ManifestResource);
+        int moduleRefCount = moduleRefInfo?.Count ?? 0;
+        int resourceCount = resourceInfo?.Count ?? 0;
 
         Assert.Equal(moduleRefCount, metadata.ModuleReferences.Length);
         Assert.Equal(resourceCount, metadata.ManagedResources.Length);
@@ -37,6 +39,14 @@ public class ClrMetadataExtendedTests
         if (customAttributeCount > 0)
         {
             Assert.True(metadata.AssemblyAttributes.Length > 0 || metadata.ModuleAttributes.Length > 0);
+        }
+
+        if (moduleRefInfo != null && moduleRefInfo.Count > 0)
+        {
+            uint expectedFirst = ((uint)TableIndex.ModuleRef << 24) | 0x00000001;
+            uint expectedLast = expectedFirst + (uint)moduleRefInfo.Count - 1;
+            Assert.Equal(expectedFirst, moduleRefInfo.FirstToken);
+            Assert.Equal(expectedLast, moduleRefInfo.LastToken);
         }
     }
 
@@ -84,8 +94,13 @@ public class ClrMetadataExtendedTests
 
     private static int GetTableCount(ClrMetadataInfo metadata, TableIndex table)
     {
-        MetadataTableCountInfo? entry = metadata.MetadataTableCounts.FirstOrDefault(info => info.TableIndex == (int)table);
+        MetadataTableCountInfo? entry = GetTableInfo(metadata, table);
         return entry?.Count ?? 0;
+    }
+
+    private static MetadataTableCountInfo? GetTableInfo(ClrMetadataInfo metadata, TableIndex table)
+    {
+        return metadata.MetadataTableCounts.FirstOrDefault(info => info.TableIndex == (int)table);
     }
 
     private static bool IsUpperHex(string value)

@@ -31,6 +31,9 @@ public class CertificateUtilitiesTests
         Assert.Equal("UntrustedRoot", status.ChainStatus[0]);
         Assert.Single(status.TimestampChainStatus);
         Assert.Equal("TimestampChainOK", status.TimestampChainStatus[0]);
+        Assert.Equal(2, status.SignerStatuses.Count);
+        Assert.Contains(status.SignerStatuses, s => s.Role == "Primary");
+        Assert.Contains(status.SignerStatuses, s => s.Role == "Timestamp");
     }
 
     [Fact]

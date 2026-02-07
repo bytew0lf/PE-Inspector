@@ -737,7 +737,16 @@ namespace PECoff
         public uint GuardCfFunctionCount { get; }
         public uint GuardFlags { get; }
         public LoadConfigGuardFlagsInfo GuardFlagsInfo { get; }
+        public ulong DynamicValueRelocTable { get; }
+        public uint DynamicValueRelocTableOffset { get; }
+        public ushort DynamicValueRelocTableSection { get; }
         public ulong ChpeMetadataPointer { get; }
+        public ulong GuardRFFailureRoutine { get; }
+        public ulong GuardRFFailureRoutineFunctionPointer { get; }
+        public ulong GuardRFVerifyStackPointerFunctionPointer { get; }
+        public uint HotPatchTableOffset { get; }
+        public ulong EnclaveConfigurationPointer { get; }
+        public ulong VolatileMetadataPointer { get; }
         public ulong GuardEhContinuationTable { get; }
         public ulong GuardEhContinuationCount { get; }
         public ulong GuardXfgCheckFunctionPointer { get; }
@@ -766,7 +775,16 @@ namespace PECoff
             uint guardCfFunctionCount,
             uint guardFlags,
             LoadConfigGuardFlagsInfo guardFlagsInfo,
+            ulong dynamicValueRelocTable,
+            uint dynamicValueRelocTableOffset,
+            ushort dynamicValueRelocTableSection,
             ulong chpeMetadataPointer,
+            ulong guardRFFailureRoutine,
+            ulong guardRFFailureRoutineFunctionPointer,
+            ulong guardRFVerifyStackPointerFunctionPointer,
+            uint hotPatchTableOffset,
+            ulong enclaveConfigurationPointer,
+            ulong volatileMetadataPointer,
             ulong guardEhContinuationTable,
             ulong guardEhContinuationCount,
             ulong guardXfgCheckFunctionPointer,
@@ -794,7 +812,16 @@ namespace PECoff
             GuardCfFunctionCount = guardCfFunctionCount;
             GuardFlags = guardFlags;
             GuardFlagsInfo = guardFlagsInfo;
+            DynamicValueRelocTable = dynamicValueRelocTable;
+            DynamicValueRelocTableOffset = dynamicValueRelocTableOffset;
+            DynamicValueRelocTableSection = dynamicValueRelocTableSection;
             ChpeMetadataPointer = chpeMetadataPointer;
+            GuardRFFailureRoutine = guardRFFailureRoutine;
+            GuardRFFailureRoutineFunctionPointer = guardRFFailureRoutineFunctionPointer;
+            GuardRFVerifyStackPointerFunctionPointer = guardRFVerifyStackPointerFunctionPointer;
+            HotPatchTableOffset = hotPatchTableOffset;
+            EnclaveConfigurationPointer = enclaveConfigurationPointer;
+            VolatileMetadataPointer = volatileMetadataPointer;
             GuardEhContinuationTable = guardEhContinuationTable;
             GuardEhContinuationCount = guardEhContinuationCount;
             GuardXfgCheckFunctionPointer = guardXfgCheckFunctionPointer;
@@ -1193,6 +1220,41 @@ namespace PECoff
         }
     }
 
+    public sealed class AuthenticodeSignerStatusInfo
+    {
+        public string Subject { get; }
+        public string Issuer { get; }
+        public string Role { get; }
+        public bool IsTimestampSigner { get; }
+        public bool SignatureValid { get; }
+        public bool ChainValid { get; }
+        public bool HasCodeSigningEku { get; }
+        public bool HasTimestampEku { get; }
+        public int NestingLevel { get; }
+
+        public AuthenticodeSignerStatusInfo(
+            string subject,
+            string issuer,
+            string role,
+            bool isTimestampSigner,
+            bool signatureValid,
+            bool chainValid,
+            bool hasCodeSigningEku,
+            bool hasTimestampEku,
+            int nestingLevel)
+        {
+            Subject = subject ?? string.Empty;
+            Issuer = issuer ?? string.Empty;
+            Role = role ?? string.Empty;
+            IsTimestampSigner = isTimestampSigner;
+            SignatureValid = signatureValid;
+            ChainValid = chainValid;
+            HasCodeSigningEku = hasCodeSigningEku;
+            HasTimestampEku = hasTimestampEku;
+            NestingLevel = nestingLevel;
+        }
+    }
+
     public sealed class AuthenticodeStatusInfo
     {
         public int SignerCount { get; }
@@ -1206,6 +1268,7 @@ namespace PECoff
         public IReadOnlyList<string> TimestampChainStatus { get; }
         public bool PolicyCompliant { get; }
         public IReadOnlyList<string> PolicyFailures { get; }
+        public IReadOnlyList<AuthenticodeSignerStatusInfo> SignerStatuses { get; }
 
         public AuthenticodeStatusInfo(
             int signerCount,
@@ -1218,7 +1281,8 @@ namespace PECoff
             string[] chainStatus,
             string[] timestampChainStatus,
             bool policyCompliant,
-            string[] policyFailures)
+            string[] policyFailures,
+            AuthenticodeSignerStatusInfo[] signerStatuses)
         {
             SignerCount = signerCount;
             TimestampSignerCount = timestampSignerCount;
@@ -1231,6 +1295,7 @@ namespace PECoff
             TimestampChainStatus = Array.AsReadOnly(timestampChainStatus ?? Array.Empty<string>());
             PolicyCompliant = policyCompliant;
             PolicyFailures = Array.AsReadOnly(policyFailures ?? Array.Empty<string>());
+            SignerStatuses = Array.AsReadOnly(signerStatuses ?? Array.Empty<AuthenticodeSignerStatusInfo>());
         }
     }
 
@@ -1425,6 +1490,10 @@ namespace PECoff
         public bool IsBoundStale { get; }
         public int IntCount { get; }
         public int IatCount { get; }
+        public int IntNullThunkCount { get; }
+        public int IatNullThunkCount { get; }
+        public bool IntTerminated { get; }
+        public bool IatTerminated { get; }
         public IReadOnlyList<string> IntOnlyFunctions { get; }
         public IReadOnlyList<string> IatOnlyFunctions { get; }
         public ApiSetResolutionInfo ApiSetResolution { get; }
@@ -1439,6 +1508,10 @@ namespace PECoff
             bool isBoundStale,
             int intCount,
             int iatCount,
+            int intNullThunkCount,
+            int iatNullThunkCount,
+            bool intTerminated,
+            bool iatTerminated,
             string[] intOnlyFunctions,
             string[] iatOnlyFunctions,
             ApiSetResolutionInfo apiSetResolution)
@@ -1452,6 +1525,10 @@ namespace PECoff
             IsBoundStale = isBoundStale;
             IntCount = intCount;
             IatCount = iatCount;
+            IntNullThunkCount = intNullThunkCount;
+            IatNullThunkCount = iatNullThunkCount;
+            IntTerminated = intTerminated;
+            IatTerminated = iatTerminated;
             IntOnlyFunctions = Array.AsReadOnly(intOnlyFunctions ?? Array.Empty<string>());
             IatOnlyFunctions = Array.AsReadOnly(iatOnlyFunctions ?? Array.Empty<string>());
             ApiSetResolution = apiSetResolution
@@ -1492,12 +1569,16 @@ namespace PECoff
         public int TableIndex { get; }
         public string TableName { get; }
         public int Count { get; }
+        public uint FirstToken { get; }
+        public uint LastToken { get; }
 
-        public MetadataTableCountInfo(int tableIndex, string tableName, int count)
+        public MetadataTableCountInfo(int tableIndex, string tableName, int count, uint firstToken, uint lastToken)
         {
             TableIndex = tableIndex;
             TableName = tableName ?? string.Empty;
             Count = count;
+            FirstToken = firstToken;
+            LastToken = lastToken;
         }
     }
 
@@ -1557,12 +1638,16 @@ namespace PECoff
         public uint Id { get; }
         public string Text { get; }
         public bool IsUnicode { get; }
+        public ushort Length { get; }
+        public ushort Flags { get; }
 
-        public MessageTableEntryInfo(uint id, string text, bool isUnicode)
+        public MessageTableEntryInfo(uint id, string text, bool isUnicode, ushort length, ushort flags)
         {
             Id = id;
             Text = text ?? string.Empty;
             IsUnicode = isUnicode;
+            Length = length;
+            Flags = flags;
         }
     }
 
@@ -1570,12 +1655,21 @@ namespace PECoff
     {
         public uint NameId { get; }
         public ushort LanguageId { get; }
+        public uint MinId { get; }
+        public uint MaxId { get; }
         public IReadOnlyList<MessageTableEntryInfo> Entries { get; }
 
-        public ResourceMessageTableInfo(uint nameId, ushort languageId, MessageTableEntryInfo[] entries)
+        public ResourceMessageTableInfo(
+            uint nameId,
+            ushort languageId,
+            uint minId,
+            uint maxId,
+            MessageTableEntryInfo[] entries)
         {
             NameId = nameId;
             LanguageId = languageId;
+            MinId = minId;
+            MaxId = maxId;
             Entries = Array.AsReadOnly(entries ?? Array.Empty<MessageTableEntryInfo>());
         }
     }
@@ -1767,7 +1861,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 8;
+        public const int CurrentSchemaVersion = 9;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }

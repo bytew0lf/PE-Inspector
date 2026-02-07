@@ -555,13 +555,43 @@ namespace PECoff
             public uint TimeDateStamp { get; }
             public uint ImportNameTableRva { get; }
             public uint ImportAddressTableRva { get; }
+            public int IntNullThunkCount { get; }
+            public int IatNullThunkCount { get; }
+            public bool IntTerminated { get; }
+            public bool IatTerminated { get; }
 
-            public ImportDescriptorInternal(string dllName, uint timeDateStamp, uint importNameTableRva, uint importAddressTableRva)
+            public ImportDescriptorInternal(
+                string dllName,
+                uint timeDateStamp,
+                uint importNameTableRva,
+                uint importAddressTableRva,
+                int intNullThunkCount,
+                int iatNullThunkCount,
+                bool intTerminated,
+                bool iatTerminated)
             {
                 DllName = dllName ?? string.Empty;
                 TimeDateStamp = timeDateStamp;
                 ImportNameTableRva = importNameTableRva;
                 ImportAddressTableRva = importAddressTableRva;
+                IntNullThunkCount = intNullThunkCount;
+                IatNullThunkCount = iatNullThunkCount;
+                IntTerminated = intTerminated;
+                IatTerminated = iatTerminated;
+            }
+        }
+
+        private readonly struct ImportThunkParseStats
+        {
+            public int EntryCount { get; }
+            public int NullThunkCount { get; }
+            public bool Terminated { get; }
+
+            public ImportThunkParseStats(int entryCount, int nullThunkCount, bool terminated)
+            {
+                EntryCount = entryCount;
+                NullThunkCount = nullThunkCount;
+                Terminated = terminated;
             }
         }
 
@@ -2381,6 +2411,42 @@ namespace PECoff
                 uint sectionEnd = sectionStart + sectionSize;
                 if (rva >= sectionStart && rva < sectionEnd)
                 {
+                    result = section;
+                    return true;
+                }
+            }
+
+            result = default;
+            return false;
+        }
+
+        private static bool TryGetSectionIndexByRva(
+            List<IMAGE_SECTION_HEADER> sections,
+            uint rva,
+            out int index,
+            out IMAGE_SECTION_HEADER result)
+        {
+            index = -1;
+            if (sections == null)
+            {
+                result = default;
+                return false;
+            }
+
+            for (int i = 0; i < sections.Count; i++)
+            {
+                IMAGE_SECTION_HEADER section = sections[i];
+                uint sectionSize = GetSectionSpan(section);
+                if (sectionSize == 0)
+                {
+                    continue;
+                }
+
+                uint sectionStart = section.VirtualAddress;
+                uint sectionEnd = sectionStart + sectionSize;
+                if (rva >= sectionStart && rva < sectionEnd)
+                {
+                    index = i;
                     result = section;
                     return true;
                 }
@@ -4407,12 +4473,12 @@ namespace PECoff
                     continue;
                 }
 
-                if (!TryParseMessageTable(dataSpan, out MessageTableEntryInfo[] entries))
+                if (!TryParseMessageTable(dataSpan, out MessageTableEntryInfo[] entries, out uint minId, out uint maxId))
                 {
                     continue;
                 }
 
-                _resourceMessageTables.Add(new ResourceMessageTableInfo(entry.NameId, entry.LanguageId, entries));
+                _resourceMessageTables.Add(new ResourceMessageTableInfo(entry.NameId, entry.LanguageId, minId, maxId, entries));
             }
         }
 
@@ -5568,9 +5634,11 @@ namespace PECoff
             return Encoding.UTF8.GetString(data).TrimEnd('\0');
         }
 
-        private static bool TryParseMessageTable(ReadOnlySpan<byte> data, out MessageTableEntryInfo[] entries)
+        private static bool TryParseMessageTable(ReadOnlySpan<byte> data, out MessageTableEntryInfo[] entries, out uint minId, out uint maxId)
         {
             entries = Array.Empty<MessageTableEntryInfo>();
+            minId = 0;
+            maxId = 0;
             if (data.Length < 4)
             {
                 return false;
@@ -5590,6 +5658,8 @@ namespace PECoff
             }
 
             List<MessageTableEntryInfo> results = new List<MessageTableEntryInfo>();
+            uint localMin = uint.MaxValue;
+            uint localMax = 0;
             for (int i = 0; i < blockCount; i++)
             {
                 int blockOffset = 4 + (i * 12);
@@ -5630,7 +5700,15 @@ namespace PECoff
                         ? Encoding.Unicode.GetString(textSpan)
                         : Encoding.ASCII.GetString(textSpan);
                     text = text.TrimEnd('\0');
-                    results.Add(new MessageTableEntryInfo(id, text, isUnicode));
+                    results.Add(new MessageTableEntryInfo(id, text, isUnicode, length, flags));
+                    if (id < localMin)
+                    {
+                        localMin = id;
+                    }
+                    if (id > localMax)
+                    {
+                        localMax = id;
+                    }
 
                     cursor += entryLength;
                     id++;
@@ -5643,7 +5721,25 @@ namespace PECoff
             }
 
             entries = results.ToArray();
+            if (localMin != uint.MaxValue)
+            {
+                minId = localMin;
+                maxId = localMax;
+            }
             return true;
+        }
+
+        internal static bool TryParseMessageTableForTest(byte[] data, out MessageTableEntryInfo[] entries, out uint minId, out uint maxId)
+        {
+            if (data == null)
+            {
+                entries = Array.Empty<MessageTableEntryInfo>();
+                minId = 0;
+                maxId = 0;
+                return false;
+            }
+
+            return TryParseMessageTable(new ReadOnlySpan<byte>(data), out entries, out minId, out maxId);
         }
 
         private static bool TryParseDialogTemplate(ReadOnlySpan<byte> data, out ResourceDialogInfo dialog)
@@ -7022,7 +7118,7 @@ namespace PECoff
             return true;
         }
 
-        private void ParseImportThunks(
+        private ImportThunkParseStats ParseImportThunks(
             string dllName,
             uint thunkTableRva,
             ImportThunkSource source,
@@ -7032,13 +7128,13 @@ namespace PECoff
         {
             if (thunkTableRva == 0)
             {
-                return;
+                return new ImportThunkParseStats(0, 0, true);
             }
 
             if (!TryGetFileOffset(sections, thunkTableRva, out long thunkOffset))
             {
                 Warn(ParseIssueCategory.Imports, "Import thunk RVA not mapped to a section.");
-                return;
+                return new ImportThunkParseStats(0, 0, false);
             }
 
             int thunkSize = isPe32Plus ? 8 : 4;
@@ -7047,6 +7143,8 @@ namespace PECoff
             bool warnedNullThunks = false;
             bool warnedUnmappedThunkEntry = false;
             bool warnedUnmappedNameRva = false;
+            int nullThunkCount = 0;
+            int entryCount = 0;
             for (int index = 0; index < maxIterations; index++)
             {
                 long entryOffset = thunkOffset + (index * thunkSize);
@@ -7088,6 +7186,7 @@ namespace PECoff
                         warnedNullThunks = true;
                     }
 
+                    nullThunkCount++;
                     continue;
                 }
 
@@ -7113,6 +7212,7 @@ namespace PECoff
                 {
                     ushort ordinal = (ushort)(value & 0xFFFF);
                     targetList.Add(new ImportEntry(dllName, string.Empty, 0, ordinal, true, source, thunkEntryRva));
+                    entryCount++;
                     continue;
                 }
 
@@ -7120,6 +7220,7 @@ namespace PECoff
                 if (TryReadImportByName(sections, nameRva, out ushort hint, out string importName))
                 {
                     targetList.Add(new ImportEntry(dllName, importName, hint, 0, false, source, thunkEntryRva));
+                    entryCount++;
                 }
                 else if (source == ImportThunkSource.ImportNameTable)
                 {
@@ -7139,6 +7240,8 @@ namespace PECoff
             {
                 Warn(ParseIssueCategory.Imports, $"Import thunk list for {dllName} did not terminate.");
             }
+
+            return new ImportThunkParseStats(entryCount, nullThunkCount, terminated);
         }
 
         private void ParseDelayImportTable(
@@ -8495,7 +8598,16 @@ namespace PECoff
             LoadConfigGuardFlagsInfo guardFlagsInfo = DecodeGuardFlags(guardFlags);
             LoadConfigGlobalFlagsInfo globalFlagsInfo = DecodeGlobalFlags(globalFlagsClear, globalFlagsSet);
 
+            ulong dynamicValueRelocTable = 0;
+            uint dynamicValueRelocTableOffset = 0;
+            ushort dynamicValueRelocTableSection = 0;
             ulong chpeMetadataPointer = 0;
+            ulong guardRFFailureRoutine = 0;
+            ulong guardRFFailureRoutineFunctionPointer = 0;
+            ulong guardRFVerifyStackPointerFunctionPointer = 0;
+            uint hotPatchTableOffset = 0;
+            ulong enclaveConfigurationPointer = 0;
+            ulong volatileMetadataPointer = 0;
             ulong guardEhContinuationTable = 0;
             ulong guardEhContinuationCount = 0;
             ulong guardXfgCheckFunctionPointer = 0;
@@ -8507,22 +8619,22 @@ namespace PECoff
                 TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardAddressTakenIatEntryCount
                 TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardLongJumpTargetTable
                 TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardLongJumpTargetCount
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // DynamicValueRelocTable
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out dynamicValueRelocTable) && // DynamicValueRelocTable
                 TryReadPointerValue(span, ref offset, limit, isPe32Plus, out chpeMetadataPointer))
             {
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _); // GuardRFFailureRoutine
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _); // GuardRFFailureRoutineFunctionPointer
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardRFFailureRoutine); // GuardRFFailureRoutine
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardRFFailureRoutineFunctionPointer); // GuardRFFailureRoutineFunctionPointer
                 if (TryReadUInt32Value(span, ref offset, limit, out _))
                 {
                     TryReadUInt16Value(span, ref offset, limit, out _);
                     TryReadUInt16Value(span, ref offset, limit, out _);
                 }
 
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _); // GuardRFVerifyStackPointerFunctionPointer
-                TryReadUInt32Value(span, ref offset, limit, out _); // HotPatchTableOffset
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardRFVerifyStackPointerFunctionPointer); // GuardRFVerifyStackPointerFunctionPointer
+                TryReadUInt32Value(span, ref offset, limit, out hotPatchTableOffset); // HotPatchTableOffset
                 TryReadUInt32Value(span, ref offset, limit, out _); // Reserved3
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _); // EnclaveConfigurationPointer
-                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _); // VolatileMetadataPointer
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out enclaveConfigurationPointer); // EnclaveConfigurationPointer
+                TryReadPointerValue(span, ref offset, limit, isPe32Plus, out volatileMetadataPointer); // VolatileMetadataPointer
 
                 if (TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardEhContinuationTable))
                 {
@@ -8530,6 +8642,26 @@ namespace PECoff
                     TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgCheckFunctionPointer);
                     TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgDispatchFunctionPointer);
                     TryReadPointerValue(span, ref offset, limit, isPe32Plus, out guardXfgTableDispatchFunctionPointer);
+                }
+            }
+
+            if (dynamicValueRelocTable != 0)
+            {
+                if (_imageBase == 0)
+                {
+                    Warn(ParseIssueCategory.LoadConfig, "Dynamic value relocation table pointer set but image base is unavailable.");
+                }
+                else if (TryGetRvaFromAddress(dynamicValueRelocTable, _imageBase, out uint dynamicRva, out _))
+                {
+                    if (TryGetSectionIndexByRva(sections, dynamicRva, out int sectionIndex, out IMAGE_SECTION_HEADER section))
+                    {
+                        dynamicValueRelocTableOffset = dynamicRva - section.VirtualAddress;
+                        dynamicValueRelocTableSection = (ushort)(sectionIndex + 1);
+                    }
+                    else
+                    {
+                        Warn(ParseIssueCategory.LoadConfig, "Dynamic value relocation table pointer is not mapped to a section.");
+                    }
                 }
             }
 
@@ -8647,7 +8779,16 @@ namespace PECoff
                 guardCfCount,
                 guardFlags,
                 guardFlagsInfo,
+                dynamicValueRelocTable,
+                dynamicValueRelocTableOffset,
+                dynamicValueRelocTableSection,
                 chpeMetadataPointer,
+                guardRFFailureRoutine,
+                guardRFFailureRoutineFunctionPointer,
+                guardRFVerifyStackPointerFunctionPointer,
+                hotPatchTableOffset,
+                enclaveConfigurationPointer,
+                volatileMetadataPointer,
                 guardEhContinuationTable,
                 guardEhContinuationCount,
                 guardXfgCheckFunctionPointer,
@@ -9558,7 +9699,10 @@ namespace PECoff
                 int count = reader.GetTableRowCount(table);
                 if (count > 0)
                 {
-                    counts.Add(new MetadataTableCountInfo((int)table, table.ToString(), count));
+                    uint tokenPrefix = ((uint)table) << 24;
+                    uint firstToken = tokenPrefix | 0x00000001;
+                    uint lastToken = tokenPrefix | (uint)count;
+                    counts.Add(new MetadataTableCountInfo((int)table, table.ToString(), count, firstToken, lastToken));
                 }
             }
 
@@ -10429,6 +10573,16 @@ namespace PECoff
                     Warn(ParseIssueCategory.Imports, $"Import INT/IAT mismatch for {descriptor.DllName} (INT-only={intOnly.Length}, IAT-only={iatOnly.Length}).");
                 }
 
+                if (descriptor.IntNullThunkCount > 0)
+                {
+                    Warn(ParseIssueCategory.Imports, $"Import INT contains {descriptor.IntNullThunkCount} null thunk(s) for {descriptor.DllName}.");
+                }
+
+                if (descriptor.IatNullThunkCount > 0)
+                {
+                    Warn(ParseIssueCategory.Imports, $"Import IAT contains {descriptor.IatNullThunkCount} null thunk(s) for {descriptor.DllName}.");
+                }
+
                 if (isBound && !hasBound)
                 {
                     Warn(ParseIssueCategory.Imports, $"Import {descriptor.DllName} is marked bound but no bound import entry was found.");
@@ -10454,6 +10608,10 @@ namespace PECoff
                     isStale,
                     intCount,
                     iatCount,
+                    descriptor.IntNullThunkCount,
+                    descriptor.IatNullThunkCount,
+                    descriptor.IntTerminated,
+                    descriptor.IatTerminated,
                     intOnly,
                     iatOnly,
                     apiSetResolution));
@@ -11109,22 +11267,41 @@ namespace PECoff
                                         !string.IsNullOrWhiteSpace(importName))
                                     {
                                         imports.Add(importName);
+                                        ImportThunkParseStats intStats = new ImportThunkParseStats(0, 0, true);
+                                        ImportThunkParseStats iatStats = new ImportThunkParseStats(0, 0, true);
+
                                         if (table.LookupTableVirtualAddress != 0)
                                         {
-                                            ParseImportThunks(importName, table.LookupTableVirtualAddress, ImportThunkSource.ImportNameTable, sections, isPe32Plus, _importEntries);
+                                            intStats = ParseImportThunks(
+                                                importName,
+                                                table.LookupTableVirtualAddress,
+                                                ImportThunkSource.ImportNameTable,
+                                                sections,
+                                                isPe32Plus,
+                                                _importEntries);
                                         }
 
                                         if (table.ImportAddressTableRVA != 0 &&
                                             table.ImportAddressTableRVA != table.LookupTableVirtualAddress)
                                         {
-                                            ParseImportThunks(importName, table.ImportAddressTableRVA, ImportThunkSource.ImportAddressTable, sections, isPe32Plus, _importEntries);
+                                            iatStats = ParseImportThunks(
+                                                importName,
+                                                table.ImportAddressTableRVA,
+                                                ImportThunkSource.ImportAddressTable,
+                                                sections,
+                                                isPe32Plus,
+                                                _importEntries);
                                         }
 
                                         _importDescriptorInternals.Add(new ImportDescriptorInternal(
                                             importName,
                                             table.TimeDateStamp,
                                             table.LookupTableVirtualAddress,
-                                            table.ImportAddressTableRVA));
+                                            table.ImportAddressTableRVA,
+                                            intStats.NullThunkCount,
+                                            iatStats.NullThunkCount,
+                                            intStats.Terminated,
+                                            iatStats.Terminated));
                                     }
                                 }
                                 

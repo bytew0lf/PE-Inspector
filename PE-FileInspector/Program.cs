@@ -600,7 +600,11 @@ namespace PE_FileInspector
                     sb.AppendLine("  Metadata Tables:");
                     foreach (MetadataTableCountInfo table in pe.ClrMetadata.MetadataTableCounts.OrderBy(t => t.TableIndex))
                     {
-                        sb.AppendLine("    - " + table.TableName + ": " + table.Count.ToString(CultureInfo.InvariantCulture));
+                        string tokenRange = table.FirstToken != 0
+                            ? " (0x" + table.FirstToken.ToString("X8", CultureInfo.InvariantCulture) +
+                              "-0x" + table.LastToken.ToString("X8", CultureInfo.InvariantCulture) + ")"
+                            : string.Empty;
+                        sb.AppendLine("    - " + table.TableName + ": " + table.Count.ToString(CultureInfo.InvariantCulture) + tokenRange);
                     }
                 }
                 if (pe.ClrMetadata.AssemblyReferences.Length == 0)
@@ -838,7 +842,11 @@ namespace PE_FileInspector
                     {
                         sb.AppendLine("  - " + Safe(descriptor.DllName) +
                                       " | INT: " + descriptor.IntCount.ToString(CultureInfo.InvariantCulture) +
+                                      " (Null: " + descriptor.IntNullThunkCount.ToString(CultureInfo.InvariantCulture) +
+                                      ", Terminated: " + descriptor.IntTerminated + ")" +
                                       " | IAT: " + descriptor.IatCount.ToString(CultureInfo.InvariantCulture) +
+                                      " (Null: " + descriptor.IatNullThunkCount.ToString(CultureInfo.InvariantCulture) +
+                                      ", Terminated: " + descriptor.IatTerminated + ")" +
                                       " | Bound: " + descriptor.IsBound +
                                       " | Stale: " + descriptor.IsBoundStale);
                         if (descriptor.ApiSetResolution != null && descriptor.ApiSetResolution.IsApiSet)
@@ -1353,6 +1361,42 @@ namespace PE_FileInspector
                         sb.AppendLine("  CHPE Metadata Pointer: 0x" + pe.LoadConfig.ChpeMetadataPointer.ToString("X", CultureInfo.InvariantCulture));
                     }
 
+                    if (pe.LoadConfig.DynamicValueRelocTable != 0)
+                    {
+                        sb.AppendLine("  Dynamic Value Reloc Table: 0x" + pe.LoadConfig.DynamicValueRelocTable.ToString("X", CultureInfo.InvariantCulture));
+                        if (pe.LoadConfig.DynamicValueRelocTableOffset != 0 || pe.LoadConfig.DynamicValueRelocTableSection != 0)
+                        {
+                            sb.AppendLine("  Dynamic Value Reloc Offset: 0x" + pe.LoadConfig.DynamicValueRelocTableOffset.ToString("X", CultureInfo.InvariantCulture) +
+                                          " | Section Index: " + pe.LoadConfig.DynamicValueRelocTableSection.ToString(CultureInfo.InvariantCulture));
+                        }
+                    }
+
+                    if (pe.LoadConfig.GuardRFFailureRoutine != 0 || pe.LoadConfig.GuardRFFailureRoutineFunctionPointer != 0)
+                    {
+                        sb.AppendLine("  GuardRF Failure Routine: 0x" + pe.LoadConfig.GuardRFFailureRoutine.ToString("X", CultureInfo.InvariantCulture));
+                        sb.AppendLine("  GuardRF Failure Routine FP: 0x" + pe.LoadConfig.GuardRFFailureRoutineFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
+                    }
+
+                    if (pe.LoadConfig.GuardRFVerifyStackPointerFunctionPointer != 0)
+                    {
+                        sb.AppendLine("  GuardRF Verify Stack Pointer FP: 0x" + pe.LoadConfig.GuardRFVerifyStackPointerFunctionPointer.ToString("X", CultureInfo.InvariantCulture));
+                    }
+
+                    if (pe.LoadConfig.HotPatchTableOffset != 0)
+                    {
+                        sb.AppendLine("  HotPatch Table Offset: 0x" + pe.LoadConfig.HotPatchTableOffset.ToString("X", CultureInfo.InvariantCulture));
+                    }
+
+                    if (pe.LoadConfig.EnclaveConfigurationPointer != 0)
+                    {
+                        sb.AppendLine("  Enclave Configuration Pointer: 0x" + pe.LoadConfig.EnclaveConfigurationPointer.ToString("X", CultureInfo.InvariantCulture));
+                    }
+
+                    if (pe.LoadConfig.VolatileMetadataPointer != 0)
+                    {
+                        sb.AppendLine("  Volatile Metadata Pointer: 0x" + pe.LoadConfig.VolatileMetadataPointer.ToString("X", CultureInfo.InvariantCulture));
+                    }
+
                     if (pe.LoadConfig.GuardEhContinuationTable != 0 || pe.LoadConfig.GuardEhContinuationCount != 0)
                     {
                         sb.AppendLine("  GuardEH Continuation Table: 0x" + pe.LoadConfig.GuardEhContinuationTable.ToString("X", CultureInfo.InvariantCulture));
@@ -1694,17 +1738,21 @@ namespace PE_FileInspector
             }
             else
             {
-                foreach (ResourceMessageTableInfo table in pe.ResourceMessageTables.OrderBy(t => t.NameId).ThenBy(t => t.LanguageId))
-                {
-                    sb.AppendLine("  NameId: " + table.NameId.ToString(CultureInfo.InvariantCulture) +
-                                  " | Lang: 0x" + table.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
-                                  " | Entries: " + table.Entries.Count.ToString(CultureInfo.InvariantCulture));
-                    foreach (MessageTableEntryInfo entry in table.Entries.Take(50))
+                    foreach (ResourceMessageTableInfo table in pe.ResourceMessageTables.OrderBy(t => t.NameId).ThenBy(t => t.LanguageId))
                     {
-                        sb.AppendLine("    - Id: " + entry.Id.ToString(CultureInfo.InvariantCulture) +
-                                      " | Unicode: " + entry.IsUnicode +
-                                      " | " + entry.Text);
-                    }
+                        sb.AppendLine("  NameId: " + table.NameId.ToString(CultureInfo.InvariantCulture) +
+                                      " | Lang: 0x" + table.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | Entries: " + table.Entries.Count.ToString(CultureInfo.InvariantCulture) +
+                                      " | Range: " + table.MinId.ToString(CultureInfo.InvariantCulture) +
+                                      "-" + table.MaxId.ToString(CultureInfo.InvariantCulture));
+                        foreach (MessageTableEntryInfo entry in table.Entries.Take(50))
+                        {
+                            sb.AppendLine("    - Id: " + entry.Id.ToString(CultureInfo.InvariantCulture) +
+                                          " | Unicode: " + entry.IsUnicode +
+                                          " | Len: " + entry.Length.ToString(CultureInfo.InvariantCulture) +
+                                          " | Flags: 0x" + entry.Flags.ToString("X4", CultureInfo.InvariantCulture) +
+                                          " | " + entry.Text);
+                        }
                     if (table.Entries.Count > 50)
                     {
                         sb.AppendLine("  (truncated)");

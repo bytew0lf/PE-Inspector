@@ -136,7 +136,8 @@ namespace PECoff
                     Array.Empty<string>(),
                     Array.Empty<string>(),
                     isPolicyCompliant,
-                    isPolicyCompliant ? Array.Empty<string>() : new[] { "Missing signature." });
+                    isPolicyCompliant ? Array.Empty<string>() : new[] { "Missing signature." },
+                    Array.Empty<AuthenticodeSignerStatusInfo>());
             }
 
             List<string> chainStatus = new List<string>();
@@ -260,6 +261,7 @@ namespace PECoff
                 policyFailures.Add("Timestamp validation failed.");
             }
 
+            List<AuthenticodeSignerStatusInfo> signerStatuses = BuildSignerStatuses(signers);
             return new AuthenticodeStatusInfo(
                 signerCount,
                 timestampCount,
@@ -271,7 +273,63 @@ namespace PECoff
                 chainStatus.ToArray(),
                 timestampStatus.ToArray(),
                 policyCompliant,
-                policyFailures.ToArray());
+                policyFailures.ToArray(),
+                signerStatuses.ToArray());
+        }
+
+        private static List<AuthenticodeSignerStatusInfo> BuildSignerStatuses(Pkcs7SignerInfo[] signers)
+        {
+            List<AuthenticodeSignerStatusInfo> statuses = new List<AuthenticodeSignerStatusInfo>();
+            if (signers == null)
+            {
+                return statuses;
+            }
+
+            foreach (Pkcs7SignerInfo signer in signers)
+            {
+                AppendSignerStatuses(statuses, signer, "Primary");
+            }
+
+            return statuses;
+        }
+
+        private static void AppendSignerStatuses(
+            List<AuthenticodeSignerStatusInfo> statuses,
+            Pkcs7SignerInfo signer,
+            string role)
+        {
+            if (signer == null)
+            {
+                return;
+            }
+
+            string effectiveRole = signer.IsTimestampSigner ? "Timestamp" : role;
+            statuses.Add(new AuthenticodeSignerStatusInfo(
+                signer.Subject,
+                signer.Issuer,
+                effectiveRole,
+                signer.IsTimestampSigner,
+                signer.SignatureValid,
+                signer.ChainValid,
+                signer.HasCodeSigningEku,
+                signer.HasTimestampEku,
+                signer.NestingLevel));
+
+            if (signer.CounterSigners != null)
+            {
+                foreach (Pkcs7SignerInfo counter in signer.CounterSigners)
+                {
+                    AppendSignerStatuses(statuses, counter, "CounterSignature");
+                }
+            }
+
+            if (signer.NestedSigners != null)
+            {
+                foreach (Pkcs7SignerInfo nested in signer.NestedSigners)
+                {
+                    AppendSignerStatuses(statuses, nested, "Nested");
+                }
+            }
         }
 
         private static IEnumerable<Pkcs7SignerInfo> FlattenSigners(Pkcs7SignerInfo[] signers)
