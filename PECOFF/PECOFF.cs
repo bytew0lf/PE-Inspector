@@ -2322,6 +2322,26 @@ namespace PECoff
             }
         }
 
+        private readonly List<Arm32UnwindInfoDetail> _arm32UnwindInfoDetails = new List<Arm32UnwindInfoDetail>();
+        public Arm32UnwindInfoDetail[] Arm32UnwindInfoDetails
+        {
+            get
+            {
+                EnsureExceptionDirectoryParsed();
+                return _arm32UnwindInfoDetails.ToArray();
+            }
+        }
+
+        private readonly List<Ia64UnwindInfoDetail> _ia64UnwindInfoDetails = new List<Ia64UnwindInfoDetail>();
+        public Ia64UnwindInfoDetail[] Ia64UnwindInfoDetails
+        {
+            get
+            {
+                EnsureExceptionDirectoryParsed();
+                return _ia64UnwindInfoDetails.ToArray();
+            }
+        }
+
         private ExceptionDirectorySummary _exceptionSummary;
         public ExceptionDirectorySummary ExceptionSummary
         {
@@ -3769,6 +3789,8 @@ namespace PECoff
                 _exceptionSummary,
                 _unwindInfoDetails.ToArray(),
                 _arm64UnwindInfoDetails.ToArray(),
+                _arm32UnwindInfoDetails.ToArray(),
+                _ia64UnwindInfoDetails.ToArray(),
                 _richHeader,
                 _tlsInfo,
                 _loadConfig,
@@ -6743,6 +6765,35 @@ namespace PECoff
             return BuildResourceRawInfo(entry, data);
         }
 
+        internal static EnclaveImportInfo ParseEnclaveImportForTest(byte[] data)
+        {
+            if (data == null)
+            {
+                return null;
+            }
+
+            ReadOnlySpan<byte> span = new ReadOnlySpan<byte>(data);
+            uint matchType = ReadUInt32Safe(span, 0);
+            uint minimumSecurityVersion = ReadUInt32Safe(span, 4);
+            string uniqueOrAuthorId = ReadBytesHexSafe(span, 8, 32);
+            string familyId = ReadBytesHexSafe(span, 40, 16);
+            string imageId = ReadBytesHexSafe(span, 56, 16);
+            uint importNameRva = ReadUInt32Safe(span, 72);
+            uint reserved = ReadUInt32Safe(span, 76);
+
+            return new EnclaveImportInfo(
+                0,
+                matchType,
+                GetEnclaveImportMatchTypeName(matchType),
+                minimumSecurityVersion,
+                uniqueOrAuthorId,
+                familyId,
+                imageId,
+                importNameRva,
+                string.Empty,
+                reserved);
+        }
+
         internal static bool TryParseVcFeatureDataForTest(byte[] data, out DebugVcFeatureInfo info)
         {
             return TryParseVcFeatureData(data, out info);
@@ -9142,25 +9193,77 @@ namespace PECoff
                 return;
             }
 
-            if (tableSize % 12 != 0)
+            bool isArm64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64 ||
+                _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64EC;
+            bool isArm32 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM ||
+                _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARMNT;
+            int entrySize = (isArm64 || isArm32) ? 8 : 12;
+
+            if (tableSize % entrySize != 0)
             {
                 Warn(ParseIssueCategory.Sections, "Exception directory size is not aligned to runtime function entries.");
             }
 
-            int entryCount = tableSize / 12;
+            int entryCount = tableSize / entrySize;
             for (int i = 0; i < entryCount; i++)
             {
-                long entryOffset = tableOffset + (i * 12L);
-                if (!TrySetPosition(entryOffset, 12))
+                long entryOffset = tableOffset + (i * entrySize);
+                if (!TrySetPosition(entryOffset, entrySize))
                 {
                     WarnAt(ParseIssueCategory.Sections, "Exception directory entry outside file bounds.", entryOffset);
                     break;
                 }
 
-                uint begin = PEFile.ReadUInt32();
-                uint end = PEFile.ReadUInt32();
-                uint unwind = PEFile.ReadUInt32();
-                _exceptionFunctions.Add(new ExceptionFunctionInfo(begin, end, unwind));
+                if (entrySize == 12)
+                {
+                    uint begin = PEFile.ReadUInt32();
+                    uint end = PEFile.ReadUInt32();
+                    uint unwind = PEFile.ReadUInt32();
+                    _exceptionFunctions.Add(new ExceptionFunctionInfo(begin, end, unwind));
+                    continue;
+                }
+
+                uint functionBegin = PEFile.ReadUInt32();
+                uint unwindData = PEFile.ReadUInt32();
+                uint flag = unwindData & 0x3;
+                uint unwindRva = 0;
+                uint functionEnd = 0;
+
+                if (flag == 0)
+                {
+                    unwindRva = unwindData;
+                    if (isArm64)
+                    {
+                        if (TryReadArm64FunctionLength(sections, unwindRva, out int lengthBytes) && lengthBytes > 0)
+                        {
+                            functionEnd = functionBegin + (uint)lengthBytes;
+                        }
+                    }
+                    else if (isArm32)
+                    {
+                        if (TryReadArm32FunctionLength(sections, unwindRva, out int lengthBytes) && lengthBytes > 0)
+                        {
+                            functionEnd = functionBegin + (uint)lengthBytes;
+                        }
+                    }
+                }
+                else if (isArm64)
+                {
+                    if (TryDecodeArm64PackedFunctionLength(unwindData, out int lengthBytes) && lengthBytes > 0)
+                    {
+                        functionEnd = functionBegin + (uint)lengthBytes;
+                    }
+                    else
+                    {
+                        Warn(ParseIssueCategory.Sections, "Packed ARM64 exception data could not be decoded.");
+                    }
+                }
+                else if (isArm32)
+                {
+                    Warn(ParseIssueCategory.Sections, "Packed ARM exception data is not decoded.");
+                }
+
+                _exceptionFunctions.Add(new ExceptionFunctionInfo(functionBegin, functionEnd, unwindRva));
             }
         }
 
@@ -9171,14 +9274,21 @@ namespace PECoff
                 _exceptionSummary = null;
                 _unwindInfoDetails.Clear();
                 _arm64UnwindInfoDetails.Clear();
+                _arm32UnwindInfoDetails.Clear();
+                _ia64UnwindInfoDetails.Clear();
                 return;
             }
 
             bool isAmd64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_AMD64;
             bool isArm64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64 ||
                 _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64EC;
+            bool isArm32 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM ||
+                _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARMNT;
+            bool isIa64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_IA64;
             _unwindInfoDetails.Clear();
             _arm64UnwindInfoDetails.Clear();
+            _arm32UnwindInfoDetails.Clear();
+            _ia64UnwindInfoDetails.Clear();
             if (isAmd64)
             {
                 ParseUnwindInfoDetails(sections);
@@ -9186,6 +9296,14 @@ namespace PECoff
             else if (isArm64)
             {
                 ParseArm64UnwindInfoDetails(sections);
+            }
+            else if (isArm32)
+            {
+                ParseArm32UnwindInfoDetails(sections);
+            }
+            else if (isIa64)
+            {
+                ParseIa64UnwindInfoDetails(sections);
             }
 
             TryGetUnwindVersion tryGetVersion = null;
@@ -9197,6 +9315,14 @@ namespace PECoff
             {
                 tryGetVersion = (uint rva, out byte version) => TryReadArm64UnwindVersion(sections, rva, out version);
             }
+            else if (isArm32)
+            {
+                tryGetVersion = (uint rva, out byte version) => TryReadArm32UnwindVersion(sections, rva, out version);
+            }
+            else if (isIa64)
+            {
+                tryGetVersion = (uint rva, out byte version) => TryReadIa64UnwindVersion(sections, rva, out version);
+            }
 
             _exceptionSummary = BuildExceptionDirectorySummaryCore(
                 _exceptionFunctions,
@@ -9205,7 +9331,7 @@ namespace PECoff
                 _exceptionDirectorySectionName,
                 _exceptionDirectoryInPdata,
                 _sizeOfImage,
-                isAmd64 || isArm64,
+                isAmd64 || isArm64 || isArm32 || isIa64,
                 tryGetVersion);
         }
 
@@ -9305,8 +9431,29 @@ namespace PECoff
                     }
 
                     uint header = PEFile.ReadUInt32();
+                    bool hasEpilogFlag = ((header >> 21) & 0x01) != 0;
+                    bool hasExceptionData = ((header >> 20) & 0x01) != 0;
+                    int epilogCount = (int)((header >> 22) & 0x1F);
                     int codeWords = (int)((header >> 27) & 0x1F);
-                    int sizeBytes = 4 + (codeWords * 4);
+                    int headerSize = 4;
+
+                    if (epilogCount == 0 && codeWords == 0)
+                    {
+                        if (!TrySetPosition(offset + 4, 4))
+                        {
+                            Warn(ParseIssueCategory.Sections, "ARM64 unwind extended header outside file bounds.");
+                            continue;
+                        }
+
+                        uint extended = PEFile.ReadUInt32();
+                        epilogCount = (int)(extended & 0xFFFF);
+                        codeWords = (int)((extended >> 16) & 0xFF);
+                        headerSize = 8;
+                    }
+
+                    int epilogScopeBytes = (!hasEpilogFlag && epilogCount > 0) ? epilogCount * 4 : 0;
+                    int codeBytes = codeWords * 4;
+                    int sizeBytes = headerSize + epilogScopeBytes + codeBytes + (hasExceptionData ? 4 : 0);
                     if (sizeBytes < 4 || !TrySetPosition(offset, sizeBytes))
                     {
                         Warn(ParseIssueCategory.Sections, "ARM64 unwind info size exceeds file bounds.");
@@ -9325,6 +9472,26 @@ namespace PECoff
                         {
                             Warn(ParseIssueCategory.Sections, "ARM64 unwind function length exceeds function size.");
                         }
+
+                        if (detail.HasXFlag && detail.ExceptionHandlerRva == 0)
+                        {
+                            Warn(ParseIssueCategory.Sections, "ARM64 unwind has exception data flag set but handler RVA is missing.");
+                        }
+
+                        if (detail.EpilogScopes.Any(scope => !scope.ReservedBitsValid))
+                        {
+                            Warn(ParseIssueCategory.Sections, "ARM64 unwind epilog scope has non-zero reserved bits.");
+                        }
+
+                        if (detail.EpilogScopes.Any(scope => !scope.HasValidIndex))
+                        {
+                            Warn(ParseIssueCategory.Sections, "ARM64 unwind epilog scope has an invalid code index.");
+                        }
+
+                        if (detail.EpilogScopes.Any(scope => !scope.HasValidOffset))
+                        {
+                            Warn(ParseIssueCategory.Sections, "ARM64 unwind epilog scope has an invalid start offset.");
+                        }
                     }
                     else
                     {
@@ -9339,6 +9506,222 @@ namespace PECoff
                     PEFileStream.Position = originalPosition;
                 }
             }
+        }
+
+        private void ParseArm32UnwindInfoDetails(List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (_exceptionFunctions.Count == 0 || PEFileStream == null || PEFile == null)
+            {
+                return;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                foreach (ExceptionFunctionInfo func in _exceptionFunctions)
+                {
+                    if (func.UnwindInfoAddress == 0)
+                    {
+                        continue;
+                    }
+
+                    if (!TryGetFileOffset(sections, func.UnwindInfoAddress, out long offset))
+                    {
+                        Warn(ParseIssueCategory.Sections, "ARM unwind info RVA not mapped to a section.");
+                        continue;
+                    }
+
+                    if (!TrySetPosition(offset, 4))
+                    {
+                        Warn(ParseIssueCategory.Sections, "ARM unwind info header outside file bounds.");
+                        continue;
+                    }
+
+                    uint header = PEFile.ReadUInt32();
+                    int epilogCount = (int)((header >> 16) & 0x1F);
+                    int codeWords = (int)((header >> 21) & 0x1F);
+                    bool hasEpilogFlag = ((header >> 14) & 0x1) != 0;
+                    bool hasExceptionData = ((header >> 13) & 0x1) != 0;
+                    int headerSize = 4;
+                    int epilogScopeBytes = (!hasEpilogFlag && epilogCount > 0) ? epilogCount * 4 : 0;
+                    int codeBytes = codeWords * 4;
+                    int totalBytes = headerSize + epilogScopeBytes + codeBytes + (hasExceptionData ? 4 : 0);
+
+                    if (totalBytes < 4 || !TrySetPosition(offset, totalBytes))
+                    {
+                        Warn(ParseIssueCategory.Sections, "ARM unwind info size exceeds file bounds.");
+                        continue;
+                    }
+
+                    byte[] buffer = new byte[totalBytes];
+                    ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+                    if (TryParseArm32UnwindInfoDetail(func, buffer, out Arm32UnwindInfoDetail detail))
+                    {
+                        _arm32UnwindInfoDetails.Add(detail);
+                        if (!detail.ReservedBitsValid)
+                        {
+                            Warn(ParseIssueCategory.Sections, "ARM unwind header has non-zero reserved bits.");
+                        }
+
+                        if (detail.HasExceptionData && detail.ExceptionHandlerRva == 0)
+                        {
+                            Warn(ParseIssueCategory.Sections, "ARM unwind has exception data flag set but handler RVA is missing.");
+                        }
+                    }
+                    else
+                    {
+                        Warn(ParseIssueCategory.Sections, "ARM unwind info could not be parsed.");
+                    }
+                }
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
+        private void ParseIa64UnwindInfoDetails(List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (_exceptionFunctions.Count == 0 || PEFileStream == null || PEFile == null)
+            {
+                return;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                foreach (ExceptionFunctionInfo func in _exceptionFunctions)
+                {
+                    if (func.UnwindInfoAddress == 0)
+                    {
+                        continue;
+                    }
+
+                    if (!TryGetFileOffset(sections, func.UnwindInfoAddress, out long offset))
+                    {
+                        Warn(ParseIssueCategory.Sections, "IA64 unwind info RVA not mapped to a section.");
+                        continue;
+                    }
+
+                    int readSize = 16;
+                    if (!TrySetPosition(offset, readSize))
+                    {
+                        Warn(ParseIssueCategory.Sections, "IA64 unwind info header outside file bounds.");
+                        continue;
+                    }
+
+                    byte[] buffer = new byte[readSize];
+                    ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+                    uint header = ReadUInt32(buffer, 0);
+                    Ia64UnwindInfoDetail detail = new Ia64UnwindInfoDetail(
+                        func.BeginAddress,
+                        func.EndAddress,
+                        func.UnwindInfoAddress,
+                        header,
+                        readSize,
+                        BuildHexPreview(buffer, 32));
+                    _ia64UnwindInfoDetails.Add(detail);
+                }
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
+        private bool TryReadArm64FunctionLength(List<IMAGE_SECTION_HEADER> sections, uint rva, out int lengthBytes)
+        {
+            lengthBytes = 0;
+            if (rva == 0 || PEFileStream == null || PEFile == null)
+            {
+                return false;
+            }
+
+            if (!TryGetFileOffset(sections, rva, out long offset))
+            {
+                return false;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                if (!TrySetPosition(offset, 4))
+                {
+                    return false;
+                }
+
+                uint header = PEFile.ReadUInt32();
+                int functionLength = (int)(header & 0x3FFFF);
+                lengthBytes = functionLength * 4;
+                return true;
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
+        private bool TryReadArm32FunctionLength(List<IMAGE_SECTION_HEADER> sections, uint rva, out int lengthBytes)
+        {
+            lengthBytes = 0;
+            if (rva == 0 || PEFileStream == null || PEFile == null)
+            {
+                return false;
+            }
+
+            if (!TryGetFileOffset(sections, rva, out long offset))
+            {
+                return false;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                if (!TrySetPosition(offset, 4))
+                {
+                    return false;
+                }
+
+                uint header = PEFile.ReadUInt32();
+                int functionLength = (int)(header & 0x7FF);
+                lengthBytes = functionLength * 4;
+                return true;
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
+        private static bool TryDecodeArm64PackedFunctionLength(uint unwindData, out int lengthBytes)
+        {
+            lengthBytes = 0;
+            uint flag = unwindData & 0x3;
+            if (flag == 0)
+            {
+                return false;
+            }
+
+            int functionLength = (int)((unwindData >> 2) & 0x7FF);
+            if (functionLength <= 0)
+            {
+                return false;
+            }
+
+            lengthBytes = functionLength * 4;
+            return true;
         }
 
         private static bool TryParseUnwindInfoDetail(ExceptionFunctionInfo func, ReadOnlySpan<byte> data, out UnwindInfoDetail detail)
@@ -9405,15 +9788,75 @@ namespace PECoff
                 return false;
             }
 
+            int offset = 0;
             uint header = ReadUInt32(data, 0);
+            offset += 4;
+
             int functionLength = (int)(header & 0x3FFFF);
             byte version = (byte)((header >> 18) & 0x03);
             bool hasXFlag = ((header >> 20) & 0x01) != 0;
             bool hasEpilogFlag = ((header >> 21) & 0x01) != 0;
             int epilogCount = (int)((header >> 22) & 0x1F);
             int codeWords = (int)((header >> 27) & 0x1F);
-            int sizeBytes = 4 + (codeWords * 4);
+
+            if (epilogCount == 0 && codeWords == 0)
+            {
+                if (data.Length < 8)
+                {
+                    return false;
+                }
+
+                uint extended = ReadUInt32(data, offset);
+                offset += 4;
+                epilogCount = (int)(extended & 0xFFFF);
+                codeWords = (int)((extended >> 16) & 0xFF);
+            }
+
+            int epilogScopeBytes = (!hasEpilogFlag && epilogCount > 0) ? epilogCount * 4 : 0;
+            int codeBytes = codeWords * 4;
+            int totalSize = offset + epilogScopeBytes + codeBytes + (hasXFlag ? 4 : 0);
+            if (totalSize > data.Length)
+            {
+                return false;
+            }
+
+            List<Arm64EpilogScopeInfo> scopes = new List<Arm64EpilogScopeInfo>();
             int functionLengthBytes = functionLength * 4;
+            if (!hasEpilogFlag && epilogCount > 0)
+            {
+                for (int i = 0; i < epilogCount; i++)
+                {
+                    uint scope = ReadUInt32(data, offset);
+                    offset += 4;
+                    int startOffset = (int)(scope & 0x3FFFF) * 4;
+                    int reserved = (int)((scope >> 18) & 0x0F);
+                    int startIndex = (int)((scope >> 22) & 0x03FF);
+                    bool reservedOk = reserved == 0;
+                    bool offsetValid = functionLengthBytes == 0 || startOffset < functionLengthBytes;
+                    bool indexValid = startIndex < codeBytes;
+                    scopes.Add(new Arm64EpilogScopeInfo(startOffset, startIndex, false, reservedOk, indexValid, offsetValid));
+                }
+            }
+            else if (hasEpilogFlag)
+            {
+                int startIndex = epilogCount;
+                bool indexValid = startIndex < codeBytes;
+                scopes.Add(new Arm64EpilogScopeInfo(-1, startIndex, true, true, indexValid, true));
+            }
+
+            ReadOnlySpan<byte> codeSpan = codeBytes > 0
+                ? data.Slice(offset, codeBytes)
+                : ReadOnlySpan<byte>.Empty;
+            Arm64UnwindCodeInfo[] codes = DecodeArm64UnwindCodes(codeSpan);
+            offset += codeBytes;
+
+            uint exceptionHandlerRva = 0;
+            if (hasXFlag && offset + 4 <= data.Length)
+            {
+                exceptionHandlerRva = ReadUInt32(data, offset);
+                offset += 4;
+            }
+
             string preview = BuildHexPreview(data, 32);
 
             detail = new Arm64UnwindInfoDetail(
@@ -9427,7 +9870,88 @@ namespace PECoff
                 hasEpilogFlag,
                 epilogCount,
                 codeWords,
-                sizeBytes,
+                totalSize,
+                exceptionHandlerRva,
+                scopes.ToArray(),
+                codes,
+                preview);
+            return true;
+        }
+
+        private static bool TryParseArm32UnwindInfoDetail(ExceptionFunctionInfo func, ReadOnlySpan<byte> data, out Arm32UnwindInfoDetail detail)
+        {
+            detail = null;
+            if (data.Length < 4)
+            {
+                return false;
+            }
+
+            uint header = ReadUInt32(data, 0);
+            int functionLength = (int)(header & 0x7FF);
+            byte version = (byte)((header >> 11) & 0x03);
+            bool hasExceptionData = ((header >> 13) & 0x01) != 0;
+            bool hasEpilogFlag = ((header >> 14) & 0x01) != 0;
+            bool isFragment = ((header >> 15) & 0x01) != 0;
+            int epilogCount = (int)((header >> 16) & 0x1F);
+            int codeWords = (int)((header >> 21) & 0x1F);
+            uint reservedBits = (header >> 26) & 0x3F;
+            bool reservedBitsValid = reservedBits == 0;
+
+            int offset = 4;
+            List<uint> epilogScopes = new List<uint>();
+            if (!hasEpilogFlag && epilogCount > 0)
+            {
+                int scopeBytes = epilogCount * 4;
+                if (offset + scopeBytes > data.Length)
+                {
+                    return false;
+                }
+
+                for (int i = 0; i < epilogCount; i++)
+                {
+                    epilogScopes.Add(ReadUInt32(data, offset));
+                    offset += 4;
+                }
+            }
+
+            List<uint> codeWordList = new List<uint>();
+            int codeBytes = codeWords * 4;
+            if (offset + codeBytes > data.Length)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < codeWords; i++)
+            {
+                codeWordList.Add(ReadUInt32(data, offset));
+                offset += 4;
+            }
+
+            uint exceptionHandlerRva = 0;
+            if (hasExceptionData && offset + 4 <= data.Length)
+            {
+                exceptionHandlerRva = ReadUInt32(data, offset);
+                offset += 4;
+            }
+
+            string preview = BuildHexPreview(data, 32);
+            detail = new Arm32UnwindInfoDetail(
+                func.BeginAddress,
+                func.EndAddress,
+                func.UnwindInfoAddress,
+                header,
+                functionLength * 4,
+                version,
+                hasExceptionData,
+                hasEpilogFlag,
+                isFragment,
+                epilogCount,
+                codeWords,
+                reservedBits,
+                reservedBitsValid,
+                exceptionHandlerRva,
+                epilogScopes.ToArray(),
+                codeWordList.ToArray(),
                 preview);
             return true;
         }
@@ -9454,6 +9978,362 @@ namespace PECoff
             return TryParseArm64UnwindInfoDetail(func, data, out Arm64UnwindInfoDetail detail)
                 ? detail
                 : null;
+        }
+
+        internal static Arm32UnwindInfoDetail BuildArm32UnwindInfoDetailForTest(ExceptionFunctionInfo func, byte[] data)
+        {
+            if (data == null || func == null)
+            {
+                return null;
+            }
+
+            return TryParseArm32UnwindInfoDetail(func, data, out Arm32UnwindInfoDetail detail)
+                ? detail
+                : null;
+        }
+
+        private static Arm64UnwindCodeInfo[] DecodeArm64UnwindCodes(ReadOnlySpan<byte> data)
+        {
+            if (data.Length == 0)
+            {
+                return Array.Empty<Arm64UnwindCodeInfo>();
+            }
+
+            List<Arm64UnwindCodeInfo> codes = new List<Arm64UnwindCodeInfo>();
+            int index = 0;
+            while (index < data.Length)
+            {
+                if (TryDecodeArm64UnwindCode(data, index, out Arm64UnwindCodeInfo info, out int length))
+                {
+                    codes.Add(info);
+                    index += length;
+                }
+                else
+                {
+                    string raw = BuildHexPreview(data.Slice(index, 1), 1);
+                    codes.Add(new Arm64UnwindCodeInfo(index, 1, "unknown", string.Empty, raw));
+                    index += 1;
+                }
+            }
+
+            return codes.ToArray();
+        }
+
+        private static bool TryDecodeArm64UnwindCode(ReadOnlySpan<byte> data, int index, out Arm64UnwindCodeInfo info, out int length)
+        {
+            info = null;
+            length = 1;
+            if (index < 0 || index >= data.Length)
+            {
+                return false;
+            }
+
+            byte b0 = data[index];
+            string opcode = string.Empty;
+            string details = string.Empty;
+
+            if ((b0 & 0xE0) == 0x00)
+            {
+                int size = (b0 & 0x1F) * 16;
+                opcode = "alloc_s";
+                details = $"Size={size}";
+                length = 1;
+            }
+            else if ((b0 & 0xE0) == 0x20)
+            {
+                int offset = -(b0 & 0x1F) * 8;
+                opcode = "save_r19r20_x";
+                details = $"Offset={offset}";
+                length = 1;
+            }
+            else if ((b0 & 0xC0) == 0x40)
+            {
+                int offset = (b0 & 0x3F) * 8;
+                opcode = "save_fplr";
+                details = $"Offset={offset}";
+                length = 1;
+            }
+            else if ((b0 & 0xC0) == 0x80)
+            {
+                int offset = -((b0 & 0x3F) + 1) * 8;
+                opcode = "save_fplr_x";
+                details = $"Offset={offset}";
+                length = 1;
+            }
+            else if ((b0 & 0xF8) == 0xC0)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                int value = ((b0 & 0x07) << 8) | b1;
+                int size = value * 16;
+                opcode = "alloc_m";
+                details = $"Size={size}";
+                length = 2;
+            }
+            else if ((b0 & 0xFC) == 0xC8)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                int x = ((b0 & 0x03) << 2) | (b1 >> 6);
+                int z = b1 & 0x3F;
+                int reg = 19 + (x * 2);
+                int offset = z * 8;
+                opcode = "save_regp";
+                details = $"Regs=x{reg}/x{reg + 1} Offset={offset}";
+                length = 2;
+            }
+            else if ((b0 & 0xFC) == 0xCC)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                int x = ((b0 & 0x03) << 2) | (b1 >> 6);
+                int z = b1 & 0x3F;
+                int reg = 19 + (x * 2);
+                int offset = -((z + 1) * 8);
+                opcode = "save_regp_x";
+                details = $"Regs=x{reg}/x{reg + 1} Offset={offset}";
+                length = 2;
+            }
+            else if ((b0 & 0xFC) == 0xD0)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                int x = ((b0 & 0x03) << 2) | (b1 >> 6);
+                int z = b1 & 0x3F;
+                int reg = 19 + x;
+                int offset = z * 8;
+                opcode = "save_reg";
+                details = $"Reg=x{reg} Offset={offset}";
+                length = 2;
+            }
+            else if ((b0 & 0xFE) == 0xD4)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                int x = ((b0 & 0x01) << 3) | (b1 >> 5);
+                int z = b1 & 0x1F;
+                int reg = 19 + x;
+                int offset = -((z + 1) * 8);
+                opcode = "save_reg_x";
+                details = $"Reg=x{reg} Offset={offset}";
+                length = 2;
+            }
+            else if ((b0 & 0xFE) == 0xD6)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                int x = ((b0 & 0x01) << 2) | (b1 >> 6);
+                int z = b1 & 0x3F;
+                int reg = 19 + (x * 2);
+                int offset = z * 8;
+                opcode = "save_lrpair";
+                details = $"Regs=x{reg}/lr Offset={offset}";
+                length = 2;
+            }
+            else if ((b0 & 0xFE) == 0xD8)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                int x = ((b0 & 0x01) << 2) | (b1 >> 6);
+                int z = b1 & 0x3F;
+                int reg = 8 + (x * 2);
+                int offset = z * 8;
+                opcode = "save_fregp";
+                details = $"Regs=d{reg}/d{reg + 1} Offset={offset}";
+                length = 2;
+            }
+            else if ((b0 & 0xFE) == 0xDA)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                int x = ((b0 & 0x01) << 2) | (b1 >> 6);
+                int z = b1 & 0x3F;
+                int reg = 8 + (x * 2);
+                int offset = -((z + 1) * 8);
+                opcode = "save_fregp_x";
+                details = $"Regs=d{reg}/d{reg + 1} Offset={offset}";
+                length = 2;
+            }
+            else if ((b0 & 0xFE) == 0xDC)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                int x = ((b0 & 0x01) << 2) | (b1 >> 6);
+                int z = b1 & 0x3F;
+                int reg = 8 + x;
+                int offset = z * 8;
+                opcode = "save_freg";
+                details = $"Reg=d{reg} Offset={offset}";
+                length = 2;
+            }
+            else if (b0 == 0xDE)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                int x = (b1 >> 5) & 0x07;
+                int z = b1 & 0x1F;
+                int reg = 8 + x;
+                int offset = -((z + 1) * 8);
+                opcode = "save_freg_x";
+                details = $"Reg=d{reg} Offset={offset}";
+                length = 2;
+            }
+            else if (b0 == 0xDF)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                opcode = "alloc_z";
+                details = $"Units={b1}*VL";
+                length = 2;
+            }
+            else if (b0 == 0xE0)
+            {
+                if (index + 3 >= data.Length)
+                {
+                    return false;
+                }
+
+                uint value = (uint)(data[index + 1] | (data[index + 2] << 8) | (data[index + 3] << 16));
+                opcode = "alloc_l";
+                details = $"Size={(int)value * 16}";
+                length = 4;
+            }
+            else if (b0 == 0xE1)
+            {
+                opcode = "set_fp";
+                length = 1;
+            }
+            else if (b0 == 0xE2)
+            {
+                if (index + 1 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                opcode = "add_fp";
+                details = $"Offset={b1 * 8}";
+                length = 2;
+            }
+            else if (b0 == 0xE3)
+            {
+                opcode = "nop";
+                length = 1;
+            }
+            else if (b0 == 0xE4)
+            {
+                opcode = "end";
+                length = 1;
+            }
+            else if (b0 == 0xE5)
+            {
+                opcode = "end_c";
+                length = 1;
+            }
+            else if (b0 == 0xE6)
+            {
+                opcode = "save_next";
+                length = 1;
+            }
+            else if (b0 == 0xE7)
+            {
+                if (index + 2 >= data.Length)
+                {
+                    return false;
+                }
+
+                byte b1 = data[index + 1];
+                byte b2 = data[index + 2];
+                if ((b2 & 0xC0) == 0x00)
+                {
+                    int p = (b1 >> 6) & 0x01;
+                    int x = (b1 >> 5) & 0x01;
+                    int r = b1 & 0x1F;
+                    int o = b2 & 0x3F;
+                    int offset = (x == 1 || p == 1) ? o * 16 : o * 8;
+                    opcode = x == 1 ? "save_any_xreg" : "save_any_dreg";
+                    string kind = p == 1 ? "pair" : "single";
+                    details = $"Reg={r} {kind} Offset={offset}";
+                    length = 3;
+                }
+                else if ((b2 & 0xC0) == 0xC0)
+                {
+                    int ohi = (b1 >> 5) & 0x03;
+                    int r = b1 & 0x0F;
+                    bool isPreg = (b1 & 0x10) != 0;
+                    int o = (ohi << 6) | (b2 & 0x3F);
+                    opcode = isPreg ? "save_preg" : "save_zreg";
+                    details = $"Reg={r} OffsetUnits={o}";
+                    length = 3;
+                }
+                else
+                {
+                    opcode = "save_any";
+                    length = 3;
+                }
+            }
+            else if ((b0 & 0xF8) == 0xE8)
+            {
+                opcode = "custom_stack";
+                length = 1;
+            }
+            else if (b0 == 0xFC)
+            {
+                opcode = "pac_sign_lr";
+                length = 1;
+            }
+            else
+            {
+                return false;
+            }
+
+            string rawBytes = BuildHexPreview(data.Slice(index, Math.Min(length, data.Length - index)), length);
+            info = new Arm64UnwindCodeInfo(index, length, opcode, details, rawBytes);
+            return true;
         }
 
         private bool TryReadUnwindVersion(List<IMAGE_SECTION_HEADER> sections, uint rva, out byte version)
@@ -9518,6 +10398,79 @@ namespace PECoff
 
                 uint header = PEFile.ReadUInt32();
                 version = (byte)((header >> 18) & 0x03);
+                return true;
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
+        private bool TryReadArm32UnwindVersion(List<IMAGE_SECTION_HEADER> sections, uint rva, out byte version)
+        {
+            version = 0;
+            if (rva == 0 || PEFileStream == null || PEFile == null)
+            {
+                return false;
+            }
+
+            if (!TryGetFileOffset(sections, rva, out long offset))
+            {
+                return false;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                if (!TrySetPosition(offset, 4))
+                {
+                    return false;
+                }
+
+                uint header = PEFile.ReadUInt32();
+                version = (byte)((header >> 11) & 0x03);
+                return true;
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
+        private bool TryReadIa64UnwindVersion(List<IMAGE_SECTION_HEADER> sections, uint rva, out byte version)
+        {
+            version = 0;
+            if (rva == 0 || PEFileStream == null || PEFile == null)
+            {
+                return false;
+            }
+
+            if (!TryGetFileOffset(sections, rva, out long offset))
+            {
+                return false;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                if (!TrySetPosition(offset, 1))
+                {
+                    return false;
+                }
+
+                int value = PEFile.ReadByte();
+                if (value < 0)
+                {
+                    return false;
+                }
+
+                version = (byte)value;
                 return true;
             }
             finally
@@ -10965,7 +11918,7 @@ namespace PECoff
             if (_imageBase == 0 || !TryGetRvaFromAddress(enclavePointer, _imageBase, out uint rva, out _))
             {
                 Warn(ParseIssueCategory.LoadConfig, "Enclave configuration pointer could not be mapped to an RVA.");
-                return new EnclaveConfigurationInfo(0, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, string.Empty, false, Array.Empty<string>(), Array.Empty<string>());
+                return new EnclaveConfigurationInfo(0, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, string.Empty, false, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<EnclaveImportInfo>());
             }
 
             bool mapped = TryGetSectionByRva(sections, rva, out IMAGE_SECTION_HEADER section);
@@ -10973,13 +11926,13 @@ namespace PECoff
             if (!TryGetFileOffset(sections, rva, out long fileOffset))
             {
                 Warn(ParseIssueCategory.LoadConfig, "Enclave configuration RVA not mapped to a file offset.");
-                return new EnclaveConfigurationInfo(0, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, sectionName, mapped, Array.Empty<string>(), Array.Empty<string>());
+                return new EnclaveConfigurationInfo(0, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, sectionName, mapped, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<EnclaveImportInfo>());
             }
 
             if (!TrySetPosition(fileOffset, 4))
             {
                 Warn(ParseIssueCategory.LoadConfig, "Enclave configuration header outside file bounds.");
-                return new EnclaveConfigurationInfo(0, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, sectionName, mapped, Array.Empty<string>(), Array.Empty<string>());
+                return new EnclaveConfigurationInfo(0, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, sectionName, mapped, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<EnclaveImportInfo>());
             }
 
             byte[] headerBytes = new byte[4];
@@ -10989,7 +11942,7 @@ namespace PECoff
             if (!TrySetPosition(fileOffset, readSize))
             {
                 Warn(ParseIssueCategory.LoadConfig, "Enclave configuration size exceeds file bounds.");
-                return new EnclaveConfigurationInfo(size, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, sectionName, mapped, Array.Empty<string>(), Array.Empty<string>());
+                return new EnclaveConfigurationInfo(size, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, sectionName, mapped, Array.Empty<string>(), Array.Empty<string>(), Array.Empty<EnclaveImportInfo>());
             }
 
             byte[] buffer = new byte[readSize];
@@ -11008,6 +11961,7 @@ namespace PECoff
             uint enclaveSize = ReadUInt32Safe(span, 64);
             uint numberOfThreads = ReadUInt32Safe(span, 68);
             uint enclaveFlags = ReadUInt32Safe(span, 72);
+            EnclaveImportInfo[] imports = ReadEnclaveImports(sections, numberOfImports, importListRva, importEntrySize);
 
             return new EnclaveConfigurationInfo(
                 size,
@@ -11026,7 +11980,136 @@ namespace PECoff
                 sectionName,
                 mapped,
                 DecodeBitFlags(policyFlags),
-                DecodeBitFlags(enclaveFlags));
+                DecodeBitFlags(enclaveFlags),
+                imports);
+        }
+
+        private EnclaveImportInfo[] ReadEnclaveImports(List<IMAGE_SECTION_HEADER> sections, uint numberOfImports, uint importListRva, uint importEntrySize)
+        {
+            if (numberOfImports == 0 || importListRva == 0 || importEntrySize == 0 || PEFileStream == null)
+            {
+                return Array.Empty<EnclaveImportInfo>();
+            }
+
+            if (importEntrySize > int.MaxValue)
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Enclave import entry size exceeds supported limits.");
+                return Array.Empty<EnclaveImportInfo>();
+            }
+
+            if (!TryGetFileOffset(sections, importListRva, out long listOffset))
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Enclave import list RVA not mapped to a file offset.");
+                return Array.Empty<EnclaveImportInfo>();
+            }
+
+            int entrySize = (int)importEntrySize;
+            if (entrySize <= 0)
+            {
+                return Array.Empty<EnclaveImportInfo>();
+            }
+            int maxEntries = (int)Math.Min(numberOfImports, 128u);
+            long totalSize = (long)entrySize * maxEntries;
+            if (totalSize > int.MaxValue)
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Enclave import list size exceeds supported limits.");
+                return Array.Empty<EnclaveImportInfo>();
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                if (!TrySetPosition(listOffset, (int)totalSize))
+                {
+                    Warn(ParseIssueCategory.LoadConfig, "Enclave import list outside file bounds.");
+                    return Array.Empty<EnclaveImportInfo>();
+                }
+
+                List<EnclaveImportInfo> imports = new List<EnclaveImportInfo>();
+                byte[] buffer = new byte[entrySize];
+                for (int i = 0; i < maxEntries; i++)
+                {
+                    ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+                    EnclaveImportInfo info = TryParseEnclaveImportEntry(new ReadOnlySpan<byte>(buffer), i, sections);
+                    if (info != null)
+                    {
+                        imports.Add(info);
+                    }
+                }
+
+                if (numberOfImports > (uint)maxEntries)
+                {
+                    Warn(ParseIssueCategory.LoadConfig, $"Enclave import list has {numberOfImports} entries; truncated to {maxEntries}.");
+                }
+
+                if (entrySize < 80)
+                {
+                    Warn(ParseIssueCategory.LoadConfig, "Enclave import entry size is smaller than expected.");
+                }
+
+                return imports.ToArray();
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
+        private EnclaveImportInfo TryParseEnclaveImportEntry(ReadOnlySpan<byte> span, int index, List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (span.Length < 8)
+            {
+                return null;
+            }
+
+            uint matchType = ReadUInt32Safe(span, 0);
+            uint minimumSecurityVersion = ReadUInt32Safe(span, 4);
+            string uniqueOrAuthorId = ReadBytesHexSafe(span, 8, 32);
+            string familyId = ReadBytesHexSafe(span, 40, 16);
+            string imageId = ReadBytesHexSafe(span, 56, 16);
+            uint importNameRva = ReadUInt32Safe(span, 72);
+            uint reserved = ReadUInt32Safe(span, 76);
+
+            string importName = string.Empty;
+            if (importNameRva != 0 && TryGetFileOffset(sections, importNameRva, out long nameOffset))
+            {
+                if (!TryReadNullTerminatedString(nameOffset, out string value))
+                {
+                    Warn(ParseIssueCategory.LoadConfig, "Enclave import name could not be read.");
+                }
+                else
+                {
+                    importName = value;
+                }
+            }
+
+            return new EnclaveImportInfo(
+                index,
+                matchType,
+                GetEnclaveImportMatchTypeName(matchType),
+                minimumSecurityVersion,
+                uniqueOrAuthorId,
+                familyId,
+                imageId,
+                importNameRva,
+                importName,
+                reserved);
+        }
+
+        private static string GetEnclaveImportMatchTypeName(uint matchType)
+        {
+            switch (matchType)
+            {
+                case 0: return "None";
+                case 1: return "UniqueId";
+                case 2: return "AuthorId";
+                case 3: return "FamilyId";
+                case 4: return "ImageId";
+                default: return "Unknown";
+            }
         }
 
         private static uint ReadUInt32Safe(ReadOnlySpan<byte> span, int offset)
@@ -13061,6 +14144,10 @@ namespace PECoff
                 _resourceAnimatedCursors.Clear();
                 _resourceAnimatedIcons.Clear();
                 _resourceRcData.Clear();
+                _resourceHtml.Clear();
+                _resourceDlgInclude.Clear();
+                _resourcePlugAndPlay.Clear();
+                _resourceVxd.Clear();
                 _coffSymbols.Clear();
                 _coffStringTable.Clear();
                 _coffLineNumbers.Clear();
@@ -13093,6 +14180,8 @@ namespace PECoff
                 _exceptionFunctions.Clear();
                 _unwindInfoDetails.Clear();
                 _arm64UnwindInfoDetails.Clear();
+                _arm32UnwindInfoDetails.Clear();
+                _ia64UnwindInfoDetails.Clear();
                 _exceptionSummary = null;
                 _richHeader = null;
                 _tlsInfo = null;

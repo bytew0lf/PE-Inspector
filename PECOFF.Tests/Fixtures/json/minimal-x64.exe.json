@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 13,
+  "SchemaVersion": 14,
   "FilePath": "minimal-x64.exe",
   "ParseResult": {
     "Errors": [],
@@ -339,6 +339,8 @@
   "ExceptionSummary": null,
   "UnwindInfoDetails": [],
   "Arm64UnwindInfoDetails": [],
+  "Arm32UnwindInfoDetails": [],
+  "Ia64UnwindInfoDetails": [],
   "RichHeader": null,
   "TlsInfo": null,
   "LoadConfig": null,

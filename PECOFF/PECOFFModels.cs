@@ -659,6 +659,9 @@ namespace PECoff
         public int EpilogCount { get; }
         public int CodeWords { get; }
         public int SizeBytes { get; }
+        public uint ExceptionHandlerRva { get; }
+        public IReadOnlyList<Arm64EpilogScopeInfo> EpilogScopes { get; }
+        public IReadOnlyList<Arm64UnwindCodeInfo> UnwindCodes { get; }
         public string RawPreview { get; }
 
         public Arm64UnwindInfoDetail(
@@ -673,6 +676,9 @@ namespace PECoff
             int epilogCount,
             int codeWords,
             int sizeBytes,
+            uint exceptionHandlerRva,
+            Arm64EpilogScopeInfo[] epilogScopes,
+            Arm64UnwindCodeInfo[] unwindCodes,
             string rawPreview)
         {
             FunctionBegin = functionBegin;
@@ -685,6 +691,138 @@ namespace PECoff
             HasEpilogFlag = hasEpilogFlag;
             EpilogCount = epilogCount;
             CodeWords = codeWords;
+            SizeBytes = sizeBytes;
+            ExceptionHandlerRva = exceptionHandlerRva;
+            EpilogScopes = Array.AsReadOnly(epilogScopes ?? Array.Empty<Arm64EpilogScopeInfo>());
+            UnwindCodes = Array.AsReadOnly(unwindCodes ?? Array.Empty<Arm64UnwindCodeInfo>());
+            RawPreview = rawPreview ?? string.Empty;
+        }
+    }
+
+    public sealed class Arm64EpilogScopeInfo
+    {
+        public int StartOffsetBytes { get; }
+        public int StartIndex { get; }
+        public bool IsPacked { get; }
+        public bool ReservedBitsValid { get; }
+        public bool HasValidIndex { get; }
+        public bool HasValidOffset { get; }
+
+        public Arm64EpilogScopeInfo(
+            int startOffsetBytes,
+            int startIndex,
+            bool isPacked,
+            bool reservedBitsValid,
+            bool hasValidIndex,
+            bool hasValidOffset)
+        {
+            StartOffsetBytes = startOffsetBytes;
+            StartIndex = startIndex;
+            IsPacked = isPacked;
+            ReservedBitsValid = reservedBitsValid;
+            HasValidIndex = hasValidIndex;
+            HasValidOffset = hasValidOffset;
+        }
+    }
+
+    public sealed class Arm64UnwindCodeInfo
+    {
+        public int ByteIndex { get; }
+        public int Length { get; }
+        public string OpCode { get; }
+        public string Details { get; }
+        public string RawBytes { get; }
+
+        public Arm64UnwindCodeInfo(int byteIndex, int length, string opCode, string details, string rawBytes)
+        {
+            ByteIndex = byteIndex;
+            Length = length;
+            OpCode = opCode ?? string.Empty;
+            Details = details ?? string.Empty;
+            RawBytes = rawBytes ?? string.Empty;
+        }
+    }
+
+    public sealed class Arm32UnwindInfoDetail
+    {
+        public uint FunctionBegin { get; }
+        public uint FunctionEnd { get; }
+        public uint UnwindInfoAddress { get; }
+        public uint Header { get; }
+        public int FunctionLengthBytes { get; }
+        public byte Version { get; }
+        public bool HasExceptionData { get; }
+        public bool HasEpilogFlag { get; }
+        public bool IsFragment { get; }
+        public int EpilogCount { get; }
+        public int CodeWords { get; }
+        public uint ReservedBits { get; }
+        public bool ReservedBitsValid { get; }
+        public uint ExceptionHandlerRva { get; }
+        public IReadOnlyList<uint> EpilogScopes { get; }
+        public IReadOnlyList<uint> UnwindCodeWords { get; }
+        public string RawPreview { get; }
+
+        public Arm32UnwindInfoDetail(
+            uint functionBegin,
+            uint functionEnd,
+            uint unwindInfoAddress,
+            uint header,
+            int functionLengthBytes,
+            byte version,
+            bool hasExceptionData,
+            bool hasEpilogFlag,
+            bool isFragment,
+            int epilogCount,
+            int codeWords,
+            uint reservedBits,
+            bool reservedBitsValid,
+            uint exceptionHandlerRva,
+            uint[] epilogScopes,
+            uint[] unwindCodeWords,
+            string rawPreview)
+        {
+            FunctionBegin = functionBegin;
+            FunctionEnd = functionEnd;
+            UnwindInfoAddress = unwindInfoAddress;
+            Header = header;
+            FunctionLengthBytes = functionLengthBytes;
+            Version = version;
+            HasExceptionData = hasExceptionData;
+            HasEpilogFlag = hasEpilogFlag;
+            IsFragment = isFragment;
+            EpilogCount = epilogCount;
+            CodeWords = codeWords;
+            ReservedBits = reservedBits;
+            ReservedBitsValid = reservedBitsValid;
+            ExceptionHandlerRva = exceptionHandlerRva;
+            EpilogScopes = Array.AsReadOnly(epilogScopes ?? Array.Empty<uint>());
+            UnwindCodeWords = Array.AsReadOnly(unwindCodeWords ?? Array.Empty<uint>());
+            RawPreview = rawPreview ?? string.Empty;
+        }
+    }
+
+    public sealed class Ia64UnwindInfoDetail
+    {
+        public uint FunctionBegin { get; }
+        public uint FunctionEnd { get; }
+        public uint UnwindInfoAddress { get; }
+        public uint Header { get; }
+        public int SizeBytes { get; }
+        public string RawPreview { get; }
+
+        public Ia64UnwindInfoDetail(
+            uint functionBegin,
+            uint functionEnd,
+            uint unwindInfoAddress,
+            uint header,
+            int sizeBytes,
+            string rawPreview)
+        {
+            FunctionBegin = functionBegin;
+            FunctionEnd = functionEnd;
+            UnwindInfoAddress = unwindInfoAddress;
+            Header = header;
             SizeBytes = sizeBytes;
             RawPreview = rawPreview ?? string.Empty;
         }
@@ -1076,6 +1214,7 @@ namespace PECoff
         public bool IsMapped { get; }
         public IReadOnlyList<string> PolicyFlagNames { get; }
         public IReadOnlyList<string> EnclaveFlagNames { get; }
+        public IReadOnlyList<EnclaveImportInfo> Imports { get; }
 
         public EnclaveConfigurationInfo(
             uint size,
@@ -1094,7 +1233,8 @@ namespace PECoff
             string sectionName,
             bool isMapped,
             string[] policyFlagNames,
-            string[] enclaveFlagNames)
+            string[] enclaveFlagNames,
+            EnclaveImportInfo[] imports)
         {
             Size = size;
             MinimumRequiredConfigSize = minimumRequiredConfigSize;
@@ -1113,6 +1253,45 @@ namespace PECoff
             IsMapped = isMapped;
             PolicyFlagNames = Array.AsReadOnly(policyFlagNames ?? Array.Empty<string>());
             EnclaveFlagNames = Array.AsReadOnly(enclaveFlagNames ?? Array.Empty<string>());
+            Imports = Array.AsReadOnly(imports ?? Array.Empty<EnclaveImportInfo>());
+        }
+    }
+
+    public sealed class EnclaveImportInfo
+    {
+        public int Index { get; }
+        public uint MatchType { get; }
+        public string MatchTypeName { get; }
+        public uint MinimumSecurityVersion { get; }
+        public string UniqueOrAuthorId { get; }
+        public string FamilyId { get; }
+        public string ImageId { get; }
+        public uint ImportNameRva { get; }
+        public string ImportName { get; }
+        public uint Reserved { get; }
+
+        public EnclaveImportInfo(
+            int index,
+            uint matchType,
+            string matchTypeName,
+            uint minimumSecurityVersion,
+            string uniqueOrAuthorId,
+            string familyId,
+            string imageId,
+            uint importNameRva,
+            string importName,
+            uint reserved)
+        {
+            Index = index;
+            MatchType = matchType;
+            MatchTypeName = matchTypeName ?? string.Empty;
+            MinimumSecurityVersion = minimumSecurityVersion;
+            UniqueOrAuthorId = uniqueOrAuthorId ?? string.Empty;
+            FamilyId = familyId ?? string.Empty;
+            ImageId = imageId ?? string.Empty;
+            ImportNameRva = importNameRva;
+            ImportName = importName ?? string.Empty;
+            Reserved = reserved;
         }
     }
 
@@ -2651,7 +2830,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 13;
+        public const int CurrentSchemaVersion = 14;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -2746,6 +2925,8 @@ namespace PECoff
         public ExceptionDirectorySummary ExceptionSummary { get; }
         public IReadOnlyList<UnwindInfoDetail> UnwindInfoDetails { get; }
         public IReadOnlyList<Arm64UnwindInfoDetail> Arm64UnwindInfoDetails { get; }
+        public IReadOnlyList<Arm32UnwindInfoDetail> Arm32UnwindInfoDetails { get; }
+        public IReadOnlyList<Ia64UnwindInfoDetail> Ia64UnwindInfoDetails { get; }
         public RichHeaderInfo RichHeader { get; }
         public TlsInfo TlsInfo { get; }
         public LoadConfigInfo LoadConfig { get; }
@@ -2848,6 +3029,8 @@ namespace PECoff
             ExceptionDirectorySummary exceptionSummary,
             UnwindInfoDetail[] unwindInfoDetails,
             Arm64UnwindInfoDetail[] arm64UnwindInfoDetails,
+            Arm32UnwindInfoDetail[] arm32UnwindInfoDetails,
+            Ia64UnwindInfoDetail[] ia64UnwindInfoDetails,
             RichHeaderInfo richHeader,
             TlsInfo tlsInfo,
             LoadConfigInfo loadConfig,
@@ -2950,6 +3133,8 @@ namespace PECoff
             ExceptionSummary = exceptionSummary;
             UnwindInfoDetails = Array.AsReadOnly(unwindInfoDetails ?? Array.Empty<UnwindInfoDetail>());
             Arm64UnwindInfoDetails = Array.AsReadOnly(arm64UnwindInfoDetails ?? Array.Empty<Arm64UnwindInfoDetail>());
+            Arm32UnwindInfoDetails = Array.AsReadOnly(arm32UnwindInfoDetails ?? Array.Empty<Arm32UnwindInfoDetail>());
+            Ia64UnwindInfoDetails = Array.AsReadOnly(ia64UnwindInfoDetails ?? Array.Empty<Ia64UnwindInfoDetail>());
             RichHeader = richHeader;
             TlsInfo = tlsInfo;
             LoadConfig = loadConfig;
@@ -3124,6 +3309,8 @@ namespace PECoff
                 ExceptionSummary,
                 UnwindInfoDetails,
                 Arm64UnwindInfoDetails,
+                Arm32UnwindInfoDetails,
+                Ia64UnwindInfoDetails,
                 RichHeader,
                 TlsInfo,
                 LoadConfig,

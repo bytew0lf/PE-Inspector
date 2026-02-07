@@ -132,6 +132,7 @@ Defaults:
 - v11: extra resource parsing (fonts/fontdir/dlginit/animated/rcdata), debug directory POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO summaries, and SEH handler table parsing.
 - v12: debug directory MISC/OMAP/REPRO details, ARM64 unwind summaries, and load-config code-integrity/enclave metadata.
 - v13: debug directory COFF/FIXUP/ILTCG/MPX/CLSID details, load-config guard tables, and raw HTML/DLGINCLUDE/PLUGPLAY/VXD resource summaries.
+- v14: full ARM64 unwind decoding, ARM/IA64 unwind headers, and enclave import list parsing.
 
 ### Coverage map
 High-level PE/COFF structures and current coverage:
@@ -146,9 +147,9 @@ High-level PE/COFF structures and current coverage:
 - Resources (extended): implemented (fonts/fontdir, rcdata, dlginit, animated cursor/icon)
 - Debug directory: implemented (CodeView/PDB, COFF, POGO, VC_FEATURE, EX_DLLCHARACTERISTICS, FPO, MISC, OMAP, REPRO, ILTCG, MPX, CLSID, FIXUP)
 - Relocations: implemented (summaries + anomalies)
-- Exception directory: implemented (unwind + validation, AMD64/ARM64 details, x86 SEH handler table)
+- Exception directory: implemented (unwind + validation, AMD64/ARM64 full decode, ARM/IA64 header parsing, x86 SEH handler table)
 - TLS: implemented (callbacks + mapping)
-- Load config: implemented (guard flags, guard tables, code integrity, enclave config, CHPE, dynamic reloc tables, SEH handler metadata)
+- Load config: implemented (guard flags, guard tables, code integrity, enclave config + imports, CHPE, dynamic reloc tables, SEH handler metadata)
 - CLR/.NET: implemented (metadata, references, ReadyToRun)
 - Certificates/Authenticode: implemented (PKCS7/signers/timestamps)
 - COFF symbols/line numbers/string table: implemented when present

@@ -1194,6 +1194,25 @@ namespace PE_FileInspector
                                           " | CodeWords: " + detail.CodeWords.ToString(CultureInfo.InvariantCulture) +
                                           " | X: " + detail.HasXFlag +
                                           " | E: " + detail.HasEpilogFlag);
+                            if (detail.EpilogScopes.Count > 0)
+                            {
+                                sb.AppendLine("      Epilog Scopes:");
+                                foreach (Arm64EpilogScopeInfo scope in detail.EpilogScopes.Take(5))
+                                {
+                                    sb.AppendLine("        - Offset: " + scope.StartOffsetBytes.ToString(CultureInfo.InvariantCulture) +
+                                                  " | Index: " + scope.StartIndex.ToString(CultureInfo.InvariantCulture) +
+                                                  " | Packed: " + scope.IsPacked);
+                                }
+                            }
+                            if (detail.UnwindCodes.Count > 0)
+                            {
+                                sb.AppendLine("      Codes:");
+                                foreach (Arm64UnwindCodeInfo code in detail.UnwindCodes.Take(8))
+                                {
+                                    sb.AppendLine("        - [" + code.ByteIndex.ToString(CultureInfo.InvariantCulture) + "] " +
+                                                  Safe(code.OpCode) + " " + Safe(code.Details));
+                                }
+                            }
                             if (!string.IsNullOrWhiteSpace(detail.RawPreview))
                             {
                                 sb.AppendLine("      Raw: " + detail.RawPreview);
@@ -1201,6 +1220,53 @@ namespace PE_FileInspector
                         }
 
                         if (pe.Arm64UnwindInfoDetails.Length > 20)
+                        {
+                            sb.AppendLine("    (truncated)");
+                        }
+                    }
+
+                    if (pe.Arm32UnwindInfoDetails.Length > 0)
+                    {
+                        sb.AppendLine("  ARM Unwind Details:");
+                        foreach (Arm32UnwindInfoDetail detail in pe.Arm32UnwindInfoDetails.Take(20))
+                        {
+                            sb.AppendLine("    - Function: 0x" + detail.FunctionBegin.ToString("X8", CultureInfo.InvariantCulture) +
+                                          "-0x" + detail.FunctionEnd.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | Unwind: 0x" + detail.UnwindInfoAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | Len: " + detail.FunctionLengthBytes.ToString(CultureInfo.InvariantCulture) +
+                                          " | Ver: " + detail.Version.ToString(CultureInfo.InvariantCulture) +
+                                          " | E: " + detail.HasEpilogFlag +
+                                          " | X: " + detail.HasExceptionData +
+                                          " | F: " + detail.IsFragment);
+                            if (detail.UnwindCodeWords.Count > 0)
+                            {
+                                sb.AppendLine("      CodeWords: " + string.Join(", ", detail.UnwindCodeWords.Take(6)
+                                    .Select(word => "0x" + word.ToString("X8", CultureInfo.InvariantCulture))));
+                            }
+                        }
+
+                        if (pe.Arm32UnwindInfoDetails.Length > 20)
+                        {
+                            sb.AppendLine("    (truncated)");
+                        }
+                    }
+
+                    if (pe.Ia64UnwindInfoDetails.Length > 0)
+                    {
+                        sb.AppendLine("  IA64 Unwind Details:");
+                        foreach (Ia64UnwindInfoDetail detail in pe.Ia64UnwindInfoDetails.Take(20))
+                        {
+                            sb.AppendLine("    - Function: 0x" + detail.FunctionBegin.ToString("X8", CultureInfo.InvariantCulture) +
+                                          "-0x" + detail.FunctionEnd.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | Unwind: 0x" + detail.UnwindInfoAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | Header: 0x" + detail.Header.ToString("X8", CultureInfo.InvariantCulture));
+                            if (!string.IsNullOrWhiteSpace(detail.RawPreview))
+                            {
+                                sb.AppendLine("      Raw: " + detail.RawPreview);
+                            }
+                        }
+
+                        if (pe.Ia64UnwindInfoDetails.Length > 20)
                         {
                             sb.AppendLine("    (truncated)");
                         }
@@ -1715,6 +1781,34 @@ namespace PE_FileInspector
                         sb.AppendLine("    Imports: " + enclave.NumberOfImports.ToString(CultureInfo.InvariantCulture) +
                                       " | ImportListRVA: 0x" + enclave.ImportListRva.ToString("X8", CultureInfo.InvariantCulture) +
                                       " | EntrySize: " + enclave.ImportEntrySize.ToString(CultureInfo.InvariantCulture));
+                        if (enclave.Imports.Count > 0)
+                        {
+                            sb.AppendLine("    Import Entries:");
+                            foreach (EnclaveImportInfo import in enclave.Imports.Take(10))
+                            {
+                                sb.AppendLine("      - [" + import.Index.ToString(CultureInfo.InvariantCulture) + "] " +
+                                              Safe(import.MatchTypeName) +
+                                              " | MinSV: " + import.MinimumSecurityVersion.ToString(CultureInfo.InvariantCulture) +
+                                              " | Name: " + Safe(import.ImportName));
+                                if (!string.IsNullOrWhiteSpace(import.UniqueOrAuthorId))
+                                {
+                                    sb.AppendLine("        Unique/Author: " + import.UniqueOrAuthorId);
+                                }
+                                if (!string.IsNullOrWhiteSpace(import.FamilyId))
+                                {
+                                    sb.AppendLine("        FamilyId: " + import.FamilyId);
+                                }
+                                if (!string.IsNullOrWhiteSpace(import.ImageId))
+                                {
+                                    sb.AppendLine("        ImageId: " + import.ImageId);
+                                }
+                            }
+
+                            if (enclave.Imports.Count > 10)
+                            {
+                                sb.AppendLine("      (truncated)");
+                            }
+                        }
                         if (!string.IsNullOrWhiteSpace(enclave.FamilyId))
                         {
                             sb.AppendLine("    FamilyId: " + enclave.FamilyId);
@@ -2106,11 +2200,11 @@ namespace PE_FileInspector
 
             if (filter.ShouldInclude("resource-rcdata"))
             {
-                sb.AppendLine("Resource RCDATA:");
-                if (pe.ResourceRcData.Length == 0)
-                {
-                    sb.AppendLine("  (none)");
-                }
+            sb.AppendLine("Resource RCDATA:");
+            if (pe.ResourceRcData.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
                 else
                 {
                     foreach (ResourceRcDataInfo info in pe.ResourceRcData.OrderBy(r => r.NameId).ThenBy(r => r.LanguageId))
@@ -2170,6 +2264,106 @@ namespace PE_FileInspector
                                       " | DataRVA: 0x" + entry.DataRva.ToString("X8", CultureInfo.InvariantCulture) +
                                       " | FileOffset: " + fileOffset);
                     }
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resource HTML:");
+            if (pe.ResourceHtml.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceRawInfo info in pe.ResourceHtml.Take(10))
+                {
+                    sb.AppendLine("  - Id#" + info.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + info.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Size: " + info.Size.ToString(CultureInfo.InvariantCulture) +
+                                  " | Text: " + info.IsText);
+                    if (!string.IsNullOrWhiteSpace(info.Preview))
+                    {
+                        sb.AppendLine("    Preview: " + info.Preview);
+                    }
+                }
+                if (pe.ResourceHtml.Length > 10)
+                {
+                    sb.AppendLine("  (truncated)");
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resource DLGINCLUDE:");
+            if (pe.ResourceDlgInclude.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceRawInfo info in pe.ResourceDlgInclude.Take(10))
+                {
+                    sb.AppendLine("  - Id#" + info.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + info.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Size: " + info.Size.ToString(CultureInfo.InvariantCulture) +
+                                  " | Text: " + info.IsText);
+                    if (!string.IsNullOrWhiteSpace(info.Preview))
+                    {
+                        sb.AppendLine("    Preview: " + info.Preview);
+                    }
+                }
+                if (pe.ResourceDlgInclude.Length > 10)
+                {
+                    sb.AppendLine("  (truncated)");
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resource PLUGPLAY:");
+            if (pe.ResourcePlugAndPlay.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceRawInfo info in pe.ResourcePlugAndPlay.Take(10))
+                {
+                    sb.AppendLine("  - Id#" + info.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + info.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Size: " + info.Size.ToString(CultureInfo.InvariantCulture) +
+                                  " | Text: " + info.IsText);
+                    if (!string.IsNullOrWhiteSpace(info.Preview))
+                    {
+                        sb.AppendLine("    Preview: " + info.Preview);
+                    }
+                }
+                if (pe.ResourcePlugAndPlay.Length > 10)
+                {
+                    sb.AppendLine("  (truncated)");
+                }
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("Resource VXD:");
+            if (pe.ResourceVxd.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceRawInfo info in pe.ResourceVxd.Take(10))
+                {
+                    sb.AppendLine("  - Id#" + info.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + info.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Size: " + info.Size.ToString(CultureInfo.InvariantCulture) +
+                                  " | Text: " + info.IsText);
+                    if (!string.IsNullOrWhiteSpace(info.Preview))
+                    {
+                        sb.AppendLine("    Preview: " + info.Preview);
+                    }
+                }
+                if (pe.ResourceVxd.Length > 10)
+                {
+                    sb.AppendLine("  (truncated)");
                 }
             }
             sb.AppendLine();
