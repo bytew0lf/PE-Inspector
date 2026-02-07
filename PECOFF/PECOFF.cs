@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 
 using System.IO;
 using System.Reflection;
@@ -4722,6 +4723,47 @@ namespace PECoff
             return TryParseZipContainer(stream, 0, data.Length, out OverlayContainerInfo info) ? info : null;
         }
 
+        internal static OverlayContainerInfo ParseSevenZipContainerForTest(byte[] data)
+        {
+            if (data == null)
+            {
+                return null;
+            }
+
+            using MemoryStream stream = new MemoryStream(data, writable: false);
+            return TryParseSevenZipContainer(stream, 0, data.Length, out OverlayContainerInfo info) ? info : null;
+        }
+
+        internal static OverlayContainerInfo ParseRar5ContainerForTest(byte[] data)
+        {
+            if (data == null)
+            {
+                return null;
+            }
+
+            using MemoryStream stream = new MemoryStream(data, writable: false);
+            return TryParseRarContainer(stream, 0, data.Length, out OverlayContainerInfo info) ? info : null;
+        }
+
+        internal static bool TryReadRar5VintForTest(byte[] data, out ulong value, out int bytesRead)
+        {
+            value = 0;
+            bytesRead = 0;
+            if (data == null)
+            {
+                return false;
+            }
+
+            int offset = 0;
+            if (!TryReadRar5Vint(data, ref offset, out value))
+            {
+                return false;
+            }
+
+            bytesRead = offset;
+            return true;
+        }
+
         private static PackingHintInfo[] GetOverlaySignatureHints(ReadOnlySpan<byte> data)
         {
             List<PackingHintInfo> hints = new List<PackingHintInfo>();
@@ -4931,16 +4973,11 @@ namespace PECoff
                 ReadExactly(stream, signature, 0, signature.Length);
                 if (HasPrefix(signature, new byte[] { 0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x01, 0x00 }))
                 {
-                    info = new OverlayContainerInfo(
-                        "RAR",
-                        "RAR5",
-                        archiveStart,
-                        archiveSize,
-                        0,
-                        false,
-                        "RAR5 detected; entry parsing not implemented.",
-                        Array.Empty<OverlayContainerEntry>());
-                    return true;
+                    if (TryParseRar5Container(stream, archiveStart, archiveSize, out OverlayContainerInfo rar5Info))
+                    {
+                        info = rar5Info;
+                        return true;
+                    }
                 }
 
                 if (!HasPrefix(signature, new byte[] { 0x52, 0x61, 0x72, 0x21, 0x1A, 0x07, 0x00 }))
@@ -5084,15 +5121,29 @@ namespace PECoff
                     nextHeaderSize,
                     nextHeaderCrc);
 
+                OverlayContainerEntry[] entries = Array.Empty<OverlayContainerEntry>();
+                bool truncated = false;
+                if (nextHeaderSize > 0)
+                {
+                    if (TryParseSevenZipNextHeader(stream, archiveStart, nextHeaderOffset, nextHeaderSize, out entries, out truncated, out string headerNotes))
+                    {
+                        notes = AppendNote(notes, headerNotes);
+                    }
+                    else
+                    {
+                        notes = AppendNote(notes, "NextHeader parsing failed");
+                    }
+                }
+
                 info = new OverlayContainerInfo(
                     "7-Zip",
                     string.Format(CultureInfo.InvariantCulture, "{0}.{1}", major, minor),
                     archiveStart,
                     archiveSize,
-                    0,
-                    false,
+                    entries.Length,
+                    truncated,
                     notes,
-                    Array.Empty<OverlayContainerEntry>());
+                    entries);
                 return true;
             }
             finally
@@ -5102,6 +5153,1155 @@ namespace PECoff
                     stream.Position = originalPosition;
                 }
             }
+        }
+
+        private static bool TryParseRar5Container(Stream stream, long archiveStart, long archiveSize, out OverlayContainerInfo info)
+        {
+            info = null;
+            if (archiveSize < 8 || !stream.CanSeek)
+            {
+                return false;
+            }
+
+            long originalPosition = stream.Position;
+            try
+            {
+                if (!TrySetPosition(stream, archiveStart + 8, 1))
+                {
+                    return false;
+                }
+
+                long cursor = archiveStart + 8;
+                long archiveEnd = archiveStart + archiveSize;
+                int headerCount = 0;
+                int fileHeaderCount = 0;
+                List<OverlayContainerEntry> entries = new List<OverlayContainerEntry>();
+                string notes = string.Empty;
+                int maxHeaders = 200;
+
+                while (cursor + 6 <= archiveEnd && headerCount < maxHeaders)
+                {
+                    int previewSize = (int)Math.Min(64, archiveEnd - cursor);
+                    if (!TrySetPosition(stream, cursor, previewSize))
+                    {
+                        break;
+                    }
+
+                    byte[] headerPrefix = new byte[previewSize];
+                    ReadExactly(stream, headerPrefix, 0, headerPrefix.Length);
+                    int offset = 0;
+                    if (headerPrefix.Length < 5)
+                    {
+                        break;
+                    }
+
+                    uint _ = ReadUInt32(headerPrefix, offset);
+                    offset += 4;
+                    if (!TryReadRar5Vint(headerPrefix, ref offset, out ulong headerSize))
+                    {
+                        notes = AppendNote(notes, "RAR5 header size decode failed");
+                        break;
+                    }
+
+                    long headerDataStart = cursor + offset;
+                    long headerDataEnd = headerDataStart + (long)headerSize;
+                    if (headerSize == 0 || headerDataEnd > archiveEnd)
+                    {
+                        notes = AppendNote(notes, "RAR5 header size out of bounds");
+                        break;
+                    }
+
+                    int headerBaseOffset = offset;
+                    int headerDataOffset = offset;
+                    if (!TryReadRar5Vint(headerPrefix, ref headerDataOffset, out ulong headerType))
+                    {
+                        notes = AppendNote(notes, "RAR5 header type decode failed");
+                        break;
+                    }
+
+                    if (!TryReadRar5Vint(headerPrefix, ref headerDataOffset, out ulong headerFlags))
+                    {
+                        notes = AppendNote(notes, "RAR5 header flags decode failed");
+                        break;
+                    }
+
+                    if (headerType == 1)
+                    {
+                        // main header
+                    }
+
+                    ulong dataSize = 0;
+                    if ((headerFlags & 0x0002) != 0)
+                    {
+                        TryReadRar5Vint(headerPrefix, ref headerDataOffset, out dataSize);
+                    }
+
+                    ulong headerDataSize = 0;
+                    if (headerSize > (ulong)(headerDataOffset - headerBaseOffset))
+                    {
+                        headerDataSize = headerSize - (ulong)(headerDataOffset - headerBaseOffset);
+                    }
+                    long fileHeaderDataStart = cursor + headerDataOffset;
+
+                    if (headerType == 2 || headerType == 3)
+                    {
+                        if (TryParseRar5FileEntry(stream, fileHeaderDataStart, headerDataSize, dataSize, out OverlayContainerEntry entry))
+                        {
+                            entries.Add(entry);
+                            fileHeaderCount++;
+                        }
+                    }
+
+                    headerCount++;
+                    long next = headerDataEnd;
+                    if (dataSize > 0)
+                    {
+                        long remaining = archiveEnd - headerDataEnd;
+                        next += (long)Math.Min(dataSize, (ulong)Math.Max(0, remaining));
+                    }
+
+                    if (next <= cursor)
+                    {
+                        break;
+                    }
+
+                    cursor = next;
+                }
+
+                if (headerCount >= maxHeaders)
+                {
+                    notes = AppendNote(notes, "header parsing truncated");
+                }
+
+                notes = AppendNote(notes, string.Format(CultureInfo.InvariantCulture, "Headers={0}, FileHeaders={1}", headerCount, fileHeaderCount));
+                info = new OverlayContainerInfo(
+                    "RAR",
+                    "RAR5",
+                    archiveStart,
+                    archiveSize,
+                    fileHeaderCount,
+                    headerCount >= maxHeaders,
+                    notes,
+                    entries.ToArray());
+                return true;
+            }
+            finally
+            {
+                if (stream.CanSeek)
+                {
+                    stream.Position = originalPosition;
+                }
+            }
+        }
+
+        private static bool TryParseRar5FileEntry(Stream stream, long headerDataStart, ulong headerSize, ulong packedSize, out OverlayContainerEntry entry)
+        {
+            entry = null;
+            if (!stream.CanSeek || headerSize == 0)
+            {
+                return false;
+            }
+
+            int readSize = (int)Math.Min((long)headerSize, 4096);
+            if (!TrySetPosition(stream, headerDataStart, readSize))
+            {
+                return false;
+            }
+
+            byte[] buffer = new byte[readSize];
+            ReadExactly(stream, buffer, 0, buffer.Length);
+            ReadOnlySpan<byte> span = new ReadOnlySpan<byte>(buffer);
+
+            int offset = 0;
+            if (!TryReadRar5Vint(span, ref offset, out ulong fileFlags))
+            {
+                return false;
+            }
+
+            ulong uncompressedSize = 0;
+            int tempOffset = offset;
+            if (TryReadRar5Vint(span, ref tempOffset, out ulong sizeCandidate))
+            {
+                uncompressedSize = sizeCandidate;
+                offset = tempOffset;
+            }
+
+            if (!TryFindRar5FileName(span, offset, out string name, out bool isDirectory, out string notes))
+            {
+                return false;
+            }
+
+            if ((fileFlags & 0x01) != 0)
+            {
+                isDirectory = true;
+            }
+
+            entry = new OverlayContainerEntry(
+                name,
+                (long)Math.Min(packedSize, (ulong)long.MaxValue),
+                (long)Math.Min(uncompressedSize, (ulong)long.MaxValue),
+                "RAR5",
+                (ushort)Math.Min(fileFlags, ushort.MaxValue),
+                isDirectory,
+                notes);
+            return true;
+        }
+
+        private static bool TryFindRar5FileName(ReadOnlySpan<byte> data, int startOffset, out string name, out bool isDirectory, out string notes)
+        {
+            name = string.Empty;
+            isDirectory = false;
+            notes = string.Empty;
+            if (startOffset >= data.Length)
+            {
+                return false;
+            }
+
+            int offset = startOffset;
+            if (TryReadRar5Vint(data, ref offset, out ulong length) &&
+                length > 0 &&
+                length <= (ulong)(data.Length - offset))
+            {
+                if (TryDecodeUtf8String(data.Slice(offset, (int)length), out name))
+                {
+                    isDirectory = name.EndsWith("/", StringComparison.Ordinal) || name.EndsWith("\\", StringComparison.Ordinal);
+                    return true;
+                }
+            }
+
+            int bestOffset = -1;
+            ulong bestLength = 0;
+            string bestName = string.Empty;
+            int scan = startOffset;
+            while (scan < data.Length)
+            {
+                int tmp = scan;
+                if (!TryReadRar5Vint(data, ref tmp, out ulong candidate))
+                {
+                    break;
+                }
+
+                if (candidate > 0 && candidate <= (ulong)(data.Length - tmp))
+                {
+                    ReadOnlySpan<byte> nameBytes = data.Slice(tmp, (int)candidate);
+                    if (TryDecodeUtf8String(nameBytes, out string decoded))
+                    {
+                        bestOffset = tmp;
+                        bestLength = candidate;
+                        bestName = decoded;
+                        if (candidate == (ulong)(data.Length - tmp))
+                        {
+                            break;
+                        }
+                    }
+                }
+
+                scan = tmp;
+            }
+
+            if (bestOffset >= 0)
+            {
+                name = bestName;
+                isDirectory = name.EndsWith("/", StringComparison.Ordinal) || name.EndsWith("\\", StringComparison.Ordinal);
+                if (bestLength < (ulong)(data.Length - bestOffset))
+                {
+                    notes = "RAR5 name extracted with trailing data";
+                }
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryDecodeUtf8String(ReadOnlySpan<byte> data, out string value)
+        {
+            value = string.Empty;
+            if (data.Length == 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                value = Encoding.UTF8.GetString(data).TrimEnd('\0');
+                return !string.IsNullOrWhiteSpace(value);
+            }
+            catch (DecoderFallbackException)
+            {
+                return false;
+            }
+        }
+
+        private static bool TryParseSevenZipNextHeader(Stream stream, long archiveStart, ulong nextHeaderOffset, ulong nextHeaderSize, out OverlayContainerEntry[] entries, out bool truncated, out string notes)
+        {
+            entries = Array.Empty<OverlayContainerEntry>();
+            truncated = false;
+            notes = string.Empty;
+
+            if (nextHeaderSize == 0 || nextHeaderSize > int.MaxValue)
+            {
+                notes = "NextHeader size unsupported";
+                return false;
+            }
+
+            long headerOffset = archiveStart + 32 + (long)nextHeaderOffset;
+            int size = (int)nextHeaderSize;
+            int maxSize = Math.Min(size, 1024 * 512);
+            if (!TrySetPosition(stream, headerOffset, maxSize))
+            {
+                notes = "NextHeader offset invalid";
+                return false;
+            }
+
+            byte[] buffer = new byte[maxSize];
+            ReadExactly(stream, buffer, 0, buffer.Length);
+            ReadOnlySpan<byte> span = new ReadOnlySpan<byte>(buffer);
+
+            if (TryParseSevenZipHeader(span, out OverlayContainerEntry[] parsedEntries, out bool parsedTruncated, out string parsedNotes))
+            {
+                entries = parsedEntries;
+                truncated = parsedTruncated;
+                notes = parsedNotes;
+                return true;
+            }
+
+            if (TryDecodeSevenZipEncodedHeader(stream, archiveStart, nextHeaderOffset, nextHeaderSize, span, out byte[] decodedHeader, out string decodeNotes))
+            {
+                notes = AppendNote(notes, decodeNotes);
+                if (TryParseSevenZipHeader(decodedHeader, out parsedEntries, out parsedTruncated, out parsedNotes))
+                {
+                    entries = parsedEntries;
+                    truncated = parsedTruncated;
+                    notes = AppendNote(notes, parsedNotes);
+                    return true;
+                }
+            }
+            else
+            {
+                notes = AppendNote(notes, decodeNotes);
+            }
+
+            return false;
+        }
+
+        private static bool TryParseSevenZipFilesInfo(ReadOnlySpan<byte> span, ref int offset, out OverlayContainerEntry[] entries, out bool truncated, out string notes)
+        {
+            entries = Array.Empty<OverlayContainerEntry>();
+            truncated = false;
+            notes = string.Empty;
+
+            if (!TryRead7zUInt64(span, ref offset, out ulong numFiles) || numFiles > int.MaxValue)
+            {
+                return false;
+            }
+
+            int fileCount = (int)numFiles;
+            string[] names = new string[fileCount];
+            bool[] emptyStreams = new bool[fileCount];
+            bool[] emptyFiles = new bool[fileCount];
+
+            while (offset < span.Length)
+            {
+                byte propId = ReadByte(span, ref offset);
+                if (propId == 0x00)
+                {
+                    break;
+                }
+
+                if (!TryRead7zUInt64(span, ref offset, out ulong size) || size > int.MaxValue || offset + (int)size > span.Length)
+                {
+                    return false;
+                }
+
+                ReadOnlySpan<byte> data = span.Slice(offset, (int)size);
+                offset += (int)size;
+
+                if (propId == 0x11)
+                {
+                    ParseSevenZipNames(data, fileCount, names);
+                }
+                else if (propId == 0x14)
+                {
+                    ReadSevenZipBoolVector(data, fileCount, emptyStreams);
+                }
+                else if (propId == 0x15)
+                {
+                    ReadSevenZipBoolVector(data, fileCount, emptyFiles);
+                }
+            }
+
+            List<OverlayContainerEntry> results = new List<OverlayContainerEntry>();
+            int maxEntries = Math.Min(fileCount, 200);
+            for (int i = 0; i < maxEntries; i++)
+            {
+                string name = string.IsNullOrWhiteSpace(names[i]) ? $"file-{i}" : names[i];
+                bool isDirectory = emptyStreams[i] && !emptyFiles[i];
+                results.Add(new OverlayContainerEntry(
+                    name,
+                    0,
+                    0,
+                    string.Empty,
+                    0,
+                    isDirectory,
+                    string.Empty));
+            }
+
+            if (fileCount > maxEntries)
+            {
+                truncated = true;
+            }
+
+            entries = results.ToArray();
+            notes = $"Files={fileCount}";
+            return true;
+        }
+
+        private static bool TryParseSevenZipHeader(ReadOnlySpan<byte> span, out OverlayContainerEntry[] entries, out bool truncated, out string notes)
+        {
+            entries = Array.Empty<OverlayContainerEntry>();
+            truncated = false;
+            notes = string.Empty;
+            if (span.Length == 0)
+            {
+                notes = "Empty header";
+                return false;
+            }
+
+            int offset = 0;
+            byte id = ReadByte(span, ref offset);
+            if (id == 0x17)
+            {
+                notes = "EncodedHeader";
+                return false;
+            }
+
+            if (id != 0x01)
+            {
+                notes = "Unknown header";
+                return false;
+            }
+
+            List<OverlayContainerEntry> parsedEntries = new List<OverlayContainerEntry>();
+            bool parsedFiles = false;
+            while (offset < span.Length)
+            {
+                byte sectionId = ReadByte(span, ref offset);
+                if (sectionId == 0x00)
+                {
+                    break;
+                }
+
+                if (sectionId == 0x05)
+                {
+                    if (TryParseSevenZipFilesInfo(span, ref offset, out OverlayContainerEntry[] fileEntries, out bool filesTruncated, out string fileNotes))
+                    {
+                        parsedEntries.AddRange(fileEntries);
+                        truncated |= filesTruncated;
+                        notes = AppendNote(notes, fileNotes);
+                        parsedFiles = true;
+                    }
+                    else
+                    {
+                        notes = AppendNote(notes, "FilesInfo parse failed");
+                    }
+                }
+                else if (sectionId == 0x02)
+                {
+                    SkipSevenZipArchiveProperties(span, ref offset);
+                }
+                else if (sectionId == 0x03 || sectionId == 0x04)
+                {
+                    if (!SkipSevenZipStreamsInfo(span, ref offset))
+                    {
+                        notes = AppendNote(notes, "StreamsInfo parse failed");
+                        break;
+                    }
+                }
+                else
+                {
+                    notes = AppendNote(notes, "Unknown header section");
+                    break;
+                }
+            }
+
+            if (!parsedFiles)
+            {
+                notes = AppendNote(notes, "FilesInfo not found");
+            }
+
+            entries = parsedEntries.ToArray();
+            return true;
+        }
+
+        private static bool TryDecodeSevenZipEncodedHeader(Stream stream, long archiveStart, ulong nextHeaderOffset, ulong nextHeaderSize, ReadOnlySpan<byte> span, out byte[] decodedHeader, out string notes)
+        {
+            decodedHeader = Array.Empty<byte>();
+            notes = string.Empty;
+            if (span.Length == 0 || span[0] != 0x17)
+            {
+                notes = "Not an encoded header";
+                return false;
+            }
+
+            int offset = 1;
+            if (!TryParseSevenZipStreamsInfoForEncodedHeader(span, ref offset, out ulong packPos, out ulong packSize, out byte[] methodId))
+            {
+                notes = "EncodedHeader StreamsInfo parse failed";
+                return false;
+            }
+
+            string methodName = GetSevenZipMethodName(methodId);
+            if (methodId.Length != 1 || methodId[0] != 0x00)
+            {
+                notes = "EncodedHeader method unsupported: " + methodName;
+                return false;
+            }
+
+            if (packSize == 0 || packSize > int.MaxValue)
+            {
+                notes = "EncodedHeader pack size unsupported";
+                return false;
+            }
+
+            long headerOffset = archiveStart + 32 + (long)nextHeaderOffset;
+            long dataOffset = headerOffset + (long)nextHeaderSize + (long)packPos;
+            if (!TrySetPosition(stream, dataOffset, (int)packSize))
+            {
+                notes = "EncodedHeader data offset invalid";
+                return false;
+            }
+
+            decodedHeader = new byte[(int)packSize];
+            ReadExactly(stream, decodedHeader, 0, decodedHeader.Length);
+            notes = "EncodedHeader decoded via copy";
+            return true;
+        }
+
+        private static bool TryParseSevenZipStreamsInfoForEncodedHeader(ReadOnlySpan<byte> span, ref int offset, out ulong packPos, out ulong packSize, out byte[] methodId)
+        {
+            packPos = 0;
+            packSize = 0;
+            methodId = Array.Empty<byte>();
+
+            bool hasPackInfo = false;
+            bool hasUnpackInfo = false;
+            while (offset < span.Length)
+            {
+                byte id = ReadByte(span, ref offset);
+                if (id == 0x00)
+                {
+                    return hasPackInfo && hasUnpackInfo;
+                }
+
+                if (id == 0x06)
+                {
+                    if (!TryRead7zUInt64(span, ref offset, out packPos) ||
+                        !TryRead7zUInt64(span, ref offset, out ulong numPack) ||
+                        numPack == 0)
+                    {
+                        return false;
+                    }
+
+                    byte sizesId = ReadByte(span, ref offset);
+                    if (sizesId != 0x09)
+                    {
+                        return false;
+                    }
+
+                    if (!TryRead7zUInt64(span, ref offset, out packSize))
+                    {
+                        return false;
+                    }
+
+                    if (numPack > 1)
+                    {
+                        for (ulong i = 1; i < numPack; i++)
+                        {
+                            if (!TryRead7zUInt64(span, ref offset, out _))
+                            {
+                                return false;
+                            }
+                        }
+                    }
+
+                    byte next = ReadByte(span, ref offset);
+                    if (next == 0x0A)
+                    {
+                        if (!SkipSevenZipCrc(span, ref offset, numPack))
+                        {
+                            return false;
+                        }
+
+                        next = ReadByte(span, ref offset);
+                    }
+
+                    if (next != 0x00)
+                    {
+                        return false;
+                    }
+
+                    hasPackInfo = true;
+                }
+                else if (id == 0x07)
+                {
+                    byte folderId = ReadByte(span, ref offset);
+                    if (folderId != 0x0B)
+                    {
+                        return false;
+                    }
+
+                    if (!TryRead7zUInt64(span, ref offset, out ulong numFolders) || numFolders != 1)
+                    {
+                        return false;
+                    }
+
+                    if (offset >= span.Length || ReadByte(span, ref offset) != 0x00)
+                    {
+                        return false;
+                    }
+
+                    if (!TryRead7zUInt64(span, ref offset, out ulong numCoders) || numCoders != 1)
+                    {
+                        return false;
+                    }
+
+                    byte coderFlags = ReadByte(span, ref offset);
+                    int idSize = coderFlags & 0x0F;
+                    if (idSize <= 0 || offset + idSize > span.Length)
+                    {
+                        return false;
+                    }
+
+                    methodId = span.Slice(offset, idSize).ToArray();
+                    offset += idSize;
+
+                    if ((coderFlags & 0x10) != 0)
+                    {
+                        if (!TryRead7zUInt64(span, ref offset, out _) || !TryRead7zUInt64(span, ref offset, out _))
+                        {
+                            return false;
+                        }
+                    }
+
+                    if ((coderFlags & 0x20) != 0)
+                    {
+                        if (!TryRead7zUInt64(span, ref offset, out ulong propsSize) || propsSize > (ulong)(span.Length - offset))
+                        {
+                            return false;
+                        }
+
+                        offset += (int)propsSize;
+                    }
+
+                    byte unpackId = ReadByte(span, ref offset);
+                    if (unpackId != 0x0C)
+                    {
+                        return false;
+                    }
+
+                    if (!TryRead7zUInt64(span, ref offset, out _))
+                    {
+                        return false;
+                    }
+
+                    byte next = ReadByte(span, ref offset);
+                    if (next == 0x0A)
+                    {
+                        if (!SkipSevenZipCrc(span, ref offset, 1))
+                        {
+                            return false;
+                        }
+
+                        next = ReadByte(span, ref offset);
+                    }
+
+                    if (next != 0x00)
+                    {
+                        return false;
+                    }
+
+                    hasUnpackInfo = true;
+                }
+                else if (id == 0x08)
+                {
+                    if (!SkipSevenZipSubStreamsInfo(span, ref offset))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        private static string GetSevenZipMethodName(byte[] methodId)
+        {
+            if (methodId == null || methodId.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            if (methodId.Length == 1 && methodId[0] == 0x00)
+            {
+                return "Copy";
+            }
+
+            if (methodId.Length == 3 && methodId[0] == 0x03 && methodId[1] == 0x01 && methodId[2] == 0x01)
+            {
+                return "LZMA";
+            }
+
+            if (methodId.Length == 1 && methodId[0] == 0x21)
+            {
+                return "LZMA2";
+            }
+
+            return "Method_" + ToHex(methodId);
+        }
+
+        private static void ParseSevenZipNames(ReadOnlySpan<byte> data, int fileCount, string[] names)
+        {
+            if (data.Length < 2 || names == null)
+            {
+                return;
+            }
+
+            int offset = 0;
+            byte external = data[offset++];
+            if (external != 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < fileCount && offset + 1 < data.Length; i++)
+            {
+                int start = offset;
+                while (offset + 1 < data.Length)
+                {
+                    if (data[offset] == 0 && data[offset + 1] == 0)
+                    {
+                        break;
+                    }
+
+                    offset += 2;
+                }
+
+                if (offset > start)
+                {
+                    names[i] = Encoding.Unicode.GetString(data.Slice(start, offset - start));
+                }
+
+                offset += 2;
+            }
+        }
+
+        private static void ReadSevenZipBoolVector(ReadOnlySpan<byte> data, int count, bool[] target)
+        {
+            if (target == null || count == 0 || data.Length == 0)
+            {
+                return;
+            }
+
+            int needed = (count + 7) / 8;
+            int offset = 0;
+            bool allDefined = false;
+            if (data.Length == needed + 1 && (data[0] == 0 || data[0] == 1))
+            {
+                allDefined = data[0] == 1;
+                offset = 1;
+            }
+
+            if (allDefined)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    target[i] = true;
+                }
+                return;
+            }
+
+            for (int i = 0; i < count; i++)
+            {
+                int byteIndex = i / 8;
+                int bitIndex = i % 8;
+                if (offset + byteIndex >= data.Length)
+                {
+                    return;
+                }
+
+                int mask = 0x80 >> bitIndex;
+                target[i] = (data[offset + byteIndex] & mask) != 0;
+            }
+        }
+
+        private static void SkipSevenZipArchiveProperties(ReadOnlySpan<byte> span, ref int offset)
+        {
+            while (offset < span.Length)
+            {
+                byte propId = ReadByte(span, ref offset);
+                if (propId == 0x00)
+                {
+                    return;
+                }
+
+                if (!TryRead7zUInt64(span, ref offset, out ulong size))
+                {
+                    return;
+                }
+
+                offset += (int)Math.Min(size, (ulong)(span.Length - offset));
+            }
+        }
+
+        private static bool SkipSevenZipStreamsInfo(ReadOnlySpan<byte> span, ref int offset)
+        {
+            while (offset < span.Length)
+            {
+                byte id = ReadByte(span, ref offset);
+                if (id == 0x00)
+                {
+                    return true;
+                }
+
+                if (id == 0x06)
+                {
+                    if (!TryRead7zUInt64(span, ref offset, out ulong _) ||
+                        !TryRead7zUInt64(span, ref offset, out ulong numPack) ||
+                        !SkipSevenZipPackInfo(span, ref offset, numPack))
+                    {
+                        return false;
+                    }
+                }
+                else if (id == 0x07)
+                {
+                    if (!SkipSevenZipUnpackInfo(span, ref offset))
+                    {
+                        return false;
+                    }
+                }
+                else if (id == 0x08)
+                {
+                    if (!SkipSevenZipSubStreamsInfo(span, ref offset))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool SkipSevenZipPackInfo(ReadOnlySpan<byte> span, ref int offset, ulong numPackStreams)
+        {
+            byte id = ReadByte(span, ref offset);
+            if (id != 0x09)
+            {
+                return false;
+            }
+
+            for (ulong i = 0; i < numPackStreams; i++)
+            {
+                if (!TryRead7zUInt64(span, ref offset, out _))
+                {
+                    return false;
+                }
+            }
+
+            id = ReadByte(span, ref offset);
+            if (id == 0x0A)
+            {
+                if (!SkipSevenZipCrc(span, ref offset, numPackStreams))
+                {
+                    return false;
+                }
+
+                id = ReadByte(span, ref offset);
+            }
+
+            return id == 0x00;
+        }
+
+        private static bool SkipSevenZipUnpackInfo(ReadOnlySpan<byte> span, ref int offset)
+        {
+            byte id = ReadByte(span, ref offset);
+            if (id != 0x0B)
+            {
+                return false;
+            }
+
+            if (!TryRead7zUInt64(span, ref offset, out ulong numFolders))
+            {
+                return false;
+            }
+
+            if (offset >= span.Length)
+            {
+                return false;
+            }
+
+            byte external = ReadByte(span, ref offset);
+            if (external != 0)
+            {
+                return false;
+            }
+
+            for (ulong i = 0; i < numFolders; i++)
+            {
+                if (!SkipSevenZipFolder(span, ref offset))
+                {
+                    return false;
+                }
+            }
+
+            id = ReadByte(span, ref offset);
+            if (id != 0x0C)
+            {
+                return false;
+            }
+
+            for (ulong i = 0; i < numFolders; i++)
+            {
+                if (!TryRead7zUInt64(span, ref offset, out _))
+                {
+                    return false;
+                }
+            }
+
+            id = ReadByte(span, ref offset);
+            if (id == 0x0A)
+            {
+                if (!SkipSevenZipCrc(span, ref offset, numFolders))
+                {
+                    return false;
+                }
+
+                id = ReadByte(span, ref offset);
+            }
+
+            return id == 0x00;
+        }
+
+        private static bool SkipSevenZipSubStreamsInfo(ReadOnlySpan<byte> span, ref int offset)
+        {
+            while (offset < span.Length)
+            {
+                byte id = ReadByte(span, ref offset);
+                if (id == 0x00)
+                {
+                    return true;
+                }
+
+                if (id == 0x0D || id == 0x0E)
+                {
+                    if (!TryRead7zUInt64(span, ref offset, out ulong num) || num > int.MaxValue)
+                    {
+                        return false;
+                    }
+
+                    for (int i = 0; i < (int)num; i++)
+                    {
+                        if (!TryRead7zUInt64(span, ref offset, out _))
+                        {
+                            return false;
+                        }
+                    }
+                }
+                else if (id == 0x0A)
+                {
+                    if (!TryRead7zUInt64(span, ref offset, out ulong num) || num > int.MaxValue)
+                    {
+                        return false;
+                    }
+
+                    if (!SkipSevenZipCrc(span, ref offset, num))
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    return false;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool SkipSevenZipFolder(ReadOnlySpan<byte> span, ref int offset)
+        {
+            if (!TryRead7zUInt64(span, ref offset, out ulong numCoders) || numCoders > 64)
+            {
+                return false;
+            }
+
+            ulong totalIn = 0;
+            ulong totalOut = 0;
+            for (ulong i = 0; i < numCoders; i++)
+            {
+                if (offset >= span.Length)
+                {
+                    return false;
+                }
+
+                byte coderFlags = ReadByte(span, ref offset);
+                int idSize = coderFlags & 0x0F;
+                if (offset + idSize > span.Length)
+                {
+                    return false;
+                }
+
+                offset += idSize;
+                ulong inStreams = 1;
+                ulong outStreams = 1;
+                if ((coderFlags & 0x10) != 0)
+                {
+                    if (!TryRead7zUInt64(span, ref offset, out inStreams) ||
+                        !TryRead7zUInt64(span, ref offset, out outStreams))
+                    {
+                        return false;
+                    }
+                }
+
+                totalIn += inStreams;
+                totalOut += outStreams;
+
+                if ((coderFlags & 0x20) != 0)
+                {
+                    if (!TryRead7zUInt64(span, ref offset, out ulong propsSize) || propsSize > (ulong)(span.Length - offset))
+                    {
+                        return false;
+                    }
+
+                    offset += (int)propsSize;
+                }
+            }
+
+            if (!TryRead7zUInt64(span, ref offset, out ulong bindPairs))
+            {
+                return false;
+            }
+
+            for (ulong i = 0; i < bindPairs; i++)
+            {
+                if (!TryRead7zUInt64(span, ref offset, out _) || !TryRead7zUInt64(span, ref offset, out _))
+                {
+                    return false;
+                }
+            }
+
+            ulong numPackedStreams = totalOut > bindPairs ? totalOut - bindPairs : 0;
+            for (ulong i = 0; i < numPackedStreams; i++)
+            {
+                if (!TryRead7zUInt64(span, ref offset, out _))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool SkipSevenZipCrc(ReadOnlySpan<byte> span, ref int offset, ulong count)
+        {
+            if (count == 0)
+            {
+                return true;
+            }
+
+            if (offset >= span.Length)
+            {
+                return false;
+            }
+
+            bool allDefined = ReadByte(span, ref offset) != 0;
+            if (!allDefined)
+            {
+                int needed = (int)((count + 7) / 8);
+                offset += Math.Min(needed, span.Length - offset);
+            }
+
+            int crcBytes = allDefined ? (int)Math.Min(count * 4, (ulong)(span.Length - offset)) : 0;
+            offset += crcBytes;
+            return true;
+        }
+
+        private static byte ReadByte(ReadOnlySpan<byte> span, ref int offset)
+        {
+            if (offset >= span.Length)
+            {
+                return 0;
+            }
+
+            return span[offset++];
+        }
+
+        private static bool TryRead7zUInt64(ReadOnlySpan<byte> span, ref int offset, out ulong value)
+        {
+            value = 0;
+            if (offset >= span.Length)
+            {
+                return false;
+            }
+
+            byte first = span[offset++];
+            int mask = 0x80;
+            int extra = 0;
+            while ((first & mask) != 0)
+            {
+                extra++;
+                mask >>= 1;
+            }
+
+            if (extra == 0)
+            {
+                value = first;
+                return true;
+            }
+
+            if (extra > 8 || offset + extra > span.Length)
+            {
+                return false;
+            }
+
+            int lowBits = 7 - extra;
+            ulong result = (ulong)(first & ((1 << lowBits) - 1));
+            for (int i = 0; i < extra; i++)
+            {
+                result |= ((ulong)span[offset++]) << (lowBits + (8 * i));
+            }
+
+            value = result;
+            return true;
+        }
+
+        private static bool TryReadRar5Vint(ReadOnlySpan<byte> data, ref int offset, out ulong value)
+        {
+            value = 0;
+            int shift = 0;
+            int start = offset;
+            while (offset < data.Length && shift < 64)
+            {
+                byte b = data[offset++];
+                value |= (ulong)(b & 0x7F) << shift;
+                if ((b & 0x80) == 0)
+                {
+                    return true;
+                }
+
+                shift += 7;
+            }
+
+            offset = start;
+            value = 0;
+            return false;
         }
 
         private static bool TryParseRar4FileHeader(byte[] data, ushort flags, out OverlayContainerEntry entry)
@@ -7584,16 +8784,37 @@ namespace PECoff
                 return new RcDataFormatInfo("SQLite", string.Empty);
             }
 
+            if (HasPrefix(data, new byte[] { 0x4D, 0x53, 0x43, 0x46 }))
+            {
+                return new RcDataFormatInfo("CAB", "MSCF header");
+            }
+
+            if (HasPrefix(data, new byte[] { 0x55, 0x6E, 0x69, 0x74, 0x79, 0x46, 0x53 }))
+            {
+                return new RcDataFormatInfo("UnityFS", string.Empty);
+            }
+
             if (!string.IsNullOrWhiteSpace(text))
             {
                 string trimmed = text.TrimStart();
                 if (trimmed.StartsWith("{", StringComparison.Ordinal) || trimmed.StartsWith("[", StringComparison.Ordinal))
                 {
+                    if (TryParseJsonDetails(trimmed, out string format, out string details))
+                    {
+                        return new RcDataFormatInfo(format, details);
+                    }
+
                     return new RcDataFormatInfo("JSON", string.Empty);
                 }
 
                 if (trimmed.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase) || trimmed.StartsWith("<", StringComparison.Ordinal))
                 {
+                    if (TryParseManifestSchema(trimmed, out ManifestSchemaInfo schema))
+                    {
+                        string details = BuildManifestDetails(schema);
+                        return new RcDataFormatInfo("XML-Manifest", details);
+                    }
+
                     return new RcDataFormatInfo("XML", string.Empty);
                 }
 
@@ -7601,6 +8822,115 @@ namespace PECoff
             }
 
             return new RcDataFormatInfo("Unknown", string.Empty);
+        }
+
+        private static bool TryParseJsonDetails(string text, out string format, out string details)
+        {
+            format = string.Empty;
+            details = string.Empty;
+            if (string.IsNullOrWhiteSpace(text) || text.Length > 65536)
+            {
+                return false;
+            }
+
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(text, new JsonDocumentOptions { AllowTrailingCommas = true });
+                JsonElement root = doc.RootElement;
+                if (root.ValueKind == JsonValueKind.Object)
+                {
+                    if (root.TryGetProperty("$schema", out JsonElement schema))
+                    {
+                        format = "JSON-Schema";
+                        details = "$schema=" + SafeJsonValue(schema);
+                        if (root.TryGetProperty("title", out JsonElement title))
+                        {
+                            details = AppendNote(details, "title=" + SafeJsonValue(title));
+                        }
+                        if (root.TryGetProperty("type", out JsonElement type))
+                        {
+                            details = AppendNote(details, "type=" + SafeJsonValue(type));
+                        }
+                        if (root.TryGetProperty("properties", out JsonElement props) && props.ValueKind == JsonValueKind.Object)
+                        {
+                            details = AppendNote(details, "properties=" + props.EnumerateObject().Count().ToString(CultureInfo.InvariantCulture));
+                        }
+                        return true;
+                    }
+
+                    format = "JSON";
+                    details = "keys=" + root.EnumerateObject().Count().ToString(CultureInfo.InvariantCulture);
+                    return true;
+                }
+
+                if (root.ValueKind == JsonValueKind.Array)
+                {
+                    format = "JSON";
+                    details = "arrayLength=" + root.GetArrayLength().ToString(CultureInfo.InvariantCulture);
+                    return true;
+                }
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+
+            return false;
+        }
+
+        private static string SafeJsonValue(JsonElement element)
+        {
+            switch (element.ValueKind)
+            {
+                case JsonValueKind.String:
+                    return element.GetString() ?? string.Empty;
+                case JsonValueKind.Number:
+                case JsonValueKind.True:
+                case JsonValueKind.False:
+                    return element.ToString();
+                default:
+                    return element.ValueKind.ToString();
+            }
+        }
+
+        private static string BuildManifestDetails(ManifestSchemaInfo schema)
+        {
+            string details = string.Empty;
+            if (!string.IsNullOrWhiteSpace(schema.RequestedExecutionLevel))
+            {
+                details = AppendNote(details, "requestedExecutionLevel=" + schema.RequestedExecutionLevel);
+            }
+            if (!string.IsNullOrWhiteSpace(schema.UiAccess))
+            {
+                details = AppendNote(details, "uiAccess=" + schema.UiAccess);
+            }
+            if (!string.IsNullOrWhiteSpace(schema.DpiAware))
+            {
+                details = AppendNote(details, "dpiAware=" + schema.DpiAware);
+            }
+            if (!string.IsNullOrWhiteSpace(schema.DpiAwareness))
+            {
+                details = AppendNote(details, "dpiAwareness=" + schema.DpiAwareness);
+            }
+            if (!string.IsNullOrWhiteSpace(schema.UiLanguage))
+            {
+                details = AppendNote(details, "uiLanguage=" + schema.UiLanguage);
+            }
+            if (!string.IsNullOrWhiteSpace(schema.AssemblyIdentityName))
+            {
+                details = AppendNote(details, "assembly=" + schema.AssemblyIdentityName);
+            }
+            if (!string.IsNullOrWhiteSpace(schema.AssemblyIdentityVersion))
+            {
+                details = AppendNote(details, "version=" + schema.AssemblyIdentityVersion);
+            }
+
+            if (string.IsNullOrWhiteSpace(details))
+            {
+                details = schema.IsValid ? "valid" : "invalid";
+            }
+
+            return details;
         }
 
         private static ResourceRawInfo BuildResourceRawInfo(ResourceEntry entry, ReadOnlySpan<byte> data)
