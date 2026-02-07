@@ -1012,6 +1012,11 @@ namespace PECoff
         public ulong AddressOfCallbacks { get; }
         public uint SizeOfZeroFill { get; }
         public uint Characteristics { get; }
+        public uint RawDataSize { get; }
+        public uint RawDataRva { get; }
+        public bool RawDataMapped { get; }
+        public string RawDataSectionName { get; }
+        public int AlignmentBytes { get; }
         public IReadOnlyList<ulong> CallbackAddresses { get; }
         public IReadOnlyList<TlsCallbackInfo> CallbackInfos { get; }
 
@@ -1022,6 +1027,11 @@ namespace PECoff
             ulong addressOfCallbacks,
             uint sizeOfZeroFill,
             uint characteristics,
+            uint rawDataSize,
+            uint rawDataRva,
+            bool rawDataMapped,
+            string rawDataSectionName,
+            int alignmentBytes,
             ulong[] callbackAddresses,
             TlsCallbackInfo[] callbackInfos)
         {
@@ -1031,6 +1041,11 @@ namespace PECoff
             AddressOfCallbacks = addressOfCallbacks;
             SizeOfZeroFill = sizeOfZeroFill;
             Characteristics = characteristics;
+            RawDataSize = rawDataSize;
+            RawDataRva = rawDataRva;
+            RawDataMapped = rawDataMapped;
+            RawDataSectionName = rawDataSectionName ?? string.Empty;
+            AlignmentBytes = alignmentBytes;
             CallbackAddresses = Array.AsReadOnly(callbackAddresses ?? Array.Empty<ulong>());
             CallbackInfos = Array.AsReadOnly(callbackInfos ?? Array.Empty<TlsCallbackInfo>());
         }
@@ -1456,19 +1471,38 @@ namespace PECoff
         public bool IsMapped { get; }
         public string SectionName { get; }
         public IReadOnlyList<uint> HandlerRvas { get; }
+        public IReadOnlyList<SehHandlerEntryInfo> Entries { get; }
 
         public SehHandlerTableInfo(
             ulong tableAddress,
             uint handlerCount,
             bool isMapped,
             string sectionName,
-            uint[] handlerRvas)
+            uint[] handlerRvas,
+            SehHandlerEntryInfo[] entries)
         {
             TableAddress = tableAddress;
             HandlerCount = handlerCount;
             IsMapped = isMapped;
             SectionName = sectionName ?? string.Empty;
             HandlerRvas = Array.AsReadOnly(handlerRvas ?? Array.Empty<uint>());
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<SehHandlerEntryInfo>());
+        }
+    }
+
+    public sealed class SehHandlerEntryInfo
+    {
+        public uint Rva { get; }
+        public string SectionName { get; }
+        public string SymbolName { get; }
+        public string ResolutionSource { get; }
+
+        public SehHandlerEntryInfo(uint rva, string sectionName, string symbolName, string resolutionSource)
+        {
+            Rva = rva;
+            SectionName = sectionName ?? string.Empty;
+            SymbolName = symbolName ?? string.Empty;
+            ResolutionSource = resolutionSource ?? string.Empty;
         }
     }
 
@@ -2059,6 +2093,97 @@ namespace PECoff
         }
     }
 
+    public sealed class CoffRelocationInfo
+    {
+        public string SectionName { get; }
+        public int SectionIndex { get; }
+        public uint VirtualAddress { get; }
+        public uint SymbolIndex { get; }
+        public string SymbolName { get; }
+        public ushort Type { get; }
+        public string TypeName { get; }
+        public long FileOffset { get; }
+
+        public CoffRelocationInfo(
+            string sectionName,
+            int sectionIndex,
+            uint virtualAddress,
+            uint symbolIndex,
+            string symbolName,
+            ushort type,
+            string typeName,
+            long fileOffset)
+        {
+            SectionName = sectionName ?? string.Empty;
+            SectionIndex = sectionIndex;
+            VirtualAddress = virtualAddress;
+            SymbolIndex = symbolIndex;
+            SymbolName = symbolName ?? string.Empty;
+            Type = type;
+            TypeName = typeName ?? string.Empty;
+            FileOffset = fileOffset;
+        }
+    }
+
+    public sealed class CoffAuxSymbolInfo
+    {
+        public string Kind { get; }
+        public string FileName { get; }
+        public uint TagIndex { get; }
+        public uint TotalSize { get; }
+        public uint PointerToLineNumber { get; }
+        public uint PointerToNextFunction { get; }
+        public uint SectionLength { get; }
+        public ushort RelocationCount { get; }
+        public ushort LineNumberCount { get; }
+        public uint Checksum { get; }
+        public ushort SectionNumber { get; }
+        public byte Selection { get; }
+        public string SelectionName { get; }
+        public uint WeakTagIndex { get; }
+        public uint WeakCharacteristics { get; }
+        public string WeakCharacteristicsName { get; }
+        public string RawPreview { get; }
+
+        public CoffAuxSymbolInfo(
+            string kind,
+            string fileName,
+            uint tagIndex,
+            uint totalSize,
+            uint pointerToLineNumber,
+            uint pointerToNextFunction,
+            uint sectionLength,
+            ushort relocationCount,
+            ushort lineNumberCount,
+            uint checksum,
+            ushort sectionNumber,
+            byte selection,
+            string selectionName,
+            uint weakTagIndex,
+            uint weakCharacteristics,
+            string weakCharacteristicsName,
+            string rawPreview)
+        {
+            Kind = kind ?? string.Empty;
+            FileName = fileName ?? string.Empty;
+            TagIndex = tagIndex;
+            TotalSize = totalSize;
+            PointerToLineNumber = pointerToLineNumber;
+            PointerToNextFunction = pointerToNextFunction;
+            SectionLength = sectionLength;
+            RelocationCount = relocationCount;
+            LineNumberCount = lineNumberCount;
+            Checksum = checksum;
+            SectionNumber = sectionNumber;
+            Selection = selection;
+            SelectionName = selectionName ?? string.Empty;
+            WeakTagIndex = weakTagIndex;
+            WeakCharacteristics = weakCharacteristics;
+            WeakCharacteristicsName = weakCharacteristicsName ?? string.Empty;
+            RawPreview = rawPreview ?? string.Empty;
+        }
+    }
+
     public sealed class CoffSymbolInfo
     {
         public int Index { get; }
@@ -2070,6 +2195,7 @@ namespace PECoff
         public byte StorageClass { get; }
         public byte AuxSymbolCount { get; }
         public byte[] AuxData { get; }
+        public IReadOnlyList<CoffAuxSymbolInfo> AuxSymbols { get; }
 
         public CoffSymbolInfo(
             int index,
@@ -2080,7 +2206,8 @@ namespace PECoff
             ushort type,
             byte storageClass,
             byte auxSymbolCount,
-            byte[] auxData)
+            byte[] auxData,
+            CoffAuxSymbolInfo[] auxSymbols)
         {
             Index = index;
             Name = name ?? string.Empty;
@@ -2091,6 +2218,7 @@ namespace PECoff
             StorageClass = storageClass;
             AuxSymbolCount = auxSymbolCount;
             AuxData = auxData ?? Array.Empty<byte>();
+            AuxSymbols = Array.AsReadOnly(auxSymbols ?? Array.Empty<CoffAuxSymbolInfo>());
         }
     }
 
@@ -2962,7 +3090,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 15;
+        public const int CurrentSchemaVersion = 16;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -3068,6 +3196,7 @@ namespace PECoff
         public LoadConfigInfo LoadConfig { get; }
         public IReadOnlyList<string> AssemblyReferences { get; }
         public IReadOnlyList<AssemblyReferenceInfo> AssemblyReferenceInfos { get; }
+        public IReadOnlyList<CoffRelocationInfo> CoffRelocations { get; }
         public IReadOnlyList<CoffSymbolInfo> CoffSymbols { get; }
         public IReadOnlyList<CoffStringTableEntry> CoffStringTable { get; }
         public IReadOnlyList<CoffLineNumberInfo> CoffLineNumbers { get; }
@@ -3176,6 +3305,7 @@ namespace PECoff
             LoadConfigInfo loadConfig,
             string[] assemblyReferences,
             AssemblyReferenceInfo[] assemblyReferenceInfos,
+            CoffRelocationInfo[] coffRelocations,
             CoffSymbolInfo[] coffSymbols,
             CoffStringTableEntry[] coffStringTable,
             CoffLineNumberInfo[] coffLineNumbers)
@@ -3284,6 +3414,7 @@ namespace PECoff
             LoadConfig = loadConfig;
             AssemblyReferences = Array.AsReadOnly(assemblyReferences ?? Array.Empty<string>());
             AssemblyReferenceInfos = Array.AsReadOnly(assemblyReferenceInfos ?? Array.Empty<AssemblyReferenceInfo>());
+            CoffRelocations = Array.AsReadOnly(coffRelocations ?? Array.Empty<CoffRelocationInfo>());
             CoffSymbols = Array.AsReadOnly(coffSymbols ?? Array.Empty<CoffSymbolInfo>());
             CoffStringTable = Array.AsReadOnly(coffStringTable ?? Array.Empty<CoffStringTableEntry>());
             CoffLineNumbers = Array.AsReadOnly(coffLineNumbers ?? Array.Empty<CoffLineNumberInfo>());
@@ -3464,6 +3595,7 @@ namespace PECoff
                 LoadConfig,
                 AssemblyReferences = assemblyRefs,
                 AssemblyReferenceInfos,
+                CoffRelocations,
                 CoffSymbols,
                 CoffStringTable,
                 CoffLineNumbers

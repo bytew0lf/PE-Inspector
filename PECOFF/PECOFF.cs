@@ -575,6 +575,7 @@ namespace PECoff
 
         private const int CoffSymbolSize = 18;
         private const int CoffLineNumberSize = 6;
+        private const int CoffRelocationSize = 10;
 
         private sealed class ImportDescriptorInternal
         {
@@ -2461,6 +2462,12 @@ namespace PECoff
             get { return _coffSymbols.ToArray(); }
         }
 
+        private readonly List<CoffRelocationInfo> _coffRelocations = new List<CoffRelocationInfo>();
+        public CoffRelocationInfo[] CoffRelocations
+        {
+            get { return _coffRelocations.ToArray(); }
+        }
+
         private readonly List<CoffStringTableEntry> _coffStringTable = new List<CoffStringTableEntry>();
         public CoffStringTableEntry[] CoffStringTable
         {
@@ -2979,6 +2986,8 @@ namespace PECoff
                     }
                 }
 
+                CoffAuxSymbolInfo[] auxSymbols = DecodeCoffAuxSymbols(name, type, storageClass, auxCount, auxData);
+
                 _coffSymbols.Add(new CoffSymbolInfo(
                     index,
                     name,
@@ -2988,7 +2997,8 @@ namespace PECoff
                     type,
                     storageClass,
                     auxCount,
-                    auxData));
+                    auxData,
+                    auxSymbols));
 
                 if (auxCount > 0)
                 {
@@ -3060,6 +3070,220 @@ namespace PECoff
                         offset + entryOffset));
                 }
             }
+        }
+
+        private void ParseCoffRelocations(List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (PEFileStream == null || sections == null || sections.Count == 0)
+            {
+                return;
+            }
+
+            _coffRelocations.Clear();
+            long fileLength = PEFileStream.Length;
+            for (int i = 0; i < sections.Count; i++)
+            {
+                IMAGE_SECTION_HEADER section = sections[i];
+                if (section.NumberOfRelocations == 0)
+                {
+                    continue;
+                }
+
+                if (section.PointerToRelocations == 0)
+                {
+                    Warn(ParseIssueCategory.Header, $"Section {NormalizeSectionName(section)} has relocations but no pointer.");
+                    continue;
+                }
+
+                long offset = section.PointerToRelocations;
+                long totalSize = (long)section.NumberOfRelocations * CoffRelocationSize;
+                if (offset + totalSize > fileLength)
+                {
+                    Warn(ParseIssueCategory.Header, $"Relocation table for section {NormalizeSectionName(section)} exceeds file size.");
+                    totalSize = Math.Max(0, fileLength - offset);
+                }
+
+                if (totalSize <= 0 || totalSize > int.MaxValue)
+                {
+                    continue;
+                }
+
+                if (!TrySetPosition(offset, (int)totalSize))
+                {
+                    Warn(ParseIssueCategory.Header, $"Relocation table for section {NormalizeSectionName(section)} outside file bounds.");
+                    continue;
+                }
+
+                byte[] buffer = new byte[totalSize];
+                ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+                int entries = buffer.Length / CoffRelocationSize;
+                for (int j = 0; j < entries; j++)
+                {
+                    int entryOffset = j * CoffRelocationSize;
+                    uint virtualAddress = ReadUInt32(buffer, entryOffset);
+                    uint symbolIndex = ReadUInt32(buffer, entryOffset + 4);
+                    ushort type = ReadUInt16(buffer, entryOffset + 8);
+                    string typeName = GetCoffRelocationTypeName(_machineType, type);
+                    string symbolName = string.Empty;
+                    if (symbolIndex < _coffSymbols.Count)
+                    {
+                        symbolName = _coffSymbols[(int)symbolIndex].Name;
+                    }
+
+                    _coffRelocations.Add(new CoffRelocationInfo(
+                        NormalizeSectionName(section),
+                        i + 1,
+                        virtualAddress,
+                        symbolIndex,
+                        symbolName,
+                        type,
+                        typeName,
+                        offset + entryOffset));
+                }
+            }
+        }
+
+        private static CoffAuxSymbolInfo[] DecodeCoffAuxSymbols(string name, ushort type, byte storageClass, byte auxCount, byte[] auxData)
+        {
+            if (auxCount == 0 || auxData == null || auxData.Length == 0)
+            {
+                return Array.Empty<CoffAuxSymbolInfo>();
+            }
+
+            List<CoffAuxSymbolInfo> results = new List<CoffAuxSymbolInfo>();
+            int totalAux = auxData.Length / CoffSymbolSize;
+            if (storageClass == 0x67) // FILE
+            {
+                string fileName = ReadNullTerminatedAscii(auxData, 0, out int _);
+                results.Add(new CoffAuxSymbolInfo(
+                    "File",
+                    fileName,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    string.Empty,
+                    0,
+                    0,
+                    string.Empty,
+                    BuildHexPreview(auxData, 32)));
+                return results.ToArray();
+            }
+
+            bool isFunction = (type & 0x20) != 0;
+            if (isFunction && auxData.Length >= CoffSymbolSize)
+            {
+                uint tagIndex = ReadUInt32(auxData, 0);
+                uint totalSize = ReadUInt32(auxData, 4);
+                uint linePtr = ReadUInt32(auxData, 8);
+                uint nextFn = ReadUInt32(auxData, 12);
+                results.Add(new CoffAuxSymbolInfo(
+                    "FunctionDefinition",
+                    string.Empty,
+                    tagIndex,
+                    totalSize,
+                    linePtr,
+                    nextFn,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    string.Empty,
+                    0,
+                    0,
+                    string.Empty,
+                    BuildHexPreview(auxData, 32)));
+                return results.ToArray();
+            }
+
+            if (storageClass == 0x03 && auxData.Length >= CoffSymbolSize) // SECTION
+            {
+                uint length = ReadUInt32(auxData, 0);
+                ushort relocations = ReadUInt16(auxData, 4);
+                ushort lineNumbers = ReadUInt16(auxData, 6);
+                uint checksum = ReadUInt32(auxData, 8);
+                ushort sectionNumber = ReadUInt16(auxData, 12);
+                byte selection = auxData[14];
+                results.Add(new CoffAuxSymbolInfo(
+                    "SectionDefinition",
+                    string.Empty,
+                    0,
+                    0,
+                    0,
+                    0,
+                    length,
+                    relocations,
+                    lineNumbers,
+                    checksum,
+                    sectionNumber,
+                    selection,
+                    GetComdatSelectionName(selection),
+                    0,
+                    0,
+                    string.Empty,
+                    BuildHexPreview(auxData, 32)));
+                return results.ToArray();
+            }
+
+            if (storageClass == 0x69 && auxData.Length >= CoffSymbolSize) // WEAK_EXTERNAL
+            {
+                uint tagIndex = ReadUInt32(auxData, 0);
+                uint characteristics = ReadUInt32(auxData, 4);
+                results.Add(new CoffAuxSymbolInfo(
+                    "WeakExternal",
+                    string.Empty,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    string.Empty,
+                    tagIndex,
+                    characteristics,
+                    GetWeakExternalCharacteristicsName(characteristics),
+                    BuildHexPreview(auxData, 32)));
+                return results.ToArray();
+            }
+
+            for (int i = 0; i < totalAux; i++)
+            {
+                int offset = i * CoffSymbolSize;
+                byte[] slice = new byte[Math.Min(CoffSymbolSize, auxData.Length - offset)];
+                Array.Copy(auxData, offset, slice, 0, slice.Length);
+                results.Add(new CoffAuxSymbolInfo(
+                    "Unknown",
+                    string.Empty,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    string.Empty,
+                    0,
+                    0,
+                    string.Empty,
+                    BuildHexPreview(slice, 32)));
+            }
+
+            return results.ToArray();
         }
 
         private void ParseCoffStringTable(byte[] data, Dictionary<uint, string> table)
@@ -3171,6 +3395,8 @@ namespace PECoff
                     }
                 }
 
+                CoffAuxSymbolInfo[] auxSymbols = DecodeCoffAuxSymbols(name, type, storageClass, auxCount, auxData);
+
                 parsed.Add(new CoffSymbolInfo(
                     index,
                     name,
@@ -3180,7 +3406,8 @@ namespace PECoff
                     type,
                     storageClass,
                     auxCount,
-                    auxData));
+                    auxData,
+                    auxSymbols));
 
                 if (auxCount > 0)
                 {
@@ -3840,6 +4067,7 @@ namespace PECoff
                 _loadConfig,
                 _assemblyReferenceInfos.Select(r => r.Name).ToArray(),
                 _assemblyReferenceInfos.ToArray(),
+                _coffRelocations.ToArray(),
                 _coffSymbols.ToArray(),
                 _coffStringTable.ToArray(),
                 _coffLineNumbers.ToArray());
@@ -9257,6 +9485,128 @@ namespace PECoff
             return flags.ToArray();
         }
 
+        private static string GetCoffRelocationTypeName(MachineTypes machine, ushort type)
+        {
+            switch (machine)
+            {
+                case MachineTypes.IMAGE_FILE_MACHINE_I386:
+                    switch (type)
+                    {
+                        case 0x0000: return "ABSOLUTE";
+                        case 0x0001: return "DIR16";
+                        case 0x0002: return "REL16";
+                        case 0x0006: return "DIR32";
+                        case 0x0007: return "DIR32NB";
+                        case 0x0009: return "SEG12";
+                        case 0x000A: return "SECTION";
+                        case 0x000B: return "SECREL";
+                        case 0x000C: return "TOKEN";
+                        case 0x000D: return "SECREL7";
+                        case 0x0014: return "REL32";
+                        default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
+                    }
+                case MachineTypes.IMAGE_FILE_MACHINE_AMD64:
+                    switch (type)
+                    {
+                        case 0x0000: return "ABSOLUTE";
+                        case 0x0001: return "ADDR64";
+                        case 0x0002: return "ADDR32";
+                        case 0x0003: return "ADDR32NB";
+                        case 0x0004: return "REL32";
+                        case 0x0005: return "REL32_1";
+                        case 0x0006: return "REL32_2";
+                        case 0x0007: return "REL32_3";
+                        case 0x0008: return "REL32_4";
+                        case 0x0009: return "REL32_5";
+                        case 0x000A: return "SECTION";
+                        case 0x000B: return "SECREL";
+                        case 0x000C: return "SECREL7";
+                        case 0x000D: return "TOKEN";
+                        case 0x000E: return "SREL32";
+                        case 0x000F: return "PAIR";
+                        case 0x0010: return "SSPAN32";
+                        default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
+                    }
+                case MachineTypes.IMAGE_FILE_MACHINE_ARM:
+                case MachineTypes.IMAGE_FILE_MACHINE_ARMNT:
+                    switch (type)
+                    {
+                        case 0x0000: return "ABSOLUTE";
+                        case 0x0001: return "ADDR32";
+                        case 0x0002: return "ADDR32NB";
+                        case 0x0003: return "BRANCH24";
+                        case 0x0004: return "BRANCH11";
+                        case 0x0005: return "TOKEN";
+                        case 0x0006: return "BLX24";
+                        case 0x0007: return "BLX11";
+                        case 0x0008: return "SECTION";
+                        case 0x0009: return "SECREL";
+                        case 0x000A: return "MOV32";
+                        case 0x000B: return "THUMB_MOV32";
+                        case 0x000C: return "THUMB_BRANCH20";
+                        case 0x000D: return "THUMB_BRANCH24";
+                        case 0x000E: return "THUMB_BLX23";
+                        case 0x0010: return "THUMB_CODE";
+                        case 0x0011: return "THUMB_BRANCH11";
+                        case 0x0012: return "THUMB_BRANCH8";
+                        default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
+                    }
+                case MachineTypes.IMAGE_FILE_MACHINE_ARM64:
+                case MachineTypes.IMAGE_FILE_MACHINE_ARM64EC:
+                    switch (type)
+                    {
+                        case 0x0000: return "ABSOLUTE";
+                        case 0x0001: return "ADDR32";
+                        case 0x0002: return "ADDR32NB";
+                        case 0x0003: return "BRANCH26";
+                        case 0x0004: return "PAGEBASE_REL21";
+                        case 0x0005: return "REL21";
+                        case 0x0006: return "PAGEOFFSET_12A";
+                        case 0x0007: return "PAGEOFFSET_12L";
+                        case 0x0008: return "SECREL";
+                        case 0x0009: return "SECREL_LOW12A";
+                        case 0x000A: return "SECREL_HIGH12A";
+                        case 0x000B: return "SECREL_LOW12L";
+                        case 0x000C: return "TOKEN";
+                        case 0x000D: return "SECTION";
+                        case 0x000E: return "ADDR64";
+                        case 0x000F: return "BRANCH19";
+                        case 0x0010: return "BRANCH14";
+                        case 0x0011: return "REL32";
+                        default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
+                    }
+                default:
+                    return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
+            }
+        }
+
+        private static string GetComdatSelectionName(byte selection)
+        {
+            switch (selection)
+            {
+                case 0: return "NONE";
+                case 1: return "NODUPLICATES";
+                case 2: return "ANY";
+                case 3: return "SAME_SIZE";
+                case 4: return "EXACT_MATCH";
+                case 5: return "ASSOCIATIVE";
+                case 6: return "LARGEST";
+                case 7: return "NEWEST";
+                default: return string.Format(CultureInfo.InvariantCulture, "0x{0:X2}", selection);
+            }
+        }
+
+        private static string GetWeakExternalCharacteristicsName(uint value)
+        {
+            switch (value)
+            {
+                case 1: return "SEARCH_NOLIBRARY";
+                case 2: return "SEARCH_LIBRARY";
+                case 3: return "SEARCH_ALIAS";
+                default: return string.Format(CultureInfo.InvariantCulture, "0x{0:X8}", value);
+            }
+        }
+
         private static string NormalizeSectionName(string name)
         {
             if (string.IsNullOrEmpty(name))
@@ -11423,6 +11773,42 @@ namespace PECoff
                 characteristics = tls.Characteristics;
             }
 
+            uint rawDataSize = 0;
+            uint rawDataRva = 0;
+            bool rawDataMapped = false;
+            string rawDataSectionName = string.Empty;
+            int alignmentBytes = DecodeTlsAlignmentBytes(characteristics);
+
+            if (startRaw != 0 && endRaw >= startRaw)
+            {
+                ulong diff = endRaw - startRaw;
+                rawDataSize = diff > uint.MaxValue ? uint.MaxValue : (uint)diff;
+                if (TryVaToRva(startRaw, imageBase, out uint startRva))
+                {
+                    rawDataRva = startRva;
+                    if (TryGetSectionByRva(sections, startRva, out IMAGE_SECTION_HEADER rawSection))
+                    {
+                        rawDataSectionName = NormalizeSectionName(rawSection.Section);
+                        rawDataMapped = true;
+                        if (rawDataSize > 0)
+                        {
+                            uint sectionSize = Math.Max(rawSection.VirtualSize, rawSection.SizeOfRawData);
+                            ulong endRva = (ulong)startRva + rawDataSize;
+                            ulong sectionEnd = (ulong)rawSection.VirtualAddress + sectionSize;
+                            if (endRva > sectionEnd)
+                            {
+                                rawDataMapped = false;
+                                Warn(ParseIssueCategory.Tls, "TLS raw data range exceeds section bounds.");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        Warn(ParseIssueCategory.Tls, "TLS raw data RVA not mapped to a section.");
+                    }
+                }
+            }
+
             ulong[] callbacks = Array.Empty<ulong>();
             List<TlsCallbackInfo> callbackInfos = new List<TlsCallbackInfo>();
             if (callbacksAddr != 0 &&
@@ -11505,6 +11891,11 @@ namespace PECoff
                 callbacksAddr,
                 zeroFill,
                 characteristics,
+                rawDataSize,
+                rawDataRva,
+                rawDataMapped,
+                rawDataSectionName,
+                alignmentBytes,
                 callbacks,
                 callbackInfos.ToArray());
         }
@@ -11851,7 +12242,7 @@ namespace PECoff
             if (!TryGetRvaFromAddress(tableAddress, _imageBase, out uint rva, out string source))
             {
                 Warn(ParseIssueCategory.LoadConfig, "SEH handler table address could not be mapped to an RVA.");
-                return new SehHandlerTableInfo(tableAddress, handlerCount, false, string.Empty, Array.Empty<uint>());
+                return new SehHandlerTableInfo(tableAddress, handlerCount, false, string.Empty, Array.Empty<uint>(), Array.Empty<SehHandlerEntryInfo>());
             }
 
             bool mapped = TryGetSectionByRva(sections, rva, out IMAGE_SECTION_HEADER section);
@@ -11863,6 +12254,7 @@ namespace PECoff
 
             int maxEntries = (int)Math.Min(handlerCount, 512u);
             uint[] handlers = Array.Empty<uint>();
+            List<SehHandlerEntryInfo> entries = new List<SehHandlerEntryInfo>();
             if (TryGetFileOffset(sections, rva, handlerCount * 4u, out long fileOffset) &&
                 TrySetPosition(fileOffset, maxEntries * 4))
             {
@@ -11870,6 +12262,19 @@ namespace PECoff
                 for (int i = 0; i < maxEntries; i++)
                 {
                     handlers[i] = PEFile.ReadUInt32();
+                }
+
+                foreach (uint handlerRva in handlers)
+                {
+                    string handlerSection = string.Empty;
+                    if (handlerRva != 0 && TryGetSectionByRva(sections, handlerRva, out IMAGE_SECTION_HEADER handlerSectionHeader))
+                    {
+                        handlerSection = NormalizeSectionName(handlerSectionHeader.Section);
+                    }
+
+                    string symbolName = ResolveExportNameByRva(handlerRva);
+                    string sourceName = string.IsNullOrWhiteSpace(symbolName) ? string.Empty : "Export";
+                    entries.Add(new SehHandlerEntryInfo(handlerRva, handlerSection, symbolName, sourceName));
                 }
 
                 if (handlerCount > maxEntries)
@@ -11882,7 +12287,7 @@ namespace PECoff
                 Warn(ParseIssueCategory.LoadConfig, "SEH handler table could not be read from file.");
             }
 
-            return new SehHandlerTableInfo(tableAddress, handlerCount, mapped, sectionName, handlers);
+            return new SehHandlerTableInfo(tableAddress, handlerCount, mapped, sectionName, handlers, entries.ToArray());
         }
 
         private GuardRvaTableInfo BuildGuardRvaTableInfo(string name, ulong tablePointer, ulong count, uint entrySize, List<IMAGE_SECTION_HEADER> sections)
@@ -12472,6 +12877,23 @@ namespace PECoff
             }
 
             return false;
+        }
+
+        private string ResolveExportNameByRva(uint rva)
+        {
+            return TryResolveExportName(rva, out string name) ? name : string.Empty;
+        }
+
+        private static int DecodeTlsAlignmentBytes(uint characteristics)
+        {
+            uint alignment = (characteristics >> 20) & 0xF;
+            if (alignment == 0 || alignment > 0xE)
+            {
+                return 0;
+            }
+
+            int shift = (int)alignment - 1;
+            return shift >= 0 && shift < 31 ? 1 << shift : 0;
         }
 
         private static bool TryParseClrMetadata(byte[] buffer, int length, IMAGE_COR20_HEADER header, out ClrMetadataInfo info)
@@ -14444,6 +14866,7 @@ namespace PECoff
             BuildSectionPermissionInfos(sections);
             ParseCoffSymbolTable(coffHeader.PointerToSymbolTable, coffHeader.NumberOfSymbols, sections);
             ParseCoffLineNumbers(sections);
+            ParseCoffRelocations(sections);
             ComputeOverlayInfo(sections);
             ComputeSectionEntropies(sections);
             ComputePackingHints(sections);
@@ -14494,6 +14917,7 @@ namespace PECoff
                 _resourcePlugAndPlay.Clear();
                 _resourceVxd.Clear();
                 _coffSymbols.Clear();
+                _coffRelocations.Clear();
                 _coffStringTable.Clear();
                 _coffLineNumbers.Clear();
                 _versionInfoDetails = null;
@@ -14734,6 +15158,7 @@ namespace PECoff
                     BuildDataDirectoryInfos(dataDirectory, sections, isPe32Plus);
                     ParseCoffSymbolTable(peHeader.FileHeader.PointerToSymbolTable, peHeader.FileHeader.NumberOfSymbols, sections);
                     ParseCoffLineNumbers(sections);
+                    ParseCoffRelocations(sections);
 
                     for (int i = 0; i < dataDirectory.Length; i++)
                     {

@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 15,
+  "SchemaVersion": 16,
   "FilePath": "minimal-x86.exe",
   "ParseResult": {
     "Errors": [],
@@ -350,6 +350,7 @@
   "LoadConfig": null,
   "AssemblyReferences": [],
   "AssemblyReferenceInfos": [],
+  "CoffRelocations": [],
   "CoffSymbols": [],
   "CoffStringTable": [],
   "CoffLineNumbers": []

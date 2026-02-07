@@ -1694,6 +1694,17 @@ namespace PE_FileInspector
                 sb.AppendLine("  AddressOfCallbacks: 0x" + pe.TlsInfo.AddressOfCallbacks.ToString("X", CultureInfo.InvariantCulture));
                 sb.AppendLine("  SizeOfZeroFill: " + pe.TlsInfo.SizeOfZeroFill.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Characteristics: 0x" + pe.TlsInfo.Characteristics.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  RawDataSize: " + pe.TlsInfo.RawDataSize.ToString(CultureInfo.InvariantCulture));
+                sb.AppendLine("  RawDataRva: 0x" + pe.TlsInfo.RawDataRva.ToString("X8", CultureInfo.InvariantCulture));
+                sb.AppendLine("  RawDataMapped: " + pe.TlsInfo.RawDataMapped.ToString(CultureInfo.InvariantCulture));
+                if (!string.IsNullOrWhiteSpace(pe.TlsInfo.RawDataSectionName))
+                {
+                    sb.AppendLine("  RawDataSection: " + Safe(pe.TlsInfo.RawDataSectionName));
+                }
+                if (pe.TlsInfo.AlignmentBytes > 0)
+                {
+                    sb.AppendLine("  AlignmentBytes: " + pe.TlsInfo.AlignmentBytes.ToString(CultureInfo.InvariantCulture));
+                }
                 if (pe.TlsInfo.CallbackInfos.Count > 0)
                 {
                     sb.AppendLine("  Callbacks:");
@@ -1792,6 +1803,27 @@ namespace PE_FileInspector
                         {
                             sb.AppendLine("    Sample: " + string.Join(", ", pe.LoadConfig.SehHandlerTable.HandlerRvas.Take(10)
                                 .Select(rva => "0x" + rva.ToString("X8", CultureInfo.InvariantCulture))));
+                        }
+                        if (pe.LoadConfig.SehHandlerTable.Entries.Count > 0)
+                        {
+                            sb.AppendLine("    Entries:");
+                            foreach (SehHandlerEntryInfo entry in pe.LoadConfig.SehHandlerTable.Entries.Take(10))
+                            {
+                                string line = "      - 0x" + entry.Rva.ToString("X8", CultureInfo.InvariantCulture);
+                                if (!string.IsNullOrWhiteSpace(entry.SectionName))
+                                {
+                                    line += " | Section: " + Safe(entry.SectionName);
+                                }
+                                if (!string.IsNullOrWhiteSpace(entry.SymbolName))
+                                {
+                                    line += " | Symbol: " + Safe(entry.SymbolName);
+                                }
+                                if (!string.IsNullOrWhiteSpace(entry.ResolutionSource))
+                                {
+                                    line += " | Resolved: " + Safe(entry.ResolutionSource);
+                                }
+                                sb.AppendLine(line);
+                            }
                         }
                     }
                     sb.AppendLine("  GuardFlags: 0x" + pe.LoadConfig.GuardFlags.ToString("X8", CultureInfo.InvariantCulture));

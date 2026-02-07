@@ -48,4 +48,37 @@ public class CoffSymbolTests
         Assert.Equal((uint)4, stringEntries[0].Offset);
         Assert.Equal("LongSymbolName", stringEntries[0].Value);
     }
+
+    [Fact]
+    public void Coff_Symbols_Parse_File_Aux()
+    {
+        byte[] symbol = new byte[18];
+        Encoding.ASCII.GetBytes(".file").CopyTo(symbol, 0);
+        BitConverter.GetBytes(0u).CopyTo(symbol, 8);
+        BitConverter.GetBytes((short)0).CopyTo(symbol, 12);
+        BitConverter.GetBytes((ushort)0).CopyTo(symbol, 14);
+        symbol[16] = 0x67; // IMAGE_SYM_CLASS_FILE
+        symbol[17] = 1;
+
+        byte[] aux = new byte[18];
+        Encoding.ASCII.GetBytes("main.c").CopyTo(aux, 0);
+
+        byte[] symbolData = new byte[36];
+        Array.Copy(symbol, 0, symbolData, 0, symbol.Length);
+        Array.Copy(aux, 0, symbolData, symbol.Length, aux.Length);
+
+        bool parsed = PECOFF.TryParseCoffSymbolTableForTest(
+            symbolData,
+            Array.Empty<byte>(),
+            Array.Empty<string>(),
+            out CoffSymbolInfo[] symbols,
+            out CoffStringTableEntry[] stringEntries);
+
+        Assert.True(parsed);
+        Assert.Single(symbols);
+        Assert.Empty(stringEntries);
+        Assert.Single(symbols[0].AuxSymbols);
+        Assert.Equal("File", symbols[0].AuxSymbols[0].Kind);
+        Assert.Equal("main.c", symbols[0].AuxSymbols[0].FileName);
+    }
 }

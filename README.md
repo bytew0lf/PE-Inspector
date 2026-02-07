@@ -135,6 +135,7 @@ Defaults:
 - v13: debug directory COFF/FIXUP/ILTCG/MPX/CLSID details, load-config guard tables, and raw HTML/DLGINCLUDE/PLUGPLAY/VXD resource summaries.
 - v14: full ARM64 unwind decoding, ARM/IA64 unwind headers, and enclave import list parsing.
 - v15: COFF object + TE image metadata, image kind, and catalog signature lookup metadata.
+- v16: COFF relocation decoding + aux symbol details, TLS raw data mapping/alignment, and SEH handler entry resolution.
 
 ### Coverage map
 High-level PE/COFF structures and current coverage:
@@ -150,13 +151,13 @@ High-level PE/COFF structures and current coverage:
 - Debug directory: implemented (CodeView/PDB, COFF, POGO, VC_FEATURE, EX_DLLCHARACTERISTICS, FPO, MISC, OMAP, REPRO, ILTCG, MPX, CLSID, FIXUP)
 - Relocations: implemented (summaries + anomalies)
 - Exception directory: implemented (unwind + validation, AMD64/ARM64 full decode, ARM/IA64 header parsing, x86 SEH handler table)
-- TLS: implemented (callbacks + mapping)
-- Load config: implemented (guard flags, guard tables, code integrity, enclave config + imports, CHPE, dynamic reloc tables, SEH handler metadata)
+- TLS: implemented (callbacks + raw data mapping/alignment)
+- Load config: implemented (guard flags, guard tables, code integrity, enclave config + imports, CHPE, dynamic reloc tables, SEH handler metadata + entries)
 - CLR/.NET: implemented (metadata, references, ReadyToRun)
 - Certificates/Authenticode: implemented (PKCS7/signers/timestamps, catalog lookup on Windows)
-- COFF objects: basic header/sections + symbols/line numbers
+- COFF objects: basic header/sections + symbols/line numbers/relocations
 - UEFI TE images: header + sections
-- COFF symbols/line numbers/string table: implemented when present
+- COFF symbols/line numbers/string table: implemented when present (aux symbol decoding)
 
 ## Contents of the output file
 The CSV-Output currently contains the following values for each analyzed file.
