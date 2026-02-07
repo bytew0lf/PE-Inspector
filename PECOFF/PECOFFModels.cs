@@ -173,7 +173,115 @@ namespace PECoff
         Borland = 9,
         Reserved10 = 10,
         Clsid = 11,
-        Repro = 16
+        VCFeature = 12,
+        Pogo = 13,
+        ILTCG = 14,
+        MPX = 15,
+        Repro = 16,
+        ExDllCharacteristics = 20
+    }
+
+    public sealed class DebugPogoEntryInfo
+    {
+        public uint Rva { get; }
+        public uint Size { get; }
+        public string Name { get; }
+
+        public DebugPogoEntryInfo(uint rva, uint size, string name)
+        {
+            Rva = rva;
+            Size = size;
+            Name = name ?? string.Empty;
+        }
+    }
+
+    public sealed class DebugPogoInfo
+    {
+        public string Signature { get; }
+        public int TotalEntryCount { get; }
+        public bool IsTruncated { get; }
+        public IReadOnlyList<DebugPogoEntryInfo> Entries { get; }
+
+        public DebugPogoInfo(string signature, int totalEntryCount, bool isTruncated, DebugPogoEntryInfo[] entries)
+        {
+            Signature = signature ?? string.Empty;
+            TotalEntryCount = totalEntryCount;
+            IsTruncated = isTruncated;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<DebugPogoEntryInfo>());
+        }
+    }
+
+    public sealed class DebugVcFeatureInfo
+    {
+        public uint Flags { get; }
+        public IReadOnlyList<string> FlagNames { get; }
+
+        public DebugVcFeatureInfo(uint flags, string[] flagNames)
+        {
+            Flags = flags;
+            FlagNames = Array.AsReadOnly(flagNames ?? Array.Empty<string>());
+        }
+    }
+
+    public sealed class DebugExDllCharacteristicsInfo
+    {
+        public uint Characteristics { get; }
+        public IReadOnlyList<string> FlagNames { get; }
+
+        public DebugExDllCharacteristicsInfo(uint characteristics, string[] flagNames)
+        {
+            Characteristics = characteristics;
+            FlagNames = Array.AsReadOnly(flagNames ?? Array.Empty<string>());
+        }
+    }
+
+    public sealed class DebugFpoEntryInfo
+    {
+        public uint StartOffset { get; }
+        public uint ProcedureSize { get; }
+        public uint LocalBytes { get; }
+        public ushort ParameterBytes { get; }
+        public byte PrologSize { get; }
+        public byte SavedRegisterCount { get; }
+        public bool HasSeh { get; }
+        public bool UsesBasePointer { get; }
+        public byte FrameType { get; }
+
+        public DebugFpoEntryInfo(
+            uint startOffset,
+            uint procedureSize,
+            uint localBytes,
+            ushort parameterBytes,
+            byte prologSize,
+            byte savedRegisterCount,
+            bool hasSeh,
+            bool usesBasePointer,
+            byte frameType)
+        {
+            StartOffset = startOffset;
+            ProcedureSize = procedureSize;
+            LocalBytes = localBytes;
+            ParameterBytes = parameterBytes;
+            PrologSize = prologSize;
+            SavedRegisterCount = savedRegisterCount;
+            HasSeh = hasSeh;
+            UsesBasePointer = usesBasePointer;
+            FrameType = frameType;
+        }
+    }
+
+    public sealed class DebugFpoInfo
+    {
+        public int TotalEntryCount { get; }
+        public bool IsTruncated { get; }
+        public IReadOnlyList<DebugFpoEntryInfo> Entries { get; }
+
+        public DebugFpoInfo(int totalEntryCount, bool isTruncated, DebugFpoEntryInfo[] entries)
+        {
+            TotalEntryCount = totalEntryCount;
+            IsTruncated = isTruncated;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<DebugFpoEntryInfo>());
+        }
     }
 
     public sealed class DebugCodeViewInfo
@@ -252,6 +360,10 @@ namespace PECoff
         public uint AddressOfRawData { get; }
         public uint PointerToRawData { get; }
         public DebugCodeViewInfo CodeView { get; }
+        public DebugPogoInfo Pogo { get; }
+        public DebugVcFeatureInfo VcFeature { get; }
+        public DebugExDllCharacteristicsInfo ExDllCharacteristics { get; }
+        public DebugFpoInfo Fpo { get; }
         public string Note { get; }
 
         public DebugDirectoryEntry(
@@ -264,6 +376,10 @@ namespace PECoff
             uint addressOfRawData,
             uint pointerToRawData,
             DebugCodeViewInfo codeView,
+            DebugPogoInfo pogo,
+            DebugVcFeatureInfo vcFeature,
+            DebugExDllCharacteristicsInfo exDllCharacteristics,
+            DebugFpoInfo fpo,
             string note)
         {
             Characteristics = characteristics;
@@ -275,6 +391,10 @@ namespace PECoff
             AddressOfRawData = addressOfRawData;
             PointerToRawData = pointerToRawData;
             CodeView = codeView;
+            Pogo = pogo;
+            VcFeature = vcFeature;
+            ExDllCharacteristics = exDllCharacteristics;
+            Fpo = fpo;
             Note = note ?? string.Empty;
         }
     }
@@ -754,6 +874,7 @@ namespace PECoff
         public ulong GuardXfgTableDispatchFunctionPointer { get; }
         public IReadOnlyList<GuardFeatureInfo> GuardFeatureMatrix { get; }
         public IReadOnlyList<GuardTableSanityInfo> GuardTableSanity { get; }
+        public SehHandlerTableInfo SehHandlerTable { get; }
 
         public LoadConfigInfo(
             uint size,
@@ -791,7 +912,8 @@ namespace PECoff
             ulong guardXfgDispatchFunctionPointer,
             ulong guardXfgTableDispatchFunctionPointer,
             GuardFeatureInfo[] guardFeatureMatrix,
-            GuardTableSanityInfo[] guardTableSanity)
+            GuardTableSanityInfo[] guardTableSanity,
+            SehHandlerTableInfo sehHandlerTable)
         {
             Size = size;
             TimeDateStamp = timeDateStamp;
@@ -829,6 +951,30 @@ namespace PECoff
             GuardXfgTableDispatchFunctionPointer = guardXfgTableDispatchFunctionPointer;
             GuardFeatureMatrix = Array.AsReadOnly(guardFeatureMatrix ?? Array.Empty<GuardFeatureInfo>());
             GuardTableSanity = Array.AsReadOnly(guardTableSanity ?? Array.Empty<GuardTableSanityInfo>());
+            SehHandlerTable = sehHandlerTable;
+        }
+    }
+
+    public sealed class SehHandlerTableInfo
+    {
+        public ulong TableAddress { get; }
+        public uint HandlerCount { get; }
+        public bool IsMapped { get; }
+        public string SectionName { get; }
+        public IReadOnlyList<uint> HandlerRvas { get; }
+
+        public SehHandlerTableInfo(
+            ulong tableAddress,
+            uint handlerCount,
+            bool isMapped,
+            string sectionName,
+            uint[] handlerRvas)
+        {
+            TableAddress = tableAddress;
+            HandlerCount = handlerCount;
+            IsMapped = isMapped;
+            SectionName = sectionName ?? string.Empty;
+            HandlerRvas = Array.AsReadOnly(handlerRvas ?? Array.Empty<uint>());
         }
     }
 
@@ -1977,6 +2123,146 @@ namespace PECoff
         }
     }
 
+    public sealed class ResourceFontInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public uint Size { get; }
+        public string Format { get; }
+        public string FaceName { get; }
+
+        public ResourceFontInfo(uint nameId, ushort languageId, uint size, string format, string faceName)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Size = size;
+            Format = format ?? string.Empty;
+            FaceName = faceName ?? string.Empty;
+        }
+    }
+
+    public sealed class ResourceFontDirEntryInfo
+    {
+        public ushort Ordinal { get; }
+        public string FaceName { get; }
+
+        public ResourceFontDirEntryInfo(ushort ordinal, string faceName)
+        {
+            Ordinal = ordinal;
+            FaceName = faceName ?? string.Empty;
+        }
+    }
+
+    public sealed class ResourceFontDirInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public ushort FontCount { get; }
+        public IReadOnlyList<ResourceFontDirEntryInfo> Entries { get; }
+
+        public ResourceFontDirInfo(uint nameId, ushort languageId, ushort fontCount, ResourceFontDirEntryInfo[] entries)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            FontCount = fontCount;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<ResourceFontDirEntryInfo>());
+        }
+    }
+
+    public sealed class ResourceDlgInitEntryInfo
+    {
+        public ushort ControlId { get; }
+        public ushort Message { get; }
+        public ushort DataLength { get; }
+        public string DataPreview { get; }
+
+        public ResourceDlgInitEntryInfo(ushort controlId, ushort message, ushort dataLength, string dataPreview)
+        {
+            ControlId = controlId;
+            Message = message;
+            DataLength = dataLength;
+            DataPreview = dataPreview ?? string.Empty;
+        }
+    }
+
+    public sealed class ResourceDlgInitInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public IReadOnlyList<ResourceDlgInitEntryInfo> Entries { get; }
+
+        public ResourceDlgInitInfo(uint nameId, ushort languageId, ResourceDlgInitEntryInfo[] entries)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<ResourceDlgInitEntryInfo>());
+        }
+    }
+
+    public sealed class ResourceAnimatedInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public string Format { get; }
+        public uint FrameCount { get; }
+        public uint StepCount { get; }
+        public uint Width { get; }
+        public uint Height { get; }
+        public uint BitCount { get; }
+        public uint Planes { get; }
+        public uint JifRate { get; }
+        public uint Flags { get; }
+        public IReadOnlyList<string> ChunkTypes { get; }
+
+        public ResourceAnimatedInfo(
+            uint nameId,
+            ushort languageId,
+            string format,
+            uint frameCount,
+            uint stepCount,
+            uint width,
+            uint height,
+            uint bitCount,
+            uint planes,
+            uint jifRate,
+            uint flags,
+            string[] chunkTypes)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Format = format ?? string.Empty;
+            FrameCount = frameCount;
+            StepCount = stepCount;
+            Width = width;
+            Height = height;
+            BitCount = bitCount;
+            Planes = planes;
+            JifRate = jifRate;
+            Flags = flags;
+            ChunkTypes = Array.AsReadOnly(chunkTypes ?? Array.Empty<string>());
+        }
+    }
+
+    public sealed class ResourceRcDataInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public uint Size { get; }
+        public bool IsText { get; }
+        public string TextPreview { get; }
+        public double Entropy { get; }
+
+        public ResourceRcDataInfo(uint nameId, ushort languageId, uint size, bool isText, string textPreview, double entropy)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Size = size;
+            IsText = isText;
+            TextPreview = textPreview ?? string.Empty;
+            Entropy = entropy;
+        }
+    }
+
     public sealed class ManifestSchemaInfo
     {
         public string RootElement { get; }
@@ -2032,7 +2318,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 10;
+        public const int CurrentSchemaVersion = 11;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -2094,6 +2380,12 @@ namespace PECoff
         public IReadOnlyList<ResourceLocaleCoverageInfo> ResourceLocaleCoverage { get; }
         public IReadOnlyList<ResourceBitmapInfo> ResourceBitmaps { get; }
         public IReadOnlyList<ResourceCursorGroupInfo> ResourceCursorGroups { get; }
+        public IReadOnlyList<ResourceFontInfo> ResourceFonts { get; }
+        public IReadOnlyList<ResourceFontDirInfo> ResourceFontDirectories { get; }
+        public IReadOnlyList<ResourceDlgInitInfo> ResourceDlgInit { get; }
+        public IReadOnlyList<ResourceAnimatedInfo> ResourceAnimatedCursors { get; }
+        public IReadOnlyList<ResourceAnimatedInfo> ResourceAnimatedIcons { get; }
+        public IReadOnlyList<ResourceRcDataInfo> ResourceRcData { get; }
         public IReadOnlyList<IconGroupInfo> IconGroups { get; }
         public ClrMetadataInfo ClrMetadata { get; }
         public StrongNameSignatureInfo StrongNameSignature { get; }
@@ -2185,6 +2477,12 @@ namespace PECoff
             ResourceLocaleCoverageInfo[] resourceLocaleCoverage,
             ResourceBitmapInfo[] resourceBitmaps,
             ResourceCursorGroupInfo[] resourceCursorGroups,
+            ResourceFontInfo[] resourceFonts,
+            ResourceFontDirInfo[] resourceFontDirectories,
+            ResourceDlgInitInfo[] resourceDlgInit,
+            ResourceAnimatedInfo[] resourceAnimatedCursors,
+            ResourceAnimatedInfo[] resourceAnimatedIcons,
+            ResourceRcDataInfo[] resourceRcData,
             IconGroupInfo[] iconGroups,
             ClrMetadataInfo clrMetadata,
             StrongNameSignatureInfo strongNameSignature,
@@ -2276,6 +2574,12 @@ namespace PECoff
             ResourceLocaleCoverage = Array.AsReadOnly(resourceLocaleCoverage ?? Array.Empty<ResourceLocaleCoverageInfo>());
             ResourceBitmaps = Array.AsReadOnly(resourceBitmaps ?? Array.Empty<ResourceBitmapInfo>());
             ResourceCursorGroups = Array.AsReadOnly(resourceCursorGroups ?? Array.Empty<ResourceCursorGroupInfo>());
+            ResourceFonts = Array.AsReadOnly(resourceFonts ?? Array.Empty<ResourceFontInfo>());
+            ResourceFontDirectories = Array.AsReadOnly(resourceFontDirectories ?? Array.Empty<ResourceFontDirInfo>());
+            ResourceDlgInit = Array.AsReadOnly(resourceDlgInit ?? Array.Empty<ResourceDlgInitInfo>());
+            ResourceAnimatedCursors = Array.AsReadOnly(resourceAnimatedCursors ?? Array.Empty<ResourceAnimatedInfo>());
+            ResourceAnimatedIcons = Array.AsReadOnly(resourceAnimatedIcons ?? Array.Empty<ResourceAnimatedInfo>());
+            ResourceRcData = Array.AsReadOnly(resourceRcData ?? Array.Empty<ResourceRcDataInfo>());
             IconGroups = Array.AsReadOnly(iconGroups ?? Array.Empty<IconGroupInfo>());
             ClrMetadata = clrMetadata;
             StrongNameSignature = strongNameSignature;
@@ -2439,6 +2743,12 @@ namespace PECoff
                 ResourceLocaleCoverage = resourceCoverage,
                 ResourceBitmaps,
                 ResourceCursorGroups,
+                ResourceFonts,
+                ResourceFontDirectories,
+                ResourceDlgInit,
+                ResourceAnimatedCursors,
+                ResourceAnimatedIcons,
+                ResourceRcData,
                 IconGroups = iconGroups,
                 ClrMetadata,
                 StrongNameSignature = strongNameSignature,

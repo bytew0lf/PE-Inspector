@@ -944,6 +944,7 @@ namespace PECoff
             Version = 16,
             GroupIcon = 14,
             DlgInclude = 17,
+            DlgInit = 17,
             PlugAndPlay = 19,
             VXD = 20,
             AnimatedCursor = 21,
@@ -1914,6 +1915,66 @@ namespace PECoff
             {
                 EnsureResourcesParsed();
                 return _resourceCursorGroups.ToArray();
+            }
+        }
+
+        private readonly List<ResourceFontInfo> _resourceFonts = new List<ResourceFontInfo>();
+        public ResourceFontInfo[] ResourceFonts
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceFonts.ToArray();
+            }
+        }
+
+        private readonly List<ResourceFontDirInfo> _resourceFontDirectories = new List<ResourceFontDirInfo>();
+        public ResourceFontDirInfo[] ResourceFontDirectories
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceFontDirectories.ToArray();
+            }
+        }
+
+        private readonly List<ResourceDlgInitInfo> _resourceDlgInit = new List<ResourceDlgInitInfo>();
+        public ResourceDlgInitInfo[] ResourceDlgInit
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceDlgInit.ToArray();
+            }
+        }
+
+        private readonly List<ResourceAnimatedInfo> _resourceAnimatedCursors = new List<ResourceAnimatedInfo>();
+        public ResourceAnimatedInfo[] ResourceAnimatedCursors
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceAnimatedCursors.ToArray();
+            }
+        }
+
+        private readonly List<ResourceAnimatedInfo> _resourceAnimatedIcons = new List<ResourceAnimatedInfo>();
+        public ResourceAnimatedInfo[] ResourceAnimatedIcons
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceAnimatedIcons.ToArray();
+            }
+        }
+
+        private readonly List<ResourceRcDataInfo> _resourceRcData = new List<ResourceRcDataInfo>();
+        public ResourceRcDataInfo[] ResourceRcData
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceRcData.ToArray();
             }
         }
 
@@ -3624,6 +3685,12 @@ namespace PECoff
                 _resourceLocaleCoverage.ToArray(),
                 _resourceBitmaps.ToArray(),
                 _resourceCursorGroups.ToArray(),
+                _resourceFonts.ToArray(),
+                _resourceFontDirectories.ToArray(),
+                _resourceDlgInit.ToArray(),
+                _resourceAnimatedCursors.ToArray(),
+                _resourceAnimatedIcons.ToArray(),
+                _resourceRcData.ToArray(),
                 _iconGroups.ToArray(),
                 _clrMetadata,
                 _strongNameSignature,
@@ -5309,6 +5376,148 @@ namespace PECoff
             }
         }
 
+        private void DecodeResourceFonts(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceFonts.Clear();
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.Font)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] owned))
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> data = owned.Length > 0 ? owned : dataSpan;
+                string format = DetectFontFormat(data);
+                string faceName = TryParseFontFaceName(data, format);
+                _resourceFonts.Add(new ResourceFontInfo(entry.NameId, entry.LanguageId, entry.Size, format, faceName));
+            }
+        }
+
+        private void DecodeResourceFontDirectories(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceFontDirectories.Clear();
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.FontDirectory)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] owned))
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> data = owned.Length > 0 ? owned : dataSpan;
+                if (TryParseFontDirectory(data, out ushort count, out ResourceFontDirEntryInfo[] entries))
+                {
+                    _resourceFontDirectories.Add(new ResourceFontDirInfo(entry.NameId, entry.LanguageId, count, entries));
+                }
+            }
+        }
+
+        private void DecodeResourceDlgInit(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceDlgInit.Clear();
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.DlgInit)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] owned))
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> data = owned.Length > 0 ? owned : dataSpan;
+                if (TryParseDlgInit(data, out ResourceDlgInitEntryInfo[] entries))
+                {
+                    _resourceDlgInit.Add(new ResourceDlgInitInfo(entry.NameId, entry.LanguageId, entries));
+                }
+            }
+        }
+
+        private void DecodeResourceAnimatedResources(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceAnimatedCursors.Clear();
+            _resourceAnimatedIcons.Clear();
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                bool isCursor = entry.TypeId == (uint)ResourceType.AnimatedCursor;
+                bool isIcon = entry.TypeId == (uint)ResourceType.AnimatedIcon;
+                if (!isCursor && !isIcon)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] owned))
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> data = owned.Length > 0 ? owned : dataSpan;
+                if (!TryParseAnimatedResource(data, out ResourceAnimatedInfo info))
+                {
+                    continue;
+                }
+
+                ResourceAnimatedInfo value = new ResourceAnimatedInfo(
+                    entry.NameId,
+                    entry.LanguageId,
+                    info.Format,
+                    info.FrameCount,
+                    info.StepCount,
+                    info.Width,
+                    info.Height,
+                    info.BitCount,
+                    info.Planes,
+                    info.JifRate,
+                    info.Flags,
+                    info.ChunkTypes.ToArray());
+                if (isCursor)
+                {
+                    _resourceAnimatedCursors.Add(value);
+                }
+                else
+                {
+                    _resourceAnimatedIcons.Add(value);
+                }
+            }
+        }
+
+        private void DecodeResourceRcData(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceRcData.Clear();
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.RcData)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] owned))
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> data = owned.Length > 0 ? owned : dataSpan;
+                ResourceRcDataInfo info = BuildRcDataInfo(entry, data);
+                _resourceRcData.Add(info);
+            }
+        }
+
         private void ParseResourceSection(
             ReadOnlySpan<byte> resourceSpan,
             int resourceSize,
@@ -5346,6 +5555,11 @@ namespace PECoff
             DecodeResourceIconGroups(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceCursorGroups(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceBitmaps(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceFonts(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceFontDirectories(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceDlgInit(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceAnimatedResources(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceRcData(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceVersionInfo(resourceSpan, resourceSection.VirtualAddress, sections);
 
             FileVersionInfo fvi;
@@ -5998,9 +6212,391 @@ namespace PECoff
             return width > 0 && height > 0;
         }
 
+        private static string DetectFontFormat(ReadOnlySpan<byte> data)
+        {
+            if (data.Length >= 4)
+            {
+                if (data[0] == 0x00 && data[1] == 0x01 && data[2] == 0x00 && data[3] == 0x00)
+                {
+                    return "TrueType";
+                }
+
+                if (data[0] == (byte)'O' && data[1] == (byte)'T' && data[2] == (byte)'T' && data[3] == (byte)'O')
+                {
+                    return "OpenType";
+                }
+
+                if (data[0] == (byte)'t' && data[1] == (byte)'t' && data[2] == (byte)'c' && data[3] == (byte)'f')
+                {
+                    return "TrueTypeCollection";
+                }
+
+                if (data[0] == (byte)'t' && data[1] == (byte)'r' && data[2] == (byte)'u' && data[3] == (byte)'e')
+                {
+                    return "TrueType";
+                }
+
+                if (data[0] == (byte)'t' && data[1] == (byte)'y' && data[2] == (byte)'p' && data[3] == (byte)'1')
+                {
+                    return "Type1";
+                }
+            }
+
+            if (data.Length >= 2)
+            {
+                ushort version = ReadUInt16(data, 0);
+                if (version == 0x0100 || version == 0x0200)
+                {
+                    return "FNT";
+                }
+            }
+
+            return "Unknown";
+        }
+
+        private static string TryParseFontFaceName(ReadOnlySpan<byte> data, string format)
+        {
+            if (!string.Equals(format, "FNT", StringComparison.OrdinalIgnoreCase))
+            {
+                return string.Empty;
+            }
+
+            const int faceOffsetField = 105;
+            if (data.Length <= faceOffsetField + 4)
+            {
+                return string.Empty;
+            }
+
+            uint faceOffset = ReadUInt32(data, faceOffsetField);
+            if (faceOffset == 0 || faceOffset >= data.Length)
+            {
+                return string.Empty;
+            }
+
+            return ReadNullTerminatedAscii(data, (int)faceOffset, out int _);
+        }
+
+        private static bool TryParseFontDirectory(ReadOnlySpan<byte> data, out ushort count, out ResourceFontDirEntryInfo[] entries)
+        {
+            count = 0;
+            entries = Array.Empty<ResourceFontDirEntryInfo>();
+            if (data.Length < 2)
+            {
+                return false;
+            }
+
+            count = ReadUInt16(data, 0);
+            if (count == 0)
+            {
+                return true;
+            }
+
+            int maxEntries = Math.Min(count, (ushort)256);
+            List<ResourceFontDirEntryInfo> parsed = new List<ResourceFontDirEntryInfo>(maxEntries);
+            int offset = 2;
+            for (int i = 0; i < maxEntries && offset + 2 <= data.Length; i++)
+            {
+                ushort ordinal = ReadUInt16(data, offset);
+                offset += 2;
+                int entryStart = offset;
+                string faceName = string.Empty;
+                int entryEnd = entryStart;
+
+                if (entryStart + 109 < data.Length)
+                {
+                    uint faceOffset = ReadUInt32(data, entryStart + 105);
+                    if (faceOffset > 0 && entryStart + (int)faceOffset < data.Length)
+                    {
+                        faceName = ReadNullTerminatedAscii(data, entryStart + (int)faceOffset, out int bytesRead);
+                        entryEnd = entryStart + (int)faceOffset + bytesRead;
+                    }
+                }
+
+                if (string.IsNullOrWhiteSpace(faceName))
+                {
+                    faceName = ExtractAsciiString(data, entryStart, Math.Min(64, data.Length - entryStart));
+                }
+
+                parsed.Add(new ResourceFontDirEntryInfo(ordinal, faceName));
+
+                if (entryEnd <= entryStart)
+                {
+                    entryEnd = entryStart + 32;
+                }
+
+                if (entryEnd <= offset)
+                {
+                    break;
+                }
+
+                offset = entryEnd;
+                if (offset < data.Length && (offset % 2) != 0)
+                {
+                    offset++;
+                }
+            }
+
+            entries = parsed.ToArray();
+            return true;
+        }
+
+        private static bool TryParseDlgInit(ReadOnlySpan<byte> data, out ResourceDlgInitEntryInfo[] entries)
+        {
+            entries = Array.Empty<ResourceDlgInitEntryInfo>();
+            if (data.Length < 6)
+            {
+                return false;
+            }
+
+            List<ResourceDlgInitEntryInfo> parsed = new List<ResourceDlgInitEntryInfo>();
+            int offset = 0;
+            while (offset + 6 <= data.Length)
+            {
+                ushort controlId = ReadUInt16(data, offset);
+                ushort message = ReadUInt16(data, offset + 2);
+                ushort length = ReadUInt16(data, offset + 4);
+                offset += 6;
+
+                if (controlId == 0 && message == 0 && length == 0)
+                {
+                    break;
+                }
+
+                int dataLength = Math.Min(length, (ushort)Math.Max(0, data.Length - offset));
+                ReadOnlySpan<byte> payload = data.Slice(offset, dataLength);
+                string preview = BuildHexPreview(payload, 32);
+                parsed.Add(new ResourceDlgInitEntryInfo(controlId, message, (ushort)dataLength, preview));
+                offset += dataLength;
+
+                if (offset < data.Length && (offset % 2) != 0)
+                {
+                    offset++;
+                }
+            }
+
+            if (parsed.Count == 0)
+            {
+                return false;
+            }
+
+            entries = parsed.ToArray();
+            return true;
+        }
+
+        private static bool TryParseAnimatedResource(ReadOnlySpan<byte> data, out ResourceAnimatedInfo info)
+        {
+            info = null;
+            if (data.Length < 12)
+            {
+                return false;
+            }
+
+            if (!(data[0] == (byte)'R' && data[1] == (byte)'I' && data[2] == (byte)'F' && data[3] == (byte)'F'))
+            {
+                return false;
+            }
+
+            if (!(data[8] == (byte)'A' && data[9] == (byte)'C' && data[10] == (byte)'O' && data[11] == (byte)'N'))
+            {
+                return false;
+            }
+
+            uint frameCount = 0;
+            uint stepCount = 0;
+            uint width = 0;
+            uint height = 0;
+            uint bitCount = 0;
+            uint planes = 0;
+            uint jifRate = 0;
+            uint flags = 0;
+            List<string> chunkTypes = new List<string>();
+
+            int offset = 12;
+            while (offset + 8 <= data.Length)
+            {
+                string chunkType = Encoding.ASCII.GetString(data.Slice(offset, 4));
+                uint chunkSize = ReadUInt32(data, offset + 4);
+                int chunkDataOffset = offset + 8;
+                int next = chunkDataOffset + (int)chunkSize;
+                if (next < chunkDataOffset || next > data.Length)
+                {
+                    break;
+                }
+
+                if (!chunkTypes.Contains(chunkType))
+                {
+                    chunkTypes.Add(chunkType);
+                }
+
+                if (string.Equals(chunkType, "anih", StringComparison.Ordinal) && chunkSize >= 36 && chunkDataOffset + 36 <= data.Length)
+                {
+                    frameCount = ReadUInt32(data, chunkDataOffset + 4);
+                    stepCount = ReadUInt32(data, chunkDataOffset + 8);
+                    width = ReadUInt32(data, chunkDataOffset + 12);
+                    height = ReadUInt32(data, chunkDataOffset + 16);
+                    bitCount = ReadUInt32(data, chunkDataOffset + 20);
+                    planes = ReadUInt32(data, chunkDataOffset + 24);
+                    jifRate = ReadUInt32(data, chunkDataOffset + 28);
+                    flags = ReadUInt32(data, chunkDataOffset + 32);
+                }
+
+                offset = next;
+                if ((offset % 2) != 0)
+                {
+                    offset++;
+                }
+            }
+
+            info = new ResourceAnimatedInfo(
+                0,
+                0,
+                "RIFF/ACON",
+                frameCount,
+                stepCount,
+                width,
+                height,
+                bitCount,
+                planes,
+                jifRate,
+                flags,
+                chunkTypes.ToArray());
+            return true;
+        }
+
+        private ResourceRcDataInfo BuildRcDataInfo(ResourceEntry entry, ReadOnlySpan<byte> data)
+        {
+            string text = DecodeTextResource(data);
+            bool isText = IsLikelyText(text);
+            string preview = isText ? BuildPreviewText(text, 160) : BuildHexPreview(data, 48);
+            double entropy = ComputeShannonEntropy(data);
+            return new ResourceRcDataInfo(entry.NameId, entry.LanguageId, entry.Size, isText, preview, entropy);
+        }
+
+        private static bool IsLikelyText(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return false;
+            }
+
+            int total = 0;
+            int printable = 0;
+            int limit = Math.Min(text.Length, 256);
+            for (int i = 0; i < limit; i++)
+            {
+                char c = text[i];
+                total++;
+                if (!char.IsControl(c) || c == '\r' || c == '\n' || c == '\t')
+                {
+                    printable++;
+                }
+            }
+
+            return total > 0 && printable >= (total * 0.75);
+        }
+
+        private static string BuildPreviewText(string text, int maxLength)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return string.Empty;
+            }
+
+            string normalized = text.Replace("\r", " ").Replace("\n", " ").Replace("\t", " ").Trim();
+            if (normalized.Length <= maxLength)
+            {
+                return normalized;
+            }
+
+            return normalized.Substring(0, maxLength) + "...";
+        }
+
+        private static string BuildHexPreview(ReadOnlySpan<byte> data, int maxBytes)
+        {
+            if (data.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            int length = Math.Min(data.Length, maxBytes);
+            StringBuilder sb = new StringBuilder(length * 2);
+            for (int i = 0; i < length; i++)
+            {
+                sb.Append(data[i].ToString("X2", CultureInfo.InvariantCulture));
+            }
+            if (data.Length > length)
+            {
+                sb.Append("...");
+            }
+
+            return sb.ToString();
+        }
+
+        private static string ExtractAsciiString(ReadOnlySpan<byte> data, int offset, int maxLength)
+        {
+            if (offset < 0 || offset >= data.Length || maxLength <= 0)
+            {
+                return string.Empty;
+            }
+
+            int length = Math.Min(maxLength, data.Length - offset);
+            int end = offset;
+            while (end < offset + length && data[end] != 0)
+            {
+                end++;
+            }
+
+            if (end == offset)
+            {
+                return string.Empty;
+            }
+
+            return Encoding.ASCII.GetString(data.Slice(offset, end - offset)).TrimEnd('\0', ' ');
+        }
+
         internal static bool TryParsePngIconForTest(byte[] data, out uint width, out uint height)
         {
             return TryParsePngIcon(data, out width, out height);
+        }
+
+        internal static string DetectFontFormatForTest(byte[] data)
+        {
+            return DetectFontFormat(data);
+        }
+
+        internal static bool TryParseFontDirectoryForTest(byte[] data, out ushort count, out ResourceFontDirEntryInfo[] entries)
+        {
+            return TryParseFontDirectory(data, out count, out entries);
+        }
+
+        internal static bool TryParseDlgInitForTest(byte[] data, out ResourceDlgInitEntryInfo[] entries)
+        {
+            return TryParseDlgInit(data, out entries);
+        }
+
+        internal static bool TryParseAnimatedResourceForTest(byte[] data, out ResourceAnimatedInfo info)
+        {
+            return TryParseAnimatedResource(data, out info);
+        }
+
+        internal static bool TryParsePogoDataForTest(byte[] data, out DebugPogoInfo info)
+        {
+            return TryParsePogoData(data, out info);
+        }
+
+        internal static bool TryParseVcFeatureDataForTest(byte[] data, out DebugVcFeatureInfo info)
+        {
+            return TryParseVcFeatureData(data, out info);
+        }
+
+        internal static bool TryParseExDllCharacteristicsDataForTest(byte[] data, out DebugExDllCharacteristicsInfo info)
+        {
+            return TryParseExDllCharacteristicsData(data, out info);
+        }
+
+        internal static bool TryParseFpoDataForTest(byte[] data, out DebugFpoInfo info)
+        {
+            return TryParseFpoData(data, out info);
         }
 
         internal static bool TryParseBitmapInfoHeaderForTest(
@@ -8756,6 +9352,10 @@ namespace PECoff
                 IMAGE_DEBUG_DIRECTORY entry = ByteArrayToStructure<IMAGE_DEBUG_DIRECTORY>(buffer);
 
                 DebugCodeViewInfo codeView = null;
+                DebugPogoInfo pogo = null;
+                DebugVcFeatureInfo vcFeature = null;
+                DebugExDllCharacteristicsInfo exDll = null;
+                DebugFpoInfo fpo = null;
                 string note = string.Empty;
                 if ((DebugDirectoryType)entry.Type == DebugDirectoryType.CodeView && entry.SizeOfData > 0)
                 {
@@ -8809,6 +9409,38 @@ namespace PECoff
                 {
                     note = "COFF debug info (likely /Z7).";
                 }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Pogo && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParsePogoData(data, out DebugPogoInfo parsed))
+                    {
+                        pogo = parsed;
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.VCFeature && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseVcFeatureData(data, out DebugVcFeatureInfo parsed))
+                    {
+                        vcFeature = parsed;
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.ExDllCharacteristics && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseExDllCharacteristicsData(data, out DebugExDllCharacteristicsInfo parsed))
+                    {
+                        exDll = parsed;
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Fpo && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseFpoData(data, out DebugFpoInfo parsed))
+                    {
+                        fpo = parsed;
+                    }
+                }
 
                 _debugDirectories.Add(new DebugDirectoryEntry(
                     entry.Characteristics,
@@ -8820,8 +9452,189 @@ namespace PECoff
                     entry.AddressOfRawData,
                     entry.PointerToRawData,
                     codeView,
+                    pogo,
+                    vcFeature,
+                    exDll,
+                    fpo,
                     note));
             }
+        }
+
+        private bool TryReadDebugDirectoryData(IMAGE_DEBUG_DIRECTORY entry, List<IMAGE_SECTION_HEADER> sections, out byte[] data)
+        {
+            data = Array.Empty<byte>();
+            if (entry.SizeOfData == 0 || PEFileStream == null)
+            {
+                return false;
+            }
+
+            long dataOffset = entry.PointerToRawData;
+            if (dataOffset == 0 && entry.AddressOfRawData != 0)
+            {
+                if (!TryGetFileOffset(sections, entry.AddressOfRawData, out dataOffset))
+                {
+                    dataOffset = 0;
+                }
+            }
+
+            if (dataOffset <= 0)
+            {
+                return false;
+            }
+
+            if (!TryGetIntSize(entry.SizeOfData, out int dataSize))
+            {
+                return false;
+            }
+
+            if (!TrySetPosition(dataOffset, dataSize))
+            {
+                return false;
+            }
+
+            data = new byte[dataSize];
+            ReadExactly(PEFileStream, data, 0, data.Length);
+            return true;
+        }
+
+        private static bool TryParsePogoData(byte[] data, out DebugPogoInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 12)
+            {
+                return false;
+            }
+
+            string signature = Encoding.ASCII.GetString(data, 0, 4).TrimEnd('\0', ' ');
+            int offset = 4;
+            List<DebugPogoEntryInfo> entries = new List<DebugPogoEntryInfo>();
+            int total = 0;
+            bool truncated = false;
+            const int maxEntries = 512;
+
+            while (offset + 8 <= data.Length)
+            {
+                uint size = ReadUInt32(data, offset);
+                uint rva = ReadUInt32(data, offset + 4);
+                offset += 8;
+                if (offset >= data.Length)
+                {
+                    break;
+                }
+
+                string name = ReadNullTerminatedAscii(data, offset, out int bytesRead);
+                if (bytesRead <= 0)
+                {
+                    break;
+                }
+
+                offset += bytesRead;
+                if ((offset % 4) != 0)
+                {
+                    offset += 4 - (offset % 4);
+                }
+
+                total++;
+                if (entries.Count < maxEntries)
+                {
+                    entries.Add(new DebugPogoEntryInfo(rva, size, name));
+                }
+                else
+                {
+                    truncated = true;
+                }
+            }
+
+            info = new DebugPogoInfo(signature, total, truncated, entries.ToArray());
+            return true;
+        }
+
+        private static bool TryParseVcFeatureData(byte[] data, out DebugVcFeatureInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 4)
+            {
+                return false;
+            }
+
+            uint flags = ReadUInt32(data, 0);
+            info = new DebugVcFeatureInfo(flags, DecodeBitFlags(flags));
+            return true;
+        }
+
+        private static bool TryParseExDllCharacteristicsData(byte[] data, out DebugExDllCharacteristicsInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 4)
+            {
+                return false;
+            }
+
+            uint flags = ReadUInt32(data, 0);
+            info = new DebugExDllCharacteristicsInfo(flags, DecodeBitFlags(flags));
+            return true;
+        }
+
+        private static bool TryParseFpoData(byte[] data, out DebugFpoInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 16)
+            {
+                return false;
+            }
+
+            int entrySize = 16;
+            int total = data.Length / entrySize;
+            int limit = Math.Min(total, 256);
+            bool truncated = total > limit;
+            List<DebugFpoEntryInfo> entries = new List<DebugFpoEntryInfo>(limit);
+            for (int i = 0; i < limit; i++)
+            {
+                int offset = i * entrySize;
+                uint start = ReadUInt32(data, offset);
+                uint procSize = ReadUInt32(data, offset + 4);
+                uint locals = ReadUInt32(data, offset + 8);
+                ushort paramsBytes = ReadUInt16(data, offset + 12);
+                ushort flags = ReadUInt16(data, offset + 14);
+                byte prolog = (byte)(flags & 0xFF);
+                byte regs = (byte)((flags >> 8) & 0x07);
+                bool hasSeh = (flags & (1 << 11)) != 0;
+                bool usesBp = (flags & (1 << 12)) != 0;
+                byte frame = (byte)((flags >> 14) & 0x03);
+                entries.Add(new DebugFpoEntryInfo(
+                    start,
+                    procSize,
+                    locals,
+                    paramsBytes,
+                    prolog,
+                    regs,
+                    hasSeh,
+                    usesBp,
+                    frame));
+            }
+
+            info = new DebugFpoInfo(total, truncated, entries.ToArray());
+            return true;
+        }
+
+        private static string[] DecodeBitFlags(uint flags)
+        {
+            if (flags == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> names = new List<string>();
+            for (int bit = 0; bit < 32; bit++)
+            {
+                uint mask = 1u << bit;
+                if ((flags & mask) != 0)
+                {
+                    names.Add("0x" + mask.ToString("X8", CultureInfo.InvariantCulture));
+                }
+            }
+
+            return names.ToArray();
         }
 
         private bool TryParseCodeViewInfo(byte[] data, uint debugTimeDateStamp, out DebugCodeViewInfo info)
@@ -9328,6 +10141,12 @@ namespace PECoff
                 }
             }
 
+            SehHandlerTableInfo sehHandlerTableInfo = null;
+            if (!isPe32Plus && seHandlerTable != 0 && seHandlerCount > 0)
+            {
+                sehHandlerTableInfo = BuildSehHandlerTableInfo(seHandlerTable, seHandlerCount, sections);
+            }
+
             _loadConfig = new LoadConfigInfo(
                 size,
                 timeDateStamp,
@@ -9364,7 +10183,52 @@ namespace PECoff
                 guardXfgDispatchFunctionPointer,
                 guardXfgTableDispatchFunctionPointer,
                 guardFeatures.ToArray(),
-                guardTableSanity.ToArray());
+                guardTableSanity.ToArray(),
+                sehHandlerTableInfo);
+        }
+
+        private SehHandlerTableInfo BuildSehHandlerTableInfo(ulong tableAddress, uint handlerCount, List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (handlerCount == 0 || tableAddress == 0)
+            {
+                return null;
+            }
+
+            if (!TryGetRvaFromAddress(tableAddress, _imageBase, out uint rva, out string source))
+            {
+                Warn(ParseIssueCategory.LoadConfig, "SEH handler table address could not be mapped to an RVA.");
+                return new SehHandlerTableInfo(tableAddress, handlerCount, false, string.Empty, Array.Empty<uint>());
+            }
+
+            bool mapped = TryGetSectionByRva(sections, rva, out IMAGE_SECTION_HEADER section);
+            string sectionName = mapped ? NormalizeSectionName(section.Section) : string.Empty;
+            if (!mapped)
+            {
+                Warn(ParseIssueCategory.LoadConfig, "SEH handler table is not mapped to a section.");
+            }
+
+            int maxEntries = (int)Math.Min(handlerCount, 512u);
+            uint[] handlers = Array.Empty<uint>();
+            if (TryGetFileOffset(sections, rva, handlerCount * 4u, out long fileOffset) &&
+                TrySetPosition(fileOffset, maxEntries * 4))
+            {
+                handlers = new uint[maxEntries];
+                for (int i = 0; i < maxEntries; i++)
+                {
+                    handlers[i] = PEFile.ReadUInt32();
+                }
+
+                if (handlerCount > maxEntries)
+                {
+                    Warn(ParseIssueCategory.LoadConfig, $"SEH handler table has {handlerCount} entries; truncated to {maxEntries}.");
+                }
+            }
+            else
+            {
+                Warn(ParseIssueCategory.LoadConfig, "SEH handler table could not be read from file.");
+            }
+
+            return new SehHandlerTableInfo(tableAddress, handlerCount, mapped, sectionName, handlers);
         }
 
         private static ulong ReadPointer(ReadOnlySpan<byte> span, ref int offset, bool isPe32Plus)
@@ -11410,6 +12274,12 @@ namespace PECoff
                 _resourceMenus.Clear();
                 _resourceToolbars.Clear();
                 _iconGroups.Clear();
+                _resourceFonts.Clear();
+                _resourceFontDirectories.Clear();
+                _resourceDlgInit.Clear();
+                _resourceAnimatedCursors.Clear();
+                _resourceAnimatedIcons.Clear();
+                _resourceRcData.Clear();
                 _coffSymbols.Clear();
                 _coffStringTable.Clear();
                 _coffLineNumbers.Clear();

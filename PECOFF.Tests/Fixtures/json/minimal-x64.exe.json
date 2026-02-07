@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 10,
+  "SchemaVersion": 11,
   "FilePath": "minimal-x64.exe",
   "ParseResult": {
     "Errors": [],
@@ -290,6 +290,12 @@
   "ResourceLocaleCoverage": [],
   "ResourceBitmaps": [],
   "ResourceCursorGroups": [],
+  "ResourceFonts": [],
+  "ResourceFontDirectories": [],
+  "ResourceDlgInit": [],
+  "ResourceAnimatedCursors": [],
+  "ResourceAnimatedIcons": [],
+  "ResourceRcData": [],
   "IconGroups": [],
   "ClrMetadata": null,
   "StrongNameSignature": null,

@@ -1251,6 +1251,48 @@ namespace PE_FileInspector
                         sb.AppendLine("    PDB Path Has Dir: " + entry.CodeView.PdbPathHasDirectory);
                         sb.AppendLine("    Identity Valid: " + entry.CodeView.IdentityLooksValid);
                     }
+                    if (entry.Pogo != null)
+                    {
+                        sb.AppendLine("    POGO: " + Safe(entry.Pogo.Signature) +
+                                      " | Entries: " + entry.Pogo.TotalEntryCount.ToString(CultureInfo.InvariantCulture) +
+                                      (entry.Pogo.IsTruncated ? " (truncated)" : string.Empty));
+                        foreach (DebugPogoEntryInfo pogo in entry.Pogo.Entries.Take(10))
+                        {
+                            sb.AppendLine("      - RVA: 0x" + pogo.Rva.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | Size: " + pogo.Size.ToString(CultureInfo.InvariantCulture) +
+                                          " | " + Safe(pogo.Name));
+                        }
+                    }
+                    if (entry.VcFeature != null)
+                    {
+                        string flags = entry.VcFeature.FlagNames.Count > 0
+                            ? string.Join(", ", entry.VcFeature.FlagNames)
+                            : "0x" + entry.VcFeature.Flags.ToString("X8", CultureInfo.InvariantCulture);
+                        sb.AppendLine("    VC Feature Flags: " + flags);
+                    }
+                    if (entry.ExDllCharacteristics != null)
+                    {
+                        string flags = entry.ExDllCharacteristics.FlagNames.Count > 0
+                            ? string.Join(", ", entry.ExDllCharacteristics.FlagNames)
+                            : "0x" + entry.ExDllCharacteristics.Characteristics.ToString("X8", CultureInfo.InvariantCulture);
+                        sb.AppendLine("    ExDllCharacteristics: " + flags);
+                    }
+                    if (entry.Fpo != null)
+                    {
+                        sb.AppendLine("    FPO Entries: " + entry.Fpo.TotalEntryCount.ToString(CultureInfo.InvariantCulture) +
+                                      (entry.Fpo.IsTruncated ? " (truncated)" : string.Empty));
+                        foreach (DebugFpoEntryInfo fpo in entry.Fpo.Entries.Take(5))
+                        {
+                            sb.AppendLine("      - Start: 0x" + fpo.StartOffset.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | Size: " + fpo.ProcedureSize.ToString(CultureInfo.InvariantCulture) +
+                                          " | Locals: " + fpo.LocalBytes.ToString(CultureInfo.InvariantCulture) +
+                                          " | Params: " + fpo.ParameterBytes.ToString(CultureInfo.InvariantCulture) +
+                                          " | Prolog: " + fpo.PrologSize.ToString(CultureInfo.InvariantCulture) +
+                                          " | Regs: " + fpo.SavedRegisterCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | SEH: " + fpo.HasSeh +
+                                          " | BP: " + fpo.UsesBasePointer);
+                        }
+                    }
                 }
             }
             sb.AppendLine();
@@ -1486,6 +1528,20 @@ namespace PE_FileInspector
 
                     sb.AppendLine("  SecurityCookie: 0x" + pe.LoadConfig.SecurityCookie.ToString("X", CultureInfo.InvariantCulture));
                     sb.AppendLine("  SEHandlerCount: " + pe.LoadConfig.SeHandlerCount.ToString(CultureInfo.InvariantCulture));
+                    if (pe.LoadConfig.SehHandlerTable != null)
+                    {
+                        sb.AppendLine("  SEH Handler Table: 0x" + pe.LoadConfig.SehHandlerTable.TableAddress.ToString("X", CultureInfo.InvariantCulture) +
+                                      " | Entries: " + pe.LoadConfig.SehHandlerTable.HandlerCount.ToString(CultureInfo.InvariantCulture));
+                        if (!string.IsNullOrWhiteSpace(pe.LoadConfig.SehHandlerTable.SectionName))
+                        {
+                            sb.AppendLine("    Section: " + Safe(pe.LoadConfig.SehHandlerTable.SectionName));
+                        }
+                        if (pe.LoadConfig.SehHandlerTable.HandlerRvas.Count > 0)
+                        {
+                            sb.AppendLine("    Sample: " + string.Join(", ", pe.LoadConfig.SehHandlerTable.HandlerRvas.Take(10)
+                                .Select(rva => "0x" + rva.ToString("X8", CultureInfo.InvariantCulture))));
+                        }
+                    }
                     sb.AppendLine("  GuardFlags: 0x" + pe.LoadConfig.GuardFlags.ToString("X8", CultureInfo.InvariantCulture));
                     if (pe.LoadConfig.GuardFlagsInfo != null && pe.LoadConfig.GuardFlagsInfo.Flags.Count > 0)
                     {
@@ -1765,6 +1821,162 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("resource-fonts"))
+            {
+                sb.AppendLine("Resource Fonts:");
+                if (pe.ResourceFonts.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (ResourceFontInfo font in pe.ResourceFonts.OrderBy(f => f.NameId).ThenBy(f => f.LanguageId))
+                    {
+                        sb.AppendLine("  - Id#" + font.NameId.ToString(CultureInfo.InvariantCulture) +
+                                      " | Lang: 0x" + font.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | Size: " + font.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | Format: " + Safe(font.Format) +
+                                      (string.IsNullOrWhiteSpace(font.FaceName) ? string.Empty : " | Face: " + font.FaceName));
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("resource-fontdirs"))
+            {
+                sb.AppendLine("Resource Font Directories:");
+                if (pe.ResourceFontDirectories.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (ResourceFontDirInfo dir in pe.ResourceFontDirectories.OrderBy(d => d.NameId).ThenBy(d => d.LanguageId))
+                    {
+                        sb.AppendLine("  - Id#" + dir.NameId.ToString(CultureInfo.InvariantCulture) +
+                                      " | Lang: 0x" + dir.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | Fonts: " + dir.FontCount.ToString(CultureInfo.InvariantCulture));
+                        foreach (ResourceFontDirEntryInfo entry in dir.Entries.Take(10))
+                        {
+                            sb.AppendLine("    - Ordinal: " + entry.Ordinal.ToString(CultureInfo.InvariantCulture) +
+                                          (string.IsNullOrWhiteSpace(entry.FaceName) ? string.Empty : " | Face: " + entry.FaceName));
+                        }
+                        if (dir.Entries.Count > 10)
+                        {
+                            sb.AppendLine("    (truncated)");
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("resource-dlginit"))
+            {
+                sb.AppendLine("Resource DlgInit:");
+                if (pe.ResourceDlgInit.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (ResourceDlgInitInfo init in pe.ResourceDlgInit.OrderBy(d => d.NameId).ThenBy(d => d.LanguageId))
+                    {
+                        sb.AppendLine("  - Id#" + init.NameId.ToString(CultureInfo.InvariantCulture) +
+                                      " | Lang: 0x" + init.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | Entries: " + init.Entries.Count.ToString(CultureInfo.InvariantCulture));
+                        foreach (ResourceDlgInitEntryInfo entry in init.Entries.Take(10))
+                        {
+                            sb.AppendLine("    - Control: " + entry.ControlId.ToString(CultureInfo.InvariantCulture) +
+                                          " | Msg: 0x" + entry.Message.ToString("X4", CultureInfo.InvariantCulture) +
+                                          " | Len: " + entry.DataLength.ToString(CultureInfo.InvariantCulture) +
+                                          (string.IsNullOrWhiteSpace(entry.DataPreview) ? string.Empty : " | " + entry.DataPreview));
+                        }
+                        if (init.Entries.Count > 10)
+                        {
+                            sb.AppendLine("    (truncated)");
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("resource-animated-cursors"))
+            {
+                sb.AppendLine("Resource Animated Cursors:");
+                if (pe.ResourceAnimatedCursors.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (ResourceAnimatedInfo info in pe.ResourceAnimatedCursors.OrderBy(i => i.NameId).ThenBy(i => i.LanguageId))
+                    {
+                        sb.AppendLine("  - Id#" + info.NameId.ToString(CultureInfo.InvariantCulture) +
+                                      " | Lang: 0x" + info.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | Frames: " + info.FrameCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Steps: " + info.StepCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Size: " + info.Width.ToString(CultureInfo.InvariantCulture) + "x" + info.Height.ToString(CultureInfo.InvariantCulture) +
+                                      " | Bits: " + info.BitCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Planes: " + info.Planes.ToString(CultureInfo.InvariantCulture));
+                        if (info.ChunkTypes.Count > 0)
+                        {
+                            sb.AppendLine("    Chunks: " + string.Join(", ", info.ChunkTypes));
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("resource-animated-icons"))
+            {
+                sb.AppendLine("Resource Animated Icons:");
+                if (pe.ResourceAnimatedIcons.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (ResourceAnimatedInfo info in pe.ResourceAnimatedIcons.OrderBy(i => i.NameId).ThenBy(i => i.LanguageId))
+                    {
+                        sb.AppendLine("  - Id#" + info.NameId.ToString(CultureInfo.InvariantCulture) +
+                                      " | Lang: 0x" + info.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | Frames: " + info.FrameCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Steps: " + info.StepCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Size: " + info.Width.ToString(CultureInfo.InvariantCulture) + "x" + info.Height.ToString(CultureInfo.InvariantCulture));
+                        if (info.ChunkTypes.Count > 0)
+                        {
+                            sb.AppendLine("    Chunks: " + string.Join(", ", info.ChunkTypes));
+                        }
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("resource-rcdata"))
+            {
+                sb.AppendLine("Resource RCDATA:");
+                if (pe.ResourceRcData.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (ResourceRcDataInfo info in pe.ResourceRcData.OrderBy(r => r.NameId).ThenBy(r => r.LanguageId))
+                    {
+                        sb.AppendLine("  - Id#" + info.NameId.ToString(CultureInfo.InvariantCulture) +
+                                      " | Lang: 0x" + info.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | Size: " + info.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | Text: " + info.IsText +
+                                      " | Entropy: " + info.Entropy.ToString("F3", CultureInfo.InvariantCulture));
+                        if (!string.IsNullOrWhiteSpace(info.TextPreview))
+                        {
+                            sb.AppendLine("    Preview: " + info.TextPreview);
+                        }
+                    }
+                }
+                sb.AppendLine();
             }
 
             if (filter.ShouldInclude("resources"))
