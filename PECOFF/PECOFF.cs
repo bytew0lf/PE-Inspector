@@ -712,6 +712,7 @@ namespace PECoff
             IMAGE_FILE_MACHINE_ARM = 0x1c0,
             IMAGE_FILE_MACHINE_ARMNT = 0x1c4,
             IMAGE_FILE_MACHINE_ARM64 = 0xaa64,
+            IMAGE_FILE_MACHINE_ARM64EC = 0xa64e,
             
             IMAGE_FILE_MACHINE_EBC = 0xebc, // EFI Byte Code
 
@@ -2271,6 +2272,16 @@ namespace PECoff
             }
         }
 
+        private readonly List<Arm64UnwindInfoDetail> _arm64UnwindInfoDetails = new List<Arm64UnwindInfoDetail>();
+        public Arm64UnwindInfoDetail[] Arm64UnwindInfoDetails
+        {
+            get
+            {
+                EnsureExceptionDirectoryParsed();
+                return _arm64UnwindInfoDetails.ToArray();
+            }
+        }
+
         private ExceptionDirectorySummary _exceptionSummary;
         public ExceptionDirectorySummary ExceptionSummary
         {
@@ -3713,6 +3724,7 @@ namespace PECoff
                 _exceptionFunctions.ToArray(),
                 _exceptionSummary,
                 _unwindInfoDetails.ToArray(),
+                _arm64UnwindInfoDetails.ToArray(),
                 _richHeader,
                 _tlsInfo,
                 _loadConfig,
@@ -6584,6 +6596,21 @@ namespace PECoff
             return TryParsePogoData(data, out info);
         }
 
+        internal static bool TryParseDebugMiscDataForTest(byte[] data, out DebugMiscInfo info)
+        {
+            return TryParseDebugMiscData(data, out info);
+        }
+
+        internal static bool TryParseOmapDataForTest(byte[] data, out DebugOmapInfo info)
+        {
+            return TryParseOmapData(data, out info);
+        }
+
+        internal static bool TryParseReproDataForTest(byte[] data, out DebugReproInfo info)
+        {
+            return TryParseReproData(data, out info);
+        }
+
         internal static bool TryParseVcFeatureDataForTest(byte[] data, out DebugVcFeatureInfo info)
         {
             return TryParseVcFeatureData(data, out info);
@@ -6597,6 +6624,18 @@ namespace PECoff
         internal static bool TryParseFpoDataForTest(byte[] data, out DebugFpoInfo info)
         {
             return TryParseFpoData(data, out info);
+        }
+
+        internal static bool TryReadCodeIntegrityForTest(byte[] data, out LoadConfigCodeIntegrityInfo info)
+        {
+            info = null;
+            if (data == null)
+            {
+                return false;
+            }
+
+            int offset = 0;
+            return TryReadCodeIntegrity(data, ref offset, data.Length, out info);
         }
 
         internal static bool TryParseBitmapInfoHeaderForTest(
@@ -8999,14 +9038,32 @@ namespace PECoff
             {
                 _exceptionSummary = null;
                 _unwindInfoDetails.Clear();
+                _arm64UnwindInfoDetails.Clear();
                 return;
             }
 
             bool isAmd64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_AMD64;
+            bool isArm64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64 ||
+                _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64EC;
             _unwindInfoDetails.Clear();
+            _arm64UnwindInfoDetails.Clear();
             if (isAmd64)
             {
                 ParseUnwindInfoDetails(sections);
+            }
+            else if (isArm64)
+            {
+                ParseArm64UnwindInfoDetails(sections);
+            }
+
+            TryGetUnwindVersion tryGetVersion = null;
+            if (isAmd64)
+            {
+                tryGetVersion = (uint rva, out byte version) => TryReadUnwindVersion(sections, rva, out version);
+            }
+            else if (isArm64)
+            {
+                tryGetVersion = (uint rva, out byte version) => TryReadArm64UnwindVersion(sections, rva, out version);
             }
 
             _exceptionSummary = BuildExceptionDirectorySummaryCore(
@@ -9016,8 +9073,8 @@ namespace PECoff
                 _exceptionDirectorySectionName,
                 _exceptionDirectoryInPdata,
                 _sizeOfImage,
-                isAmd64,
-                (uint rva, out byte version) => TryReadUnwindVersion(sections, rva, out version));
+                isAmd64 || isArm64,
+                tryGetVersion);
         }
 
         private void ParseUnwindInfoDetails(List<IMAGE_SECTION_HEADER> sections)
@@ -9086,6 +9143,72 @@ namespace PECoff
             }
         }
 
+        private void ParseArm64UnwindInfoDetails(List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (_exceptionFunctions.Count == 0 || PEFileStream == null || PEFile == null)
+            {
+                return;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                foreach (ExceptionFunctionInfo func in _exceptionFunctions)
+                {
+                    if (func.UnwindInfoAddress == 0)
+                    {
+                        continue;
+                    }
+
+                    if (!TryGetFileOffset(sections, func.UnwindInfoAddress, out long offset))
+                    {
+                        Warn(ParseIssueCategory.Sections, "ARM64 unwind info RVA not mapped to a section.");
+                        continue;
+                    }
+
+                    if (!TrySetPosition(offset, 4))
+                    {
+                        Warn(ParseIssueCategory.Sections, "ARM64 unwind info header outside file bounds.");
+                        continue;
+                    }
+
+                    uint header = PEFile.ReadUInt32();
+                    int codeWords = (int)((header >> 27) & 0x1F);
+                    int sizeBytes = 4 + (codeWords * 4);
+                    if (sizeBytes < 4 || !TrySetPosition(offset, sizeBytes))
+                    {
+                        Warn(ParseIssueCategory.Sections, "ARM64 unwind info size exceeds file bounds.");
+                        continue;
+                    }
+
+                    byte[] buffer = new byte[sizeBytes];
+                    ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+                    if (TryParseArm64UnwindInfoDetail(func, buffer, out Arm64UnwindInfoDetail detail))
+                    {
+                        _arm64UnwindInfoDetails.Add(detail);
+                        uint functionSize = func.EndAddress > func.BeginAddress
+                            ? func.EndAddress - func.BeginAddress
+                            : 0;
+                        if (functionSize > 0 && detail.FunctionLengthBytes > functionSize)
+                        {
+                            Warn(ParseIssueCategory.Sections, "ARM64 unwind function length exceeds function size.");
+                        }
+                    }
+                    else
+                    {
+                        Warn(ParseIssueCategory.Sections, "ARM64 unwind info could not be parsed.");
+                    }
+                }
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
         private static bool TryParseUnwindInfoDetail(ExceptionFunctionInfo func, ReadOnlySpan<byte> data, out UnwindInfoDetail detail)
         {
             detail = null;
@@ -9142,6 +9265,41 @@ namespace PECoff
             return true;
         }
 
+        private static bool TryParseArm64UnwindInfoDetail(ExceptionFunctionInfo func, ReadOnlySpan<byte> data, out Arm64UnwindInfoDetail detail)
+        {
+            detail = null;
+            if (data.Length < 4)
+            {
+                return false;
+            }
+
+            uint header = ReadUInt32(data, 0);
+            int functionLength = (int)(header & 0x3FFFF);
+            byte version = (byte)((header >> 18) & 0x03);
+            bool hasXFlag = ((header >> 20) & 0x01) != 0;
+            bool hasEpilogFlag = ((header >> 21) & 0x01) != 0;
+            int epilogCount = (int)((header >> 22) & 0x1F);
+            int codeWords = (int)((header >> 27) & 0x1F);
+            int sizeBytes = 4 + (codeWords * 4);
+            int functionLengthBytes = functionLength * 4;
+            string preview = BuildHexPreview(data, 32);
+
+            detail = new Arm64UnwindInfoDetail(
+                func.BeginAddress,
+                func.EndAddress,
+                func.UnwindInfoAddress,
+                header,
+                functionLengthBytes,
+                version,
+                hasXFlag,
+                hasEpilogFlag,
+                epilogCount,
+                codeWords,
+                sizeBytes,
+                preview);
+            return true;
+        }
+
         internal static UnwindInfoDetail BuildUnwindInfoDetailForTest(ExceptionFunctionInfo func, byte[] data)
         {
             if (data == null || func == null)
@@ -9150,6 +9308,18 @@ namespace PECoff
             }
 
             return TryParseUnwindInfoDetail(func, data, out UnwindInfoDetail detail)
+                ? detail
+                : null;
+        }
+
+        internal static Arm64UnwindInfoDetail BuildArm64UnwindInfoDetailForTest(ExceptionFunctionInfo func, byte[] data)
+        {
+            if (data == null || func == null)
+            {
+                return null;
+            }
+
+            return TryParseArm64UnwindInfoDetail(func, data, out Arm64UnwindInfoDetail detail)
                 ? detail
                 : null;
         }
@@ -9182,6 +9352,40 @@ namespace PECoff
                 }
 
                 version = (byte)(value & 0x07);
+                return true;
+            }
+            finally
+            {
+                if (PEFileStream.CanSeek)
+                {
+                    PEFileStream.Position = originalPosition;
+                }
+            }
+        }
+
+        private bool TryReadArm64UnwindVersion(List<IMAGE_SECTION_HEADER> sections, uint rva, out byte version)
+        {
+            version = 0;
+            if (rva == 0 || PEFileStream == null || PEFile == null)
+            {
+                return false;
+            }
+
+            if (!TryGetFileOffset(sections, rva, out long offset))
+            {
+                return false;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                if (!TrySetPosition(offset, 4))
+                {
+                    return false;
+                }
+
+                uint header = PEFile.ReadUInt32();
+                version = (byte)((header >> 18) & 0x03);
                 return true;
             }
             finally
@@ -9356,6 +9560,10 @@ namespace PECoff
                 DebugVcFeatureInfo vcFeature = null;
                 DebugExDllCharacteristicsInfo exDll = null;
                 DebugFpoInfo fpo = null;
+                DebugMiscInfo misc = null;
+                DebugOmapInfo omapToSource = null;
+                DebugOmapInfo omapFromSource = null;
+                DebugReproInfo repro = null;
                 string note = string.Empty;
                 if ((DebugDirectoryType)entry.Type == DebugDirectoryType.CodeView && entry.SizeOfData > 0)
                 {
@@ -9441,6 +9649,38 @@ namespace PECoff
                         fpo = parsed;
                     }
                 }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Misc && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseDebugMiscData(data, out DebugMiscInfo parsed))
+                    {
+                        misc = parsed;
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.OmapToSrc && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseOmapData(data, out DebugOmapInfo parsed))
+                    {
+                        omapToSource = parsed;
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.OmapFromSrc && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseOmapData(data, out DebugOmapInfo parsed))
+                    {
+                        omapFromSource = parsed;
+                    }
+                }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Repro && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseReproData(data, out DebugReproInfo parsed))
+                    {
+                        repro = parsed;
+                    }
+                }
 
                 _debugDirectories.Add(new DebugDirectoryEntry(
                     entry.Characteristics,
@@ -9456,6 +9696,10 @@ namespace PECoff
                     vcFeature,
                     exDll,
                     fpo,
+                    misc,
+                    omapToSource,
+                    omapFromSource,
+                    repro,
                     note));
             }
         }
@@ -9546,6 +9790,84 @@ namespace PECoff
             }
 
             info = new DebugPogoInfo(signature, total, truncated, entries.ToArray());
+            return true;
+        }
+
+        private static bool TryParseDebugMiscData(byte[] data, out DebugMiscInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 12)
+            {
+                return false;
+            }
+
+            uint dataType = ReadUInt32(data, 0);
+            uint length = ReadUInt32(data, 4);
+            bool isUnicode = data[8] != 0;
+
+            int availableLength = data.Length;
+            int declaredLength = length > int.MaxValue ? int.MaxValue : (int)length;
+            int totalLength = declaredLength >= 12 ? Math.Min(declaredLength, availableLength) : availableLength;
+            if (totalLength < 12)
+            {
+                totalLength = availableLength;
+            }
+
+            int payloadLength = Math.Max(0, totalLength - 12);
+            string payload = string.Empty;
+            if (payloadLength > 0)
+            {
+                if (isUnicode)
+                {
+                    int safeLength = payloadLength - (payloadLength % 2);
+                    payload = Encoding.Unicode.GetString(data, 12, safeLength);
+                }
+                else
+                {
+                    payload = Encoding.ASCII.GetString(data, 12, payloadLength);
+                }
+
+                payload = payload.TrimEnd('\0');
+            }
+
+            info = new DebugMiscInfo(dataType, length, isUnicode, payload);
+            return true;
+        }
+
+        private static bool TryParseOmapData(byte[] data, out DebugOmapInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 8)
+            {
+                return false;
+            }
+
+            int total = data.Length / 8;
+            const int maxEntries = 512;
+            int count = Math.Min(total, maxEntries);
+            bool truncated = total > maxEntries;
+            DebugOmapEntryInfo[] entries = new DebugOmapEntryInfo[count];
+            for (int i = 0; i < count; i++)
+            {
+                int offset = i * 8;
+                uint from = ReadUInt32(data, offset);
+                uint to = ReadUInt32(data, offset + 4);
+                entries[i] = new DebugOmapEntryInfo(from, to);
+            }
+
+            info = new DebugOmapInfo(total, truncated, entries);
+            return true;
+        }
+
+        private static bool TryParseReproData(byte[] data, out DebugReproInfo info)
+        {
+            info = null;
+            if (data == null || data.Length == 0)
+            {
+                return false;
+            }
+
+            info = new DebugReproInfo((uint)data.Length, ToHex(data));
             return true;
         }
 
@@ -9979,6 +10301,7 @@ namespace PECoff
             offset += 4;
             LoadConfigGuardFlagsInfo guardFlagsInfo = DecodeGuardFlags(guardFlags);
             LoadConfigGlobalFlagsInfo globalFlagsInfo = DecodeGlobalFlags(globalFlagsClear, globalFlagsSet);
+            LoadConfigCodeIntegrityInfo codeIntegrityInfo = null;
 
             ulong dynamicValueRelocTable = 0;
             uint dynamicValueRelocTableOffset = 0;
@@ -9995,8 +10318,9 @@ namespace PECoff
             ulong guardXfgCheckFunctionPointer = 0;
             ulong guardXfgDispatchFunctionPointer = 0;
             ulong guardXfgTableDispatchFunctionPointer = 0;
+            EnclaveConfigurationInfo enclaveConfigInfo = null;
 
-            if (TryAdvance(ref offset, limit, 12) && // CodeIntegrity
+            if (TryReadCodeIntegrity(span, ref offset, limit, out codeIntegrityInfo) && // CodeIntegrity
                 TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardAddressTakenIatEntryTable
                 TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardAddressTakenIatEntryCount
                 TryReadPointerValue(span, ref offset, limit, isPe32Plus, out _) && // GuardLongJumpTargetTable
@@ -10147,6 +10471,11 @@ namespace PECoff
                 sehHandlerTableInfo = BuildSehHandlerTableInfo(seHandlerTable, seHandlerCount, sections);
             }
 
+            if (enclaveConfigurationPointer != 0)
+            {
+                enclaveConfigInfo = TryReadEnclaveConfiguration(enclaveConfigurationPointer, sections);
+            }
+
             _loadConfig = new LoadConfigInfo(
                 size,
                 timeDateStamp,
@@ -10155,6 +10484,7 @@ namespace PECoff
                 globalFlagsClear,
                 globalFlagsSet,
                 globalFlagsInfo,
+                codeIntegrityInfo,
                 processHeapFlags,
                 csdVersion,
                 dependentLoadFlags,
@@ -10184,7 +10514,8 @@ namespace PECoff
                 guardXfgTableDispatchFunctionPointer,
                 guardFeatures.ToArray(),
                 guardTableSanity.ToArray(),
-                sehHandlerTableInfo);
+                sehHandlerTableInfo,
+                enclaveConfigInfo);
         }
 
         private SehHandlerTableInfo BuildSehHandlerTableInfo(ulong tableAddress, uint handlerCount, List<IMAGE_SECTION_HEADER> sections)
@@ -10287,6 +10618,138 @@ namespace PECoff
             value = ReadUInt16(span, offset);
             offset += 2;
             return true;
+        }
+
+        private static bool TryReadCodeIntegrity(ReadOnlySpan<byte> span, ref int offset, int limit, out LoadConfigCodeIntegrityInfo info)
+        {
+            info = null;
+            if (offset + 12 > limit)
+            {
+                return false;
+            }
+
+            ushort flags = ReadUInt16(span, offset);
+            ushort catalog = ReadUInt16(span, offset + 2);
+            uint catalogOffset = ReadUInt32(span, offset + 4);
+            uint reserved = ReadUInt32(span, offset + 8);
+            offset += 12;
+            info = new LoadConfigCodeIntegrityInfo(flags, catalog, catalogOffset, reserved, DecodeBitFlags16(flags));
+            return true;
+        }
+
+        private EnclaveConfigurationInfo TryReadEnclaveConfiguration(ulong enclavePointer, List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (enclavePointer == 0)
+            {
+                return null;
+            }
+
+            if (_imageBase == 0 || !TryGetRvaFromAddress(enclavePointer, _imageBase, out uint rva, out _))
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Enclave configuration pointer could not be mapped to an RVA.");
+                return new EnclaveConfigurationInfo(0, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, string.Empty, false, Array.Empty<string>(), Array.Empty<string>());
+            }
+
+            bool mapped = TryGetSectionByRva(sections, rva, out IMAGE_SECTION_HEADER section);
+            string sectionName = mapped ? NormalizeSectionName(section.Section) : string.Empty;
+            if (!TryGetFileOffset(sections, rva, out long fileOffset))
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Enclave configuration RVA not mapped to a file offset.");
+                return new EnclaveConfigurationInfo(0, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, sectionName, mapped, Array.Empty<string>(), Array.Empty<string>());
+            }
+
+            if (!TrySetPosition(fileOffset, 4))
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Enclave configuration header outside file bounds.");
+                return new EnclaveConfigurationInfo(0, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, sectionName, mapped, Array.Empty<string>(), Array.Empty<string>());
+            }
+
+            byte[] headerBytes = new byte[4];
+            ReadExactly(PEFileStream, headerBytes, 0, headerBytes.Length);
+            uint size = BitConverter.ToUInt32(headerBytes, 0);
+            int readSize = size > 0 && size <= 256 ? (int)size : 76;
+            if (!TrySetPosition(fileOffset, readSize))
+            {
+                Warn(ParseIssueCategory.LoadConfig, "Enclave configuration size exceeds file bounds.");
+                return new EnclaveConfigurationInfo(size, 0, 0, 0, 0, 0, string.Empty, string.Empty, 0, 0, 0, 0, 0, sectionName, mapped, Array.Empty<string>(), Array.Empty<string>());
+            }
+
+            byte[] buffer = new byte[readSize];
+            ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+            ReadOnlySpan<byte> span = new ReadOnlySpan<byte>(buffer);
+
+            uint minimumRequiredConfigSize = ReadUInt32Safe(span, 4);
+            uint policyFlags = ReadUInt32Safe(span, 8);
+            uint numberOfImports = ReadUInt32Safe(span, 12);
+            uint importListRva = ReadUInt32Safe(span, 16);
+            uint importEntrySize = ReadUInt32Safe(span, 20);
+            string familyId = ReadBytesHexSafe(span, 24, 16);
+            string imageId = ReadBytesHexSafe(span, 40, 16);
+            uint imageVersion = ReadUInt32Safe(span, 56);
+            uint securityVersion = ReadUInt32Safe(span, 60);
+            uint enclaveSize = ReadUInt32Safe(span, 64);
+            uint numberOfThreads = ReadUInt32Safe(span, 68);
+            uint enclaveFlags = ReadUInt32Safe(span, 72);
+
+            return new EnclaveConfigurationInfo(
+                size,
+                minimumRequiredConfigSize,
+                policyFlags,
+                numberOfImports,
+                importListRva,
+                importEntrySize,
+                familyId,
+                imageId,
+                imageVersion,
+                securityVersion,
+                enclaveSize,
+                numberOfThreads,
+                enclaveFlags,
+                sectionName,
+                mapped,
+                DecodeBitFlags(policyFlags),
+                DecodeBitFlags(enclaveFlags));
+        }
+
+        private static uint ReadUInt32Safe(ReadOnlySpan<byte> span, int offset)
+        {
+            if (offset < 0 || offset + 4 > span.Length)
+            {
+                return 0;
+            }
+
+            return ReadUInt32(span, offset);
+        }
+
+        private static string ReadBytesHexSafe(ReadOnlySpan<byte> span, int offset, int length)
+        {
+            if (offset < 0 || length <= 0 || offset + length > span.Length)
+            {
+                return string.Empty;
+            }
+
+            byte[] buffer = span.Slice(offset, length).ToArray();
+            return ToHex(buffer);
+        }
+
+        private static string[] DecodeBitFlags16(ushort flags)
+        {
+            if (flags == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> names = new List<string>();
+            for (int bit = 0; bit < 16; bit++)
+            {
+                ushort mask = (ushort)(1 << bit);
+                if ((flags & mask) != 0)
+                {
+                    names.Add("0x" + mask.ToString("X4", CultureInfo.InvariantCulture));
+                }
+            }
+
+            return names.ToArray();
         }
 
         private static bool TryVaToRva(ulong va, ulong imageBase, out uint rva)
@@ -12311,6 +12774,7 @@ namespace PECoff
                 _exceptionDirectoryInPdata = false;
                 _exceptionFunctions.Clear();
                 _unwindInfoDetails.Clear();
+                _arm64UnwindInfoDetails.Clear();
                 _exceptionSummary = null;
                 _richHeader = null;
                 _tlsInfo = null;

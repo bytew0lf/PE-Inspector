@@ -181,6 +181,60 @@ namespace PECoff
         ExDllCharacteristics = 20
     }
 
+    public sealed class DebugMiscInfo
+    {
+        public uint DataType { get; }
+        public uint Length { get; }
+        public bool IsUnicode { get; }
+        public string Data { get; }
+
+        public DebugMiscInfo(uint dataType, uint length, bool isUnicode, string data)
+        {
+            DataType = dataType;
+            Length = length;
+            IsUnicode = isUnicode;
+            Data = data ?? string.Empty;
+        }
+    }
+
+    public sealed class DebugOmapEntryInfo
+    {
+        public uint From { get; }
+        public uint To { get; }
+
+        public DebugOmapEntryInfo(uint from, uint to)
+        {
+            From = from;
+            To = to;
+        }
+    }
+
+    public sealed class DebugOmapInfo
+    {
+        public int TotalEntryCount { get; }
+        public bool IsTruncated { get; }
+        public IReadOnlyList<DebugOmapEntryInfo> Entries { get; }
+
+        public DebugOmapInfo(int totalEntryCount, bool isTruncated, DebugOmapEntryInfo[] entries)
+        {
+            TotalEntryCount = totalEntryCount;
+            IsTruncated = isTruncated;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<DebugOmapEntryInfo>());
+        }
+    }
+
+    public sealed class DebugReproInfo
+    {
+        public uint DataLength { get; }
+        public string Hash { get; }
+
+        public DebugReproInfo(uint dataLength, string hash)
+        {
+            DataLength = dataLength;
+            Hash = hash ?? string.Empty;
+        }
+    }
+
     public sealed class DebugPogoEntryInfo
     {
         public uint Rva { get; }
@@ -364,6 +418,10 @@ namespace PECoff
         public DebugVcFeatureInfo VcFeature { get; }
         public DebugExDllCharacteristicsInfo ExDllCharacteristics { get; }
         public DebugFpoInfo Fpo { get; }
+        public DebugMiscInfo Misc { get; }
+        public DebugOmapInfo OmapToSource { get; }
+        public DebugOmapInfo OmapFromSource { get; }
+        public DebugReproInfo Repro { get; }
         public string Note { get; }
 
         public DebugDirectoryEntry(
@@ -380,6 +438,10 @@ namespace PECoff
             DebugVcFeatureInfo vcFeature,
             DebugExDllCharacteristicsInfo exDllCharacteristics,
             DebugFpoInfo fpo,
+            DebugMiscInfo misc,
+            DebugOmapInfo omapToSource,
+            DebugOmapInfo omapFromSource,
+            DebugReproInfo repro,
             string note)
         {
             Characteristics = characteristics;
@@ -395,6 +457,10 @@ namespace PECoff
             VcFeature = vcFeature;
             ExDllCharacteristics = exDllCharacteristics;
             Fpo = fpo;
+            Misc = misc;
+            OmapToSource = omapToSource;
+            OmapFromSource = omapFromSource;
+            Repro = repro;
             Note = note ?? string.Empty;
         }
     }
@@ -506,6 +572,50 @@ namespace PECoff
             HasChainedInfo = hasChainedInfo;
             PrologSizeExceedsFunction = prologSizeExceedsFunction;
             UnwindCodes = Array.AsReadOnly(unwindCodes ?? Array.Empty<UnwindCodeInfo>());
+        }
+    }
+
+    public sealed class Arm64UnwindInfoDetail
+    {
+        public uint FunctionBegin { get; }
+        public uint FunctionEnd { get; }
+        public uint UnwindInfoAddress { get; }
+        public uint Header { get; }
+        public int FunctionLengthBytes { get; }
+        public byte Version { get; }
+        public bool HasXFlag { get; }
+        public bool HasEpilogFlag { get; }
+        public int EpilogCount { get; }
+        public int CodeWords { get; }
+        public int SizeBytes { get; }
+        public string RawPreview { get; }
+
+        public Arm64UnwindInfoDetail(
+            uint functionBegin,
+            uint functionEnd,
+            uint unwindInfoAddress,
+            uint header,
+            int functionLengthBytes,
+            byte version,
+            bool hasXFlag,
+            bool hasEpilogFlag,
+            int epilogCount,
+            int codeWords,
+            int sizeBytes,
+            string rawPreview)
+        {
+            FunctionBegin = functionBegin;
+            FunctionEnd = functionEnd;
+            UnwindInfoAddress = unwindInfoAddress;
+            Header = header;
+            FunctionLengthBytes = functionLengthBytes;
+            Version = version;
+            HasXFlag = hasXFlag;
+            HasEpilogFlag = hasEpilogFlag;
+            EpilogCount = epilogCount;
+            CodeWords = codeWords;
+            SizeBytes = sizeBytes;
+            RawPreview = rawPreview ?? string.Empty;
         }
     }
 
@@ -818,6 +928,88 @@ namespace PECoff
         }
     }
 
+    public sealed class LoadConfigCodeIntegrityInfo
+    {
+        public ushort Flags { get; }
+        public ushort Catalog { get; }
+        public uint CatalogOffset { get; }
+        public uint Reserved { get; }
+        public IReadOnlyList<string> FlagNames { get; }
+
+        public LoadConfigCodeIntegrityInfo(
+            ushort flags,
+            ushort catalog,
+            uint catalogOffset,
+            uint reserved,
+            string[] flagNames)
+        {
+            Flags = flags;
+            Catalog = catalog;
+            CatalogOffset = catalogOffset;
+            Reserved = reserved;
+            FlagNames = Array.AsReadOnly(flagNames ?? Array.Empty<string>());
+        }
+    }
+
+    public sealed class EnclaveConfigurationInfo
+    {
+        public uint Size { get; }
+        public uint MinimumRequiredConfigSize { get; }
+        public uint PolicyFlags { get; }
+        public uint NumberOfImports { get; }
+        public uint ImportListRva { get; }
+        public uint ImportEntrySize { get; }
+        public string FamilyId { get; }
+        public string ImageId { get; }
+        public uint ImageVersion { get; }
+        public uint SecurityVersion { get; }
+        public uint EnclaveSize { get; }
+        public uint NumberOfThreads { get; }
+        public uint EnclaveFlags { get; }
+        public string SectionName { get; }
+        public bool IsMapped { get; }
+        public IReadOnlyList<string> PolicyFlagNames { get; }
+        public IReadOnlyList<string> EnclaveFlagNames { get; }
+
+        public EnclaveConfigurationInfo(
+            uint size,
+            uint minimumRequiredConfigSize,
+            uint policyFlags,
+            uint numberOfImports,
+            uint importListRva,
+            uint importEntrySize,
+            string familyId,
+            string imageId,
+            uint imageVersion,
+            uint securityVersion,
+            uint enclaveSize,
+            uint numberOfThreads,
+            uint enclaveFlags,
+            string sectionName,
+            bool isMapped,
+            string[] policyFlagNames,
+            string[] enclaveFlagNames)
+        {
+            Size = size;
+            MinimumRequiredConfigSize = minimumRequiredConfigSize;
+            PolicyFlags = policyFlags;
+            NumberOfImports = numberOfImports;
+            ImportListRva = importListRva;
+            ImportEntrySize = importEntrySize;
+            FamilyId = familyId ?? string.Empty;
+            ImageId = imageId ?? string.Empty;
+            ImageVersion = imageVersion;
+            SecurityVersion = securityVersion;
+            EnclaveSize = enclaveSize;
+            NumberOfThreads = numberOfThreads;
+            EnclaveFlags = enclaveFlags;
+            SectionName = sectionName ?? string.Empty;
+            IsMapped = isMapped;
+            PolicyFlagNames = Array.AsReadOnly(policyFlagNames ?? Array.Empty<string>());
+            EnclaveFlagNames = Array.AsReadOnly(enclaveFlagNames ?? Array.Empty<string>());
+        }
+    }
+
     public sealed class GuardFeatureInfo
     {
         public string Feature { get; }
@@ -845,6 +1037,7 @@ namespace PECoff
         public uint GlobalFlagsClear { get; }
         public uint GlobalFlagsSet { get; }
         public LoadConfigGlobalFlagsInfo GlobalFlagsInfo { get; }
+        public LoadConfigCodeIntegrityInfo CodeIntegrity { get; }
         public uint ProcessHeapFlags { get; }
         public uint CsdVersion { get; }
         public uint DependentLoadFlags { get; }
@@ -875,6 +1068,7 @@ namespace PECoff
         public IReadOnlyList<GuardFeatureInfo> GuardFeatureMatrix { get; }
         public IReadOnlyList<GuardTableSanityInfo> GuardTableSanity { get; }
         public SehHandlerTableInfo SehHandlerTable { get; }
+        public EnclaveConfigurationInfo EnclaveConfiguration { get; }
 
         public LoadConfigInfo(
             uint size,
@@ -884,6 +1078,7 @@ namespace PECoff
             uint globalFlagsClear,
             uint globalFlagsSet,
             LoadConfigGlobalFlagsInfo globalFlagsInfo,
+            LoadConfigCodeIntegrityInfo codeIntegrity,
             uint processHeapFlags,
             uint csdVersion,
             uint dependentLoadFlags,
@@ -913,7 +1108,8 @@ namespace PECoff
             ulong guardXfgTableDispatchFunctionPointer,
             GuardFeatureInfo[] guardFeatureMatrix,
             GuardTableSanityInfo[] guardTableSanity,
-            SehHandlerTableInfo sehHandlerTable)
+            SehHandlerTableInfo sehHandlerTable,
+            EnclaveConfigurationInfo enclaveConfiguration)
         {
             Size = size;
             TimeDateStamp = timeDateStamp;
@@ -922,6 +1118,7 @@ namespace PECoff
             GlobalFlagsClear = globalFlagsClear;
             GlobalFlagsSet = globalFlagsSet;
             GlobalFlagsInfo = globalFlagsInfo;
+            CodeIntegrity = codeIntegrity;
             ProcessHeapFlags = processHeapFlags;
             CsdVersion = csdVersion;
             DependentLoadFlags = dependentLoadFlags;
@@ -952,6 +1149,7 @@ namespace PECoff
             GuardFeatureMatrix = Array.AsReadOnly(guardFeatureMatrix ?? Array.Empty<GuardFeatureInfo>());
             GuardTableSanity = Array.AsReadOnly(guardTableSanity ?? Array.Empty<GuardTableSanityInfo>());
             SehHandlerTable = sehHandlerTable;
+            EnclaveConfiguration = enclaveConfiguration;
         }
     }
 
@@ -2318,7 +2516,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 11;
+        public const int CurrentSchemaVersion = 12;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -2408,6 +2606,7 @@ namespace PECoff
         public IReadOnlyList<ExceptionFunctionInfo> ExceptionFunctions { get; }
         public ExceptionDirectorySummary ExceptionSummary { get; }
         public IReadOnlyList<UnwindInfoDetail> UnwindInfoDetails { get; }
+        public IReadOnlyList<Arm64UnwindInfoDetail> Arm64UnwindInfoDetails { get; }
         public RichHeaderInfo RichHeader { get; }
         public TlsInfo TlsInfo { get; }
         public LoadConfigInfo LoadConfig { get; }
@@ -2505,6 +2704,7 @@ namespace PECoff
             ExceptionFunctionInfo[] exceptionFunctions,
             ExceptionDirectorySummary exceptionSummary,
             UnwindInfoDetail[] unwindInfoDetails,
+            Arm64UnwindInfoDetail[] arm64UnwindInfoDetails,
             RichHeaderInfo richHeader,
             TlsInfo tlsInfo,
             LoadConfigInfo loadConfig,
@@ -2602,6 +2802,7 @@ namespace PECoff
             ExceptionFunctions = Array.AsReadOnly(exceptionFunctions ?? Array.Empty<ExceptionFunctionInfo>());
             ExceptionSummary = exceptionSummary;
             UnwindInfoDetails = Array.AsReadOnly(unwindInfoDetails ?? Array.Empty<UnwindInfoDetail>());
+            Arm64UnwindInfoDetails = Array.AsReadOnly(arm64UnwindInfoDetails ?? Array.Empty<Arm64UnwindInfoDetail>());
             RichHeader = richHeader;
             TlsInfo = tlsInfo;
             LoadConfig = loadConfig;
@@ -2771,6 +2972,7 @@ namespace PECoff
                 ExceptionFunctions,
                 ExceptionSummary,
                 UnwindInfoDetails,
+                Arm64UnwindInfoDetails,
                 RichHeader,
                 TlsInfo,
                 LoadConfig,
