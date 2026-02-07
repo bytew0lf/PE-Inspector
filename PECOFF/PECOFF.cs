@@ -503,6 +503,10 @@ namespace PECoff
         private bool _loadConfigParsed;
         private bool _clrParsed;
         private bool _peHeaderIsPe32Plus;
+        private string _imageKind = "Unknown";
+        private CoffObjectInfo _coffObjectInfo;
+        private TeImageInfo _teImageInfo;
+        private CatalogSignatureInfo _catalogSignatureInfo;
 
         private static readonly Dictionary<ushort, string> RichProductNameMap = new Dictionary<ushort, string>
         {
@@ -787,6 +791,7 @@ namespace PECoff
         }
 
         private const UInt32 IMAGE_NT_SIGNATURE = 0x00004550;
+        private const ushort EFI_TE_SIGNATURE = 0x5A56; // "VZ"
 
         private enum Subsystem : ushort
         {
@@ -1100,6 +1105,21 @@ namespace PECoff
             public UInt32 NumberOfSymbols;
             public ushort SizeOfOptionalHeader;
             public Characteristics Characteristics;
+        }
+
+        [StructLayout(LayoutKind.Sequential, Pack = 1)]
+        private struct EFI_TE_IMAGE_HEADER
+        {
+            public ushort Signature;
+            public ushort Machine;
+            public byte NumberOfSections;
+            public byte Subsystem;
+            public ushort StrippedSize;
+            public uint AddressOfEntryPoint;
+            public uint BaseOfCode;
+            public ulong ImageBase;
+            public IMAGE_DATA_DIRECTORY BaseRelocationTable;
+            public IMAGE_DATA_DIRECTORY DebugTable;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -1583,6 +1603,26 @@ namespace PECoff
                 EnsureResourcesParsed();
                 return _language;
             }
+        }
+
+        public string ImageKind
+        {
+            get { return _imageKind; }
+        }
+
+        public CoffObjectInfo CoffObject
+        {
+            get { return _coffObjectInfo; }
+        }
+
+        public TeImageInfo TeImage
+        {
+            get { return _teImageInfo; }
+        }
+
+        public CatalogSignatureInfo CatalogSignature
+        {
+            get { return _catalogSignatureInfo; }
         }
 
         private bool _isObfuscated;
@@ -3699,6 +3739,9 @@ namespace PECoff
             return new PECOFFResult(
                 _filePath,
                 _parseResult.Snapshot(),
+                _imageKind,
+                _coffObjectInfo,
+                _teImageInfo,
                 _hash ?? string.Empty,
                 _importHash ?? string.Empty,
                 _isDotNetFile,
@@ -3744,6 +3787,7 @@ namespace PECoff
                 _certificate ?? Array.Empty<byte>(),
                 _certificates.ToArray(),
                 _certificateEntries.ToArray(),
+                _catalogSignatureInfo,
                 _resources.ToArray(),
                 _resourceStringTables.ToArray(),
                 _resourceStringCoverage.ToArray(),
@@ -4132,6 +4176,27 @@ namespace PECoff
             }
 
             _importHash = ComputeImportHash(_importEntries);
+        }
+
+        private void ComputeCatalogSignatureInfo()
+        {
+            _catalogSignatureInfo = null;
+            if (_options?.AuthenticodePolicy == null || !_options.AuthenticodePolicy.EnableCatalogSignatureCheck)
+            {
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(_filePath))
+            {
+                return;
+            }
+
+            CatalogSignatureInfo info = CertificateUtilities.GetCatalogSignatureInfo(_filePath, _options.AuthenticodePolicy);
+            _catalogSignatureInfo = info;
+            if (info != null && info.Checked && !string.IsNullOrWhiteSpace(info.Error))
+            {
+                Warn(ParseIssueCategory.Authenticode, "Catalog signature check: " + info.Error);
+            }
         }
 
         private static string ComputeImportHash(IReadOnlyList<ImportEntry> entries)
@@ -9134,6 +9199,64 @@ namespace PECoff
             }
         }
 
+        private static string GetMachineName(ushort machine)
+        {
+            MachineTypes type = (MachineTypes)machine;
+            if (Enum.IsDefined(typeof(MachineTypes), type))
+            {
+                switch (type)
+                {
+                    case MachineTypes.IMAGE_FILE_MACHINE_I386: return "x86";
+                    case MachineTypes.IMAGE_FILE_MACHINE_AMD64: return "x64";
+                    case MachineTypes.IMAGE_FILE_MACHINE_ARM: return "ARM";
+                    case MachineTypes.IMAGE_FILE_MACHINE_ARMNT: return "ARMNT";
+                    case MachineTypes.IMAGE_FILE_MACHINE_ARM64: return "ARM64";
+                    case MachineTypes.IMAGE_FILE_MACHINE_ARM64EC: return "ARM64EC";
+                    case MachineTypes.IMAGE_FILE_MACHINE_IA64: return "IA64";
+                    case MachineTypes.IMAGE_FILE_MACHINE_EBC: return "EBC";
+                    case MachineTypes.IMAGE_FILE_MACHINE_POWERPC: return "PowerPC";
+                    case MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP: return "PowerPCFP";
+                    case MachineTypes.IMAGE_FILE_MACHINE_R3000: return "R3000";
+                    case MachineTypes.IMAGE_FILE_MACHINE_R4000: return "R4000";
+                    case MachineTypes.IMAGE_FILE_MACHINE_R10000: return "R10000";
+                    case MachineTypes.IMAGE_FILE_MACHINE_ALPHA_AXP: return "Alpha AXP";
+                    case MachineTypes.IMAGE_FILE_MACHINE_ALPHA_AXP64: return "Alpha AXP64";
+                    case MachineTypes.IMAGE_FILE_MACHINE_MIPS16: return "MIPS16";
+                    case MachineTypes.IMAGE_FILE_MACHINE_MIPSFPU: return "MIPSFPU";
+                    case MachineTypes.IMAGE_FILE_MACHINE_MIPSFPU16: return "MIPSFPU16";
+                    case MachineTypes.IMAGE_FILE_MACHINE_THUMB: return "Thumb";
+                    case MachineTypes.IMAGE_FILE_MACHINE_PURE_MSIL: return "MSIL";
+                    default: return type.ToString();
+                }
+            }
+
+            return string.Format(CultureInfo.InvariantCulture, "0x{0:X4}", machine);
+        }
+
+        private static string[] DecodeCoffCharacteristics(ushort value)
+        {
+            if (value == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> flags = new List<string>();
+            foreach (Characteristics flag in Enum.GetValues(typeof(Characteristics)))
+            {
+                if (flag == 0)
+                {
+                    continue;
+                }
+
+                if ((value & (ushort)flag) != 0)
+                {
+                    flags.Add(flag.ToString());
+                }
+            }
+
+            return flags.ToArray();
+        }
+
         private static string NormalizeSectionName(string name)
         {
             if (string.IsNullOrEmpty(name))
@@ -14122,11 +14245,233 @@ namespace PECoff
             Warn(category, decorated);
         }
 
+        private void ParseTeImage()
+        {
+            _imageKind = "TE";
+            _coffObjectInfo = null;
+            _teImageInfo = null;
+            _catalogSignatureInfo = null;
+
+            if (PEFileStream == null || PEFile == null)
+            {
+                Fail(ParseIssueCategory.File, "No PE file stream available.");
+                return;
+            }
+
+            int headerSize = Marshal.SizeOf(typeof(EFI_TE_IMAGE_HEADER));
+            if (!TrySetPosition(0, headerSize))
+            {
+                Fail(ParseIssueCategory.Header, "TE header exceeds file bounds.");
+                return;
+            }
+
+            byte[] buffer = new byte[headerSize];
+            ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+            EFI_TE_IMAGE_HEADER teHeader = ByteArrayToStructure<EFI_TE_IMAGE_HEADER>(buffer);
+            if (teHeader.Signature != EFI_TE_SIGNATURE)
+            {
+                Fail(ParseIssueCategory.Header, "Invalid TE signature.");
+                return;
+            }
+
+            _machineType = (MachineTypes)teHeader.Machine;
+            _timeDateStamp = 0;
+            _fileAlignment = 0;
+            _sectionAlignment = 0;
+            _imageBase = teHeader.ImageBase;
+            _sizeOfImage = 0;
+            _sizeOfCode = 0;
+            _sizeOfInitializedData = 0;
+            _numberOfRvaAndSizes = 0;
+            _sizeOfHeaders = teHeader.StrippedSize;
+            _optionalHeaderChecksum = 0;
+            _subsystemInfo = BuildSubsystemInfo((Subsystem)teHeader.Subsystem);
+            _dllCharacteristicsInfo = null;
+            _securityFeaturesInfo = null;
+            _dataDirectories = Array.Empty<IMAGE_DATA_DIRECTORY>();
+            _dataDirectoryInfos = Array.Empty<DataDirectoryInfo>();
+            _architectureDirectory = null;
+            _globalPtrDirectory = null;
+            _iatDirectory = null;
+            _hasResourceDirectory = false;
+            _hasRelocationDirectory = false;
+            _hasDebugDirectory = false;
+            _hasExceptionDirectory = false;
+            _hasLoadConfigDirectory = false;
+            _hasClrDirectory = false;
+            _resourcesParsed = true;
+            _debugParsed = true;
+            _relocationsParsed = true;
+            _exceptionParsed = true;
+            _loadConfigParsed = true;
+            _clrParsed = true;
+            _peHeaderIsPe32Plus = false;
+
+            List<IMAGE_SECTION_HEADER> sections = new List<IMAGE_SECTION_HEADER>();
+            int sectionCount = teHeader.NumberOfSections;
+            int sectionTableSize = sectionCount * Marshal.SizeOf(typeof(IMAGE_SECTION_HEADER));
+            long sectionTableOffset = headerSize;
+            if (sectionCount > 0)
+            {
+                if (!TrySetPosition(sectionTableOffset, sectionTableSize))
+                {
+                    Fail(ParseIssueCategory.Sections, "TE section table exceeds file bounds.");
+                    return;
+                }
+
+                for (int i = 0; i < sectionCount; i++)
+                {
+                    sections.Add(new IMAGE_SECTION_HEADER(PEFile));
+                }
+            }
+
+            _sections = sections;
+            BuildSectionPermissionInfos(sections);
+            ComputeOverlayInfo(sections);
+            ComputeSectionEntropies(sections);
+            ComputePackingHints(sections);
+
+            SubsystemInfo subsystemInfo = _subsystemInfo;
+            TeDataDirectoryInfo[] directories = new[]
+            {
+                new TeDataDirectoryInfo(
+                    "BaseRelocation",
+                    teHeader.BaseRelocationTable.VirtualAddress,
+                    teHeader.BaseRelocationTable.Size,
+                    teHeader.BaseRelocationTable.Size > 0),
+                new TeDataDirectoryInfo(
+                    "Debug",
+                    teHeader.DebugTable.VirtualAddress,
+                    teHeader.DebugTable.Size,
+                    teHeader.DebugTable.Size > 0)
+            };
+
+            _teImageInfo = new TeImageInfo(
+                teHeader.Machine,
+                GetMachineName(teHeader.Machine),
+                teHeader.NumberOfSections,
+                teHeader.Subsystem,
+                subsystemInfo?.Name ?? string.Empty,
+                teHeader.StrippedSize,
+                teHeader.AddressOfEntryPoint,
+                teHeader.BaseOfCode,
+                teHeader.ImageBase,
+                directories);
+        }
+
+        private bool TryParseCoffObject()
+        {
+            if (PEFileStream == null || PEFile == null)
+            {
+                return false;
+            }
+
+            int headerSize = Marshal.SizeOf(typeof(IMAGE_FILE_HEADER));
+            if (!TrySetPosition(0, headerSize))
+            {
+                return false;
+            }
+
+            byte[] buffer = new byte[headerSize];
+            ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+            IMAGE_FILE_HEADER coffHeader = ByteArrayToStructure<IMAGE_FILE_HEADER>(buffer);
+
+            if (coffHeader.SizeOfOptionalHeader != 0)
+            {
+                return false;
+            }
+
+            long fileLength = PEFileStream.Length;
+            long sectionTableOffset = headerSize + coffHeader.SizeOfOptionalHeader;
+            long sectionTableSize = (long)coffHeader.NumberOfSections * Marshal.SizeOf(typeof(IMAGE_SECTION_HEADER));
+            if (sectionTableOffset + sectionTableSize > fileLength)
+            {
+                return false;
+            }
+
+            _imageKind = "COFF";
+            _teImageInfo = null;
+            _catalogSignatureInfo = null;
+            _machineType = coffHeader.Machine;
+            _timeDateStamp = coffHeader.TimeDateStamp;
+            _fileAlignment = 0;
+            _sectionAlignment = 0;
+            _imageBase = 0;
+            _sizeOfImage = 0;
+            _sizeOfCode = 0;
+            _sizeOfInitializedData = 0;
+            _numberOfRvaAndSizes = 0;
+            _sizeOfHeaders = 0;
+            _optionalHeaderChecksum = 0;
+            _subsystemInfo = null;
+            _dllCharacteristicsInfo = null;
+            _securityFeaturesInfo = null;
+            _dataDirectories = Array.Empty<IMAGE_DATA_DIRECTORY>();
+            _dataDirectoryInfos = Array.Empty<DataDirectoryInfo>();
+            _architectureDirectory = null;
+            _globalPtrDirectory = null;
+            _iatDirectory = null;
+            _hasResourceDirectory = false;
+            _hasRelocationDirectory = false;
+            _hasDebugDirectory = false;
+            _hasExceptionDirectory = false;
+            _hasLoadConfigDirectory = false;
+            _hasClrDirectory = false;
+            _resourcesParsed = true;
+            _debugParsed = true;
+            _relocationsParsed = true;
+            _exceptionParsed = true;
+            _loadConfigParsed = true;
+            _clrParsed = true;
+            _peHeaderIsPe32Plus = false;
+
+            List<IMAGE_SECTION_HEADER> sections = new List<IMAGE_SECTION_HEADER>();
+            if (coffHeader.NumberOfSections > 0)
+            {
+                if (!TrySetPosition(sectionTableOffset, (int)sectionTableSize))
+                {
+                    Fail(ParseIssueCategory.Sections, "COFF section table exceeds file bounds.");
+                    return true;
+                }
+
+                for (int i = 0; i < coffHeader.NumberOfSections; i++)
+                {
+                    sections.Add(new IMAGE_SECTION_HEADER(PEFile));
+                }
+            }
+
+            _sections = sections;
+            BuildSectionPermissionInfos(sections);
+            ParseCoffSymbolTable(coffHeader.PointerToSymbolTable, coffHeader.NumberOfSymbols, sections);
+            ParseCoffLineNumbers(sections);
+            ComputeOverlayInfo(sections);
+            ComputeSectionEntropies(sections);
+            ComputePackingHints(sections);
+
+            _coffObjectInfo = new CoffObjectInfo(
+                (ushort)coffHeader.Machine,
+                GetMachineName((ushort)coffHeader.Machine),
+                coffHeader.NumberOfSections,
+                coffHeader.TimeDateStamp,
+                TimeDateStampUtc,
+                coffHeader.PointerToSymbolTable,
+                coffHeader.NumberOfSymbols,
+                coffHeader.SizeOfOptionalHeader,
+                (ushort)coffHeader.Characteristics,
+                DecodeCoffCharacteristics((ushort)coffHeader.Characteristics));
+
+            return true;
+        }
+
         private void ReadPE()
         {
             try
             {
                 _parseResult.Clear();
+                _imageKind = "Unknown";
+                _coffObjectInfo = null;
+                _teImageInfo = null;
+                _catalogSignatureInfo = null;
                 _resources.Clear();
                 _resourceStringTables.Clear();
                 _resourceStringCoverage.Clear();
@@ -14223,26 +14568,52 @@ namespace PECoff
                 {
                     _hash = ComputeHash(fs);
                 }
-                
+                if (!TrySetPosition(0, 2))
+                {
+                    Fail(ParseIssueCategory.File, "File too small for signature.");
+                    return;
+                }
+
+                ushort signature = PEFile.ReadUInt16();
+                if (signature == EFI_TE_SIGNATURE)
+                {
+                    ParseTeImage();
+                    return;
+                }
+
+                if (signature != (ushort)MagicByteSignature.IMAGE_DOS_SIGNATURE &&
+                    signature != (ushort)MagicByteSignature.IMAGE_OS2_SIGNATURE &&
+                    signature != (ushort)MagicByteSignature.IMAGE_OS2_SIGNATURE_LE)
+                {
+                    if (TryParseCoffObject())
+                    {
+                        return;
+                    }
+
+                    Fail(ParseIssueCategory.Header, "Invalid DOS signature.");
+                    return;
+                }
+
                 if (!TrySetPosition(0, Marshal.SizeOf(typeof(IMAGE_DOS_HEADER))))
                 {
                     Fail(ParseIssueCategory.File, "File too small for DOS header.");
                     return;
                 }
 
-                    IMAGE_DOS_HEADER header = new IMAGE_DOS_HEADER(PEFile);
-                               
-                    byte[] buffer = new byte[]{};
-                
-                    // Check the File header signature
-                    if ((header.e_magic == MagicByteSignature.IMAGE_DOS_SIGNATURE) || (header.e_magic == MagicByteSignature.IMAGE_OS2_SIGNATURE) || (header.e_magic == MagicByteSignature.IMAGE_OS2_SIGNATURE_LE))
+                IMAGE_DOS_HEADER header = new IMAGE_DOS_HEADER(PEFile);
+
+                byte[] buffer = new byte[] { };
+
+                // Check the File header signature
+                if ((header.e_magic == MagicByteSignature.IMAGE_DOS_SIGNATURE) || (header.e_magic == MagicByteSignature.IMAGE_OS2_SIGNATURE) || (header.e_magic == MagicByteSignature.IMAGE_OS2_SIGNATURE_LE))
+                {
+                    _imageKind = "PE";
+                    ParseRichHeader(header);
+                    if (!TrySetPosition(header.e_lfanew, sizeof(uint) + Marshal.SizeOf(typeof(IMAGE_FILE_HEADER))))
                     {
-                        ParseRichHeader(header);
-                        if (!TrySetPosition(header.e_lfanew, sizeof(uint) + Marshal.SizeOf(typeof(IMAGE_FILE_HEADER))))
-                        {
-                            Fail(ParseIssueCategory.Header, "PE header offset is outside the file bounds.");
-                            return;
-                        }
+                        Fail(ParseIssueCategory.Header, "PE header offset is outside the file bounds.");
+                        return;
+                    }
 
                     // Set the position to the PE-Header
                     IMAGE_NT_HEADERS peHeader = new IMAGE_NT_HEADERS(PEFile);
@@ -14869,6 +15240,7 @@ namespace PECoff
                     ComputeOverlayInfo(sections);
                     ComputeSectionEntropies(sections);
                     ComputePackingHints(sections);
+                    ComputeCatalogSignatureInfo();
                     if (_options == null || !_options.LazyParseDataDirectories)
                     {
                         BuildExceptionDirectorySummary(sections);

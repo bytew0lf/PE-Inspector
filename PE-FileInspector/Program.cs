@@ -228,6 +228,7 @@ namespace PE_FileInspector
             if (filter.ShouldInclude("pe-analysis"))
             {
                 sb.AppendLine("PE Analysis:");
+                sb.AppendLine("  Image Kind: " + Safe(pe.ImageKind));
                 sb.AppendLine("  Is .NET File: " + pe.IsDotNetFile);
                 sb.AppendLine("  Is Obfuscated: " + pe.IsObfuscated);
                 sb.AppendLine("  Obfuscation Percentage: " + pe.ObfuscationPercentage.ToString(CultureInfo.InvariantCulture));
@@ -247,6 +248,39 @@ namespace PE_FileInspector
                 sb.AppendLine("  File Alignment: " + pe.FileAlignment.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Section Alignment: " + pe.SectionAlignment.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Size Of Headers: " + pe.SizeOfHeaders.ToString(CultureInfo.InvariantCulture));
+                if (pe.CoffObject != null)
+                {
+                    sb.AppendLine("  COFF Object:");
+                    sb.AppendLine("    Machine: " + Safe(pe.CoffObject.MachineName) + " (0x" + pe.CoffObject.Machine.ToString("X4", CultureInfo.InvariantCulture) + ")");
+                    sb.AppendLine("    Sections: " + pe.CoffObject.SectionCount.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("    TimeDateStamp: " + pe.CoffObject.TimeDateStamp.ToString(CultureInfo.InvariantCulture));
+                    if (pe.CoffObject.TimeDateStampUtc.HasValue)
+                    {
+                        sb.AppendLine("    TimeDateStamp (UTC): " + pe.CoffObject.TimeDateStampUtc.Value.ToString("u", CultureInfo.InvariantCulture));
+                    }
+                    if (pe.CoffObject.CharacteristicsFlags.Count > 0)
+                    {
+                        sb.AppendLine("    Characteristics: " + string.Join(", ", pe.CoffObject.CharacteristicsFlags));
+                    }
+                }
+                if (pe.TeImage != null)
+                {
+                    sb.AppendLine("  TE Image:");
+                    sb.AppendLine("    Machine: " + Safe(pe.TeImage.MachineName) + " (0x" + pe.TeImage.Machine.ToString("X4", CultureInfo.InvariantCulture) + ")");
+                    sb.AppendLine("    Subsystem: " + Safe(pe.TeImage.SubsystemName) + " (" + pe.TeImage.Subsystem.ToString(CultureInfo.InvariantCulture) + ")");
+                    sb.AppendLine("    Sections: " + pe.TeImage.SectionCount.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("    ImageBase: 0x" + pe.TeImage.ImageBase.ToString("X", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    EntryPoint: 0x" + pe.TeImage.AddressOfEntryPoint.ToString("X", CultureInfo.InvariantCulture));
+                    if (pe.TeImage.DataDirectories.Count > 0)
+                    {
+                        sb.AppendLine("    Directories:");
+                        foreach (TeDataDirectoryInfo dir in pe.TeImage.DataDirectories)
+                        {
+                            sb.AppendLine("      - " + Safe(dir.Name) + ": RVA=0x" + dir.VirtualAddress.ToString("X", CultureInfo.InvariantCulture) +
+                                          " Size=" + dir.Size.ToString(CultureInfo.InvariantCulture));
+                        }
+                    }
+                }
                 if (pe.OverlayInfo != null)
                 {
                     sb.AppendLine("  Overlay Start: 0x" + pe.OverlayInfo.StartOffset.ToString("X", CultureInfo.InvariantCulture));
@@ -552,6 +586,48 @@ namespace PE_FileInspector
                         {
                             WriteAuthenticodeResults(sb, entry.AuthenticodeResults, "    ");
                         }
+                    }
+                }
+
+                CatalogSignatureInfo catalogInfo = pe.CatalogSignature;
+                if (catalogInfo != null && (catalogInfo.Checked || catalogInfo.Supported))
+                {
+                    sb.AppendLine("  Catalog Signature:");
+                    sb.AppendLine("    Supported: " + catalogInfo.Supported);
+                    sb.AppendLine("    Checked: " + catalogInfo.Checked);
+                    sb.AppendLine("    Signed: " + catalogInfo.IsSigned);
+                    if (!string.IsNullOrWhiteSpace(catalogInfo.CatalogName))
+                    {
+                        sb.AppendLine("    Catalog: " + Safe(catalogInfo.CatalogName));
+                    }
+                    if (!string.IsNullOrWhiteSpace(catalogInfo.CatalogPath))
+                    {
+                        sb.AppendLine("    Catalog Path: " + Safe(catalogInfo.CatalogPath));
+                    }
+                    if (catalogInfo.TrustCheckPerformed)
+                    {
+                        sb.AppendLine("    Trust Verified: " + catalogInfo.TrustVerified);
+                    }
+                    if (catalogInfo.Status != null)
+                    {
+                        sb.AppendLine("    Status: Signers=" + catalogInfo.Status.SignerCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | SignatureValid=" + catalogInfo.Status.SignatureValid +
+                                      " | ChainValid=" + catalogInfo.Status.ChainValid +
+                                      " | Timestamp=" + catalogInfo.Status.HasTimestamp +
+                                      " | TimestampValid=" + catalogInfo.Status.TimestampValid);
+                        sb.AppendLine("    Policy Compliant: " + catalogInfo.Status.PolicyCompliant);
+                        if (catalogInfo.Status.PolicyFailures.Count > 0)
+                        {
+                            sb.AppendLine("    Policy Failures:");
+                            foreach (string failure in catalogInfo.Status.PolicyFailures)
+                            {
+                                sb.AppendLine("      - " + Safe(failure));
+                            }
+                        }
+                    }
+                    if (!string.IsNullOrWhiteSpace(catalogInfo.Error))
+                    {
+                        sb.AppendLine("    Error: " + Safe(catalogInfo.Error));
                     }
                 }
                 sb.AppendLine();

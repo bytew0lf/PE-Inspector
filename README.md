@@ -27,7 +27,7 @@ Use `--sections` to emit only selected report sections, or `--exclude-sections` 
 The report also includes CLR/.NET metadata when present (runtime version, metadata version, stream list, module references, managed resource names/sizes/hashes).
 It now also includes assembly metadata (assembly name/version, MVID, target framework, debuggable attribute, assembly/module attribute lists) and metadata-based assembly references (with public key tokens and resolution hints), plus a runtime hint (IL/Mixed/ReadyToRun).
 Resource string tables and manifests are decoded and included in the report when available, along with string coverage summaries and strong-name signature validation details for .NET files.
-The report also includes debug directory entries (CodeView/PDB IDs + identity checks, plus POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO summaries), data directory mapping (name/RVA/size/section), COFF symbol/line/string tables when present, base relocation summaries (top types + sample RVAs, anomaly counts), TLS/load-config data (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, dynamic value relocation table details, GuardRF/HotPatch/Enclave/Volatile metadata pointers, callback resolution + section mapping, guard feature matrix, SEH handler table parsing), version-info details (string tables + translations + file flags), icon-group reconstruction (PNG detection), bitmap/cursor resource metadata, font/fontdir/rcdata/dlginit/animated cursor/icon parsing, Authenticode digest checks and signer status/policy summaries (RFC3161 timestamps, nested signatures), message tables (entry ranges, flags/length), dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI, requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/entropy summaries and packing hints, import descriptor consistency/bind hints with API-set resolution confidence and canonical targets plus null-thunk/termination stats, export forwarder resolution hints plus export anomaly counts, section padding and permission analysis, exception directory summaries (unwind counts/details/range validity), resource locale coverage, and subsystem/security flags when present.
+The report also includes debug directory entries (CodeView/PDB IDs + identity checks, plus POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO summaries), data directory mapping (name/RVA/size/section), COFF symbol/line/string tables when present, base relocation summaries (top types + sample RVAs, anomaly counts), TLS/load-config data (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, dynamic value relocation table details, GuardRF/HotPatch/Enclave/Volatile metadata pointers, callback resolution + section mapping, guard feature matrix, SEH handler table parsing), version-info details (string tables + translations + file flags), icon-group reconstruction (PNG detection), bitmap/cursor resource metadata, font/fontdir/rcdata/dlginit/animated cursor/icon parsing, Authenticode digest checks and signer status/policy summaries (RFC3161 timestamps, nested signatures, optional catalog lookup on Windows), message tables (entry ranges, flags/length), dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI, requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/entropy summaries and packing hints, import descriptor consistency/bind hints with API-set resolution confidence and canonical targets plus null-thunk/termination stats, export forwarder resolution hints plus export anomaly counts, section padding and permission analysis, exception directory summaries (unwind counts/details/range validity), resource locale coverage, and subsystem/security flags when present.
 
 ## Additional functionality
 The PECOFF Library has also the ability to get all imports and exports of the PE-file as well as the certificate.
@@ -47,6 +47,7 @@ The PECOFF parser supports options and an immutable result snapshot:
 - `PECOFFOptions.LazyParseDataDirectories`: defer parsing resources/debug/relocations/exception/load-config/CLR until accessed.
 - `PECOFFOptions.AuthenticodePolicy`: configure chain/timestamp/EKU policy checks in signer status (including optional trust-store checks and revocation settings).
 - `AuthenticodePolicy.OfflineChainCheck`: disable certificate downloads and force offline chain evaluation.
+- `AuthenticodePolicy.EnableCatalogSignatureCheck`: enable WinTrust catalog signature lookup (Windows only).
 - `PECOFFOptions.ComputeManagedResourceHashes`: compute SHA256 for embedded managed resources.
 - `PECOFFOptions.IssueCallback`: receive issues as they are raised (warnings/errors) in addition to the collected lists.
 - `PECOFFOptions.PresetFast()` / `PresetDefault()` / `PresetStrictSecurity()`: convenience presets for common configurations.
@@ -133,6 +134,7 @@ Defaults:
 - v12: debug directory MISC/OMAP/REPRO details, ARM64 unwind summaries, and load-config code-integrity/enclave metadata.
 - v13: debug directory COFF/FIXUP/ILTCG/MPX/CLSID details, load-config guard tables, and raw HTML/DLGINCLUDE/PLUGPLAY/VXD resource summaries.
 - v14: full ARM64 unwind decoding, ARM/IA64 unwind headers, and enclave import list parsing.
+- v15: COFF object + TE image metadata, image kind, and catalog signature lookup metadata.
 
 ### Coverage map
 High-level PE/COFF structures and current coverage:
@@ -151,7 +153,9 @@ High-level PE/COFF structures and current coverage:
 - TLS: implemented (callbacks + mapping)
 - Load config: implemented (guard flags, guard tables, code integrity, enclave config + imports, CHPE, dynamic reloc tables, SEH handler metadata)
 - CLR/.NET: implemented (metadata, references, ReadyToRun)
-- Certificates/Authenticode: implemented (PKCS7/signers/timestamps)
+- Certificates/Authenticode: implemented (PKCS7/signers/timestamps, catalog lookup on Windows)
+- COFF objects: basic header/sections + symbols/line numbers
+- UEFI TE images: header + sections
 - COFF symbols/line numbers/string table: implemented when present
 
 ## Contents of the output file

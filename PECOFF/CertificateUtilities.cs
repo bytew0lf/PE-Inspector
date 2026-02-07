@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Formats.Asn1;
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Security.Cryptography.Pkcs;
 using System.Security.Cryptography.X509Certificates;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using System.Text;
 
 namespace PECoff
@@ -1069,6 +1072,209 @@ namespace PECoff
 
             return null;
         }
+
+        public static CatalogSignatureInfo GetCatalogSignatureInfo(string filePath, AuthenticodePolicy policy)
+        {
+            policy ??= new AuthenticodePolicy();
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                return new CatalogSignatureInfo(
+                    supported: false,
+                    @checked: false,
+                    isSigned: false,
+                    trustCheckPerformed: false,
+                    trustVerified: false,
+                    catalogPath: string.Empty,
+                    catalogName: string.Empty,
+                    error: "Catalog signature checks are only supported on Windows.",
+                    signers: Array.Empty<Pkcs7SignerInfo>(),
+                    status: null);
+            }
+
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            {
+                return new CatalogSignatureInfo(
+                    supported: true,
+                    @checked: true,
+                    isSigned: false,
+                    trustCheckPerformed: false,
+                    trustVerified: false,
+                    catalogPath: string.Empty,
+                    catalogName: string.Empty,
+                    error: "File not found.",
+                    signers: Array.Empty<Pkcs7SignerInfo>(),
+                    status: null);
+            }
+
+            if (!TryGetCatalogPath(filePath, out string catalogPath, out string error))
+            {
+                return new CatalogSignatureInfo(
+                    supported: true,
+                    @checked: true,
+                    isSigned: false,
+                    trustCheckPerformed: false,
+                    trustVerified: false,
+                    catalogPath: string.Empty,
+                    catalogName: string.Empty,
+                    error: error,
+                    signers: Array.Empty<Pkcs7SignerInfo>(),
+                    status: null);
+            }
+
+            Pkcs7SignerInfo[] signers = Array.Empty<Pkcs7SignerInfo>();
+            string signerError = string.Empty;
+            try
+            {
+                byte[] catalogBytes = File.ReadAllBytes(catalogPath);
+                TryGetPkcs7SignerInfos(catalogBytes, policy, out signers, out signerError);
+            }
+            catch (Exception ex)
+            {
+                signerError = ex.Message;
+            }
+
+            AuthenticodeStatusInfo status = BuildAuthenticodeStatus(signers, policy);
+            bool trustCheckPerformed = policy.EnableTrustStoreCheck;
+            bool trustVerified = trustCheckPerformed && status != null && status.ChainValid;
+
+            string catalogName = Path.GetFileName(catalogPath) ?? string.Empty;
+            return new CatalogSignatureInfo(
+                supported: true,
+                @checked: true,
+                isSigned: true,
+                trustCheckPerformed: trustCheckPerformed,
+                trustVerified: trustVerified,
+                catalogPath: catalogPath,
+                catalogName: catalogName,
+                error: signerError,
+                signers: signers,
+                status: status);
+        }
+
+        private static bool TryGetCatalogPath(string filePath, out string catalogPath, out string error)
+        {
+            catalogPath = string.Empty;
+            error = string.Empty;
+
+            IntPtr hCatAdmin = IntPtr.Zero;
+            IntPtr hCatInfo = IntPtr.Zero;
+            try
+            {
+                try
+                {
+                    if (!CryptCATAdminAcquireContext2(out hCatAdmin, IntPtr.Zero, null, IntPtr.Zero, 0))
+                    {
+                        error = "CryptCATAdminAcquireContext2 failed.";
+                        return false;
+                    }
+                }
+                catch (EntryPointNotFoundException)
+                {
+                    error = "CryptCATAdminAcquireContext2 is not available on this platform.";
+                    return false;
+                }
+
+                using FileStream fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                SafeFileHandle handle = fs.SafeFileHandle;
+                uint hashSize = 0;
+                if (!CryptCATAdminCalcHashFromFileHandle(handle.DangerousGetHandle(), ref hashSize, null, 0))
+                {
+                    error = "CryptCATAdminCalcHashFromFileHandle failed to size hash.";
+                    return false;
+                }
+
+                if (hashSize == 0 || hashSize > 1024)
+                {
+                    error = "Catalog hash size is invalid.";
+                    return false;
+                }
+
+                byte[] hash = new byte[hashSize];
+                if (!CryptCATAdminCalcHashFromFileHandle(handle.DangerousGetHandle(), ref hashSize, hash, 0))
+                {
+                    error = "CryptCATAdminCalcHashFromFileHandle failed.";
+                    return false;
+                }
+
+                hCatInfo = CryptCATAdminEnumCatalogFromHash(hCatAdmin, hash, hashSize, 0, IntPtr.Zero);
+                if (hCatInfo == IntPtr.Zero)
+                {
+                    error = "No catalog found for file hash.";
+                    return false;
+                }
+
+                CATALOG_INFO info = new CATALOG_INFO();
+                info.cbStruct = Marshal.SizeOf(typeof(CATALOG_INFO));
+                if (!CryptCATCatalogInfoFromContext(hCatInfo, ref info, 0))
+                {
+                    error = "CryptCATCatalogInfoFromContext failed.";
+                    return false;
+                }
+
+                catalogPath = info.wszCatalogFile ?? string.Empty;
+                return !string.IsNullOrWhiteSpace(catalogPath);
+            }
+            finally
+            {
+                if (hCatInfo != IntPtr.Zero && hCatAdmin != IntPtr.Zero)
+                {
+                    CryptCATAdminReleaseCatalogContext(hCatAdmin, hCatInfo, 0);
+                }
+
+                if (hCatAdmin != IntPtr.Zero)
+                {
+                    CryptCATAdminReleaseContext(hCatAdmin, 0);
+                }
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct CATALOG_INFO
+        {
+            public int cbStruct;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string wszCatalogFile;
+        }
+
+        [DllImport("wintrust.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool CryptCATAdminAcquireContext2(
+            out IntPtr hCatAdmin,
+            IntPtr pgSubsystem,
+            string pwszHashAlgorithm,
+            IntPtr pStrongHashPolicy,
+            uint dwFlags);
+
+        [DllImport("wintrust.dll", SetLastError = true)]
+        private static extern bool CryptCATAdminCalcHashFromFileHandle(
+            IntPtr hFile,
+            ref uint pcbHash,
+            [Out] byte[] pbHash,
+            uint dwFlags);
+
+        [DllImport("wintrust.dll", SetLastError = true)]
+        private static extern IntPtr CryptCATAdminEnumCatalogFromHash(
+            IntPtr hCatAdmin,
+            [In] byte[] pbHash,
+            uint cbHash,
+            uint dwFlags,
+            IntPtr phPrevCatInfo);
+
+        [DllImport("wintrust.dll", SetLastError = true)]
+        private static extern bool CryptCATCatalogInfoFromContext(
+            IntPtr hCatInfo,
+            ref CATALOG_INFO psCatInfo,
+            uint dwFlags);
+
+        [DllImport("wintrust.dll", SetLastError = true)]
+        private static extern bool CryptCATAdminReleaseCatalogContext(
+            IntPtr hCatAdmin,
+            IntPtr hCatInfo,
+            uint dwFlags);
+
+        [DllImport("wintrust.dll", SetLastError = true)]
+        private static extern bool CryptCATAdminReleaseContext(
+            IntPtr hCatAdmin,
+            uint dwFlags);
     }
 
     public static class CertificateEntryExtensions

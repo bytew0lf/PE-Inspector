@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 14,
+  "SchemaVersion": 15,
   "FilePath": "minimal-x64.exe",
   "ParseResult": {
     "Errors": [],
@@ -7,6 +7,9 @@
     "Issues": [],
     "IsSuccess": true
   },
+  "ImageKind": "PE",
+  "CoffObject": null,
+  "TeImage": null,
   "Hash": "5DAC6306ECBEF143D5673551F5494C1688D3943D5A083B8DD708EE086F14D769",
   "ImportHash": "",
   "IsDotNetFile": false,
@@ -278,6 +281,7 @@
   "IatDirectory": null,
   "HasCertificate": false,
   "CertificateEntries": [],
+  "CatalogSignature": null,
   "Resources": [],
   "ResourceStringTables": [],
   "ResourceStringCoverage": [],

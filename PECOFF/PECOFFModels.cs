@@ -114,6 +114,7 @@ namespace PECoff
                     RequireTimestamp = true,
                     RequireTimestampValid = true,
                     RequireCodeSigningEku = true,
+                    EnableCatalogSignatureCheck = true,
                     EnableTrustStoreCheck = true,
                     RevocationMode = X509RevocationMode.Online,
                     RevocationFlag = X509RevocationFlag.ExcludeRoot
@@ -130,6 +131,7 @@ namespace PECoff
         public bool RequireTimestamp { get; init; }
         public bool RequireTimestampValid { get; init; }
         public bool RequireCodeSigningEku { get; init; }
+        public bool EnableCatalogSignatureCheck { get; init; }
         public bool EnableTrustStoreCheck { get; init; } = true;
         public bool OfflineChainCheck { get; init; }
         public X509RevocationMode RevocationMode { get; init; } = X509RevocationMode.NoCheck;
@@ -1858,6 +1860,98 @@ namespace PECoff
         }
     }
 
+    public sealed class CoffObjectInfo
+    {
+        public ushort Machine { get; }
+        public string MachineName { get; }
+        public ushort SectionCount { get; }
+        public uint TimeDateStamp { get; }
+        public DateTimeOffset? TimeDateStampUtc { get; }
+        public uint PointerToSymbolTable { get; }
+        public uint NumberOfSymbols { get; }
+        public ushort OptionalHeaderSize { get; }
+        public ushort Characteristics { get; }
+        public IReadOnlyList<string> CharacteristicsFlags { get; }
+
+        public CoffObjectInfo(
+            ushort machine,
+            string machineName,
+            ushort sectionCount,
+            uint timeDateStamp,
+            DateTimeOffset? timeDateStampUtc,
+            uint pointerToSymbolTable,
+            uint numberOfSymbols,
+            ushort optionalHeaderSize,
+            ushort characteristics,
+            string[] characteristicsFlags)
+        {
+            Machine = machine;
+            MachineName = machineName ?? string.Empty;
+            SectionCount = sectionCount;
+            TimeDateStamp = timeDateStamp;
+            TimeDateStampUtc = timeDateStampUtc;
+            PointerToSymbolTable = pointerToSymbolTable;
+            NumberOfSymbols = numberOfSymbols;
+            OptionalHeaderSize = optionalHeaderSize;
+            Characteristics = characteristics;
+            CharacteristicsFlags = Array.AsReadOnly(characteristicsFlags ?? Array.Empty<string>());
+        }
+    }
+
+    public sealed class TeDataDirectoryInfo
+    {
+        public string Name { get; }
+        public uint VirtualAddress { get; }
+        public uint Size { get; }
+        public bool IsPresent { get; }
+
+        public TeDataDirectoryInfo(string name, uint virtualAddress, uint size, bool isPresent)
+        {
+            Name = name ?? string.Empty;
+            VirtualAddress = virtualAddress;
+            Size = size;
+            IsPresent = isPresent;
+        }
+    }
+
+    public sealed class TeImageInfo
+    {
+        public ushort Machine { get; }
+        public string MachineName { get; }
+        public byte SectionCount { get; }
+        public byte Subsystem { get; }
+        public string SubsystemName { get; }
+        public ushort StrippedSize { get; }
+        public uint AddressOfEntryPoint { get; }
+        public uint BaseOfCode { get; }
+        public ulong ImageBase { get; }
+        public IReadOnlyList<TeDataDirectoryInfo> DataDirectories { get; }
+
+        public TeImageInfo(
+            ushort machine,
+            string machineName,
+            byte sectionCount,
+            byte subsystem,
+            string subsystemName,
+            ushort strippedSize,
+            uint addressOfEntryPoint,
+            uint baseOfCode,
+            ulong imageBase,
+            TeDataDirectoryInfo[] dataDirectories)
+        {
+            Machine = machine;
+            MachineName = machineName ?? string.Empty;
+            SectionCount = sectionCount;
+            Subsystem = subsystem;
+            SubsystemName = subsystemName ?? string.Empty;
+            StrippedSize = strippedSize;
+            AddressOfEntryPoint = addressOfEntryPoint;
+            BaseOfCode = baseOfCode;
+            ImageBase = imageBase;
+            DataDirectories = Array.AsReadOnly(dataDirectories ?? Array.Empty<TeDataDirectoryInfo>());
+        }
+    }
+
     public sealed class DataDirectoryInfo
     {
         public int Index { get; }
@@ -2105,6 +2199,44 @@ namespace PECoff
             PolicyCompliant = policyCompliant;
             PolicyFailures = Array.AsReadOnly(policyFailures ?? Array.Empty<string>());
             SignerStatuses = Array.AsReadOnly(signerStatuses ?? Array.Empty<AuthenticodeSignerStatusInfo>());
+        }
+    }
+
+    public sealed class CatalogSignatureInfo
+    {
+        public bool Supported { get; }
+        public bool Checked { get; }
+        public bool IsSigned { get; }
+        public bool TrustCheckPerformed { get; }
+        public bool TrustVerified { get; }
+        public string CatalogPath { get; }
+        public string CatalogName { get; }
+        public string Error { get; }
+        public IReadOnlyList<Pkcs7SignerInfo> Signers { get; }
+        public AuthenticodeStatusInfo Status { get; }
+
+        public CatalogSignatureInfo(
+            bool supported,
+            bool @checked,
+            bool isSigned,
+            bool trustCheckPerformed,
+            bool trustVerified,
+            string catalogPath,
+            string catalogName,
+            string error,
+            Pkcs7SignerInfo[] signers,
+            AuthenticodeStatusInfo status)
+        {
+            Supported = supported;
+            Checked = @checked;
+            IsSigned = isSigned;
+            TrustCheckPerformed = trustCheckPerformed;
+            TrustVerified = trustVerified;
+            CatalogPath = catalogPath ?? string.Empty;
+            CatalogName = catalogName ?? string.Empty;
+            Error = error ?? string.Empty;
+            Signers = Array.AsReadOnly(signers ?? Array.Empty<Pkcs7SignerInfo>());
+            Status = status;
         }
     }
 
@@ -2830,11 +2962,14 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 14;
+        public const int CurrentSchemaVersion = 15;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
         public ParseResultSnapshot ParseResult { get; }
+        public string ImageKind { get; }
+        public CoffObjectInfo CoffObject { get; }
+        public TeImageInfo TeImage { get; }
         public string Hash { get; }
         public string ImportHash { get; }
         public bool IsDotNetFile { get; }
@@ -2880,6 +3015,7 @@ namespace PECoff
         public byte[] Certificate { get; }
         public IReadOnlyList<byte[]> Certificates { get; }
         public IReadOnlyList<CertificateEntry> CertificateEntries { get; }
+        public CatalogSignatureInfo CatalogSignature { get; }
         public IReadOnlyList<ResourceEntry> Resources { get; }
         public IReadOnlyList<ResourceStringTableInfo> ResourceStringTables { get; }
         public IReadOnlyList<ResourceStringCoverageInfo> ResourceStringCoverage { get; }
@@ -2939,6 +3075,9 @@ namespace PECoff
         internal PECOFFResult(
             string filePath,
             ParseResultSnapshot parseResult,
+            string imageKind,
+            CoffObjectInfo coffObject,
+            TeImageInfo teImage,
             string hash,
             string importHash,
             bool isDotNetFile,
@@ -2984,6 +3123,7 @@ namespace PECoff
             byte[] certificate,
             byte[][] certificates,
             CertificateEntry[] certificateEntries,
+            CatalogSignatureInfo catalogSignature,
             ResourceEntry[] resources,
             ResourceStringTableInfo[] resourceStringTables,
             ResourceStringCoverageInfo[] resourceStringCoverage,
@@ -3043,6 +3183,9 @@ namespace PECoff
             SchemaVersion = CurrentSchemaVersion;
             FilePath = filePath ?? string.Empty;
             ParseResult = parseResult ?? new ParseResultSnapshot(Array.Empty<string>(), Array.Empty<string>(), Array.Empty<ParseIssue>());
+            ImageKind = imageKind ?? string.Empty;
+            CoffObject = coffObject;
+            TeImage = teImage;
             Hash = hash ?? string.Empty;
             ImportHash = importHash ?? string.Empty;
             IsDotNetFile = isDotNetFile;
@@ -3088,6 +3231,7 @@ namespace PECoff
             Certificate = certificate ?? Array.Empty<byte>();
             Certificates = Array.AsReadOnly(certificates ?? Array.Empty<byte[]>());
             CertificateEntries = Array.AsReadOnly(certificateEntries ?? Array.Empty<CertificateEntry>());
+            CatalogSignature = catalogSignature;
             Resources = Array.AsReadOnly(resources ?? Array.Empty<ResourceEntry>());
             ResourceStringTables = Array.AsReadOnly(resourceStringTables ?? Array.Empty<ResourceStringTableInfo>());
             ResourceStringCoverage = Array.AsReadOnly(resourceStringCoverage ?? Array.Empty<ResourceStringCoverageInfo>());
@@ -3221,6 +3365,9 @@ namespace PECoff
                 SchemaVersion,
                 FilePath,
                 ParseResult,
+                ImageKind,
+                CoffObject,
+                TeImage,
                 Hash,
                 ImportHash,
                 IsDotNetFile,
@@ -3264,6 +3411,7 @@ namespace PECoff
                 IatDirectory,
                 HasCertificate,
                 CertificateEntries = certificateEntries,
+                CatalogSignature,
                 Resources,
                 ResourceStringTables,
                 ResourceStringCoverage = stringCoverage,
