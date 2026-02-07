@@ -5644,19 +5644,13 @@ namespace PECoff
             }
 
             int offset = 1;
-            if (!TryParseSevenZipStreamsInfoForEncodedHeader(span, ref offset, out ulong packPos, out ulong packSize, out byte[] methodId))
+            if (!TryParseSevenZipStreamsInfoForEncodedHeader(span, ref offset, out ulong packPos, out ulong packSize, out ulong unpackSize, out byte[] methodId, out byte[] properties))
             {
                 notes = "EncodedHeader StreamsInfo parse failed";
                 return false;
             }
 
             string methodName = GetSevenZipMethodName(methodId);
-            if (methodId.Length != 1 || methodId[0] != 0x00)
-            {
-                notes = "EncodedHeader method unsupported: " + methodName;
-                return false;
-            }
-
             if (packSize == 0 || packSize > int.MaxValue)
             {
                 notes = "EncodedHeader pack size unsupported";
@@ -5671,17 +5665,51 @@ namespace PECoff
                 return false;
             }
 
-            decodedHeader = new byte[(int)packSize];
-            ReadExactly(stream, decodedHeader, 0, decodedHeader.Length);
-            notes = "EncodedHeader decoded via copy";
-            return true;
+            byte[] packed = new byte[(int)packSize];
+            ReadExactly(stream, packed, 0, packed.Length);
+
+            if (methodId.Length == 1 && methodId[0] == 0x00)
+            {
+                decodedHeader = packed;
+                notes = "EncodedHeader decoded via copy";
+                return true;
+            }
+
+            if (methodId.Length == 3 && methodId[0] == 0x03 && methodId[1] == 0x01 && methodId[2] == 0x01)
+            {
+                if (SevenZipLzmaDecoder.TryDecodeLzma(packed, properties, unpackSize, out decodedHeader))
+                {
+                    notes = "EncodedHeader decoded via LZMA";
+                    return true;
+                }
+
+                notes = "EncodedHeader LZMA decode failed";
+                return false;
+            }
+
+            if (methodId.Length == 1 && methodId[0] == 0x21)
+            {
+                if (SevenZipLzmaDecoder.TryDecodeLzma2(packed, properties, unpackSize, out decodedHeader))
+                {
+                    notes = "EncodedHeader decoded via LZMA2";
+                    return true;
+                }
+
+                notes = "EncodedHeader LZMA2 decode failed";
+                return false;
+            }
+
+            notes = "EncodedHeader method unsupported: " + methodName;
+            return false;
         }
 
-        private static bool TryParseSevenZipStreamsInfoForEncodedHeader(ReadOnlySpan<byte> span, ref int offset, out ulong packPos, out ulong packSize, out byte[] methodId)
+        private static bool TryParseSevenZipStreamsInfoForEncodedHeader(ReadOnlySpan<byte> span, ref int offset, out ulong packPos, out ulong packSize, out ulong unpackSize, out byte[] methodId, out byte[] properties)
         {
             packPos = 0;
             packSize = 0;
+            unpackSize = 0;
             methodId = Array.Empty<byte>();
+            properties = Array.Empty<byte>();
 
             bool hasPackInfo = false;
             bool hasUnpackInfo = false;
@@ -5790,6 +5818,7 @@ namespace PECoff
                             return false;
                         }
 
+                        properties = span.Slice(offset, (int)propsSize).ToArray();
                         offset += (int)propsSize;
                     }
 
@@ -5799,7 +5828,7 @@ namespace PECoff
                         return false;
                     }
 
-                    if (!TryRead7zUInt64(span, ref offset, out _))
+                    if (!TryRead7zUInt64(span, ref offset, out unpackSize))
                     {
                         return false;
                     }
