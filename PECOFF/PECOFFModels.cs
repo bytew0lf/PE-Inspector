@@ -1220,6 +1220,177 @@ namespace PECoff
         }
     }
 
+    public sealed class DataDirectoryInfo
+    {
+        public int Index { get; }
+        public string Name { get; }
+        public uint VirtualAddress { get; }
+        public uint Size { get; }
+        public bool IsPresent { get; }
+        public bool IsMapped { get; }
+        public string SectionName { get; }
+        public uint SectionRva { get; }
+        public uint SectionSize { get; }
+
+        public DataDirectoryInfo(
+            int index,
+            string name,
+            uint virtualAddress,
+            uint size,
+            bool isMapped,
+            string sectionName,
+            uint sectionRva,
+            uint sectionSize)
+        {
+            Index = index;
+            Name = name ?? string.Empty;
+            VirtualAddress = virtualAddress;
+            Size = size;
+            IsPresent = size > 0;
+            IsMapped = isMapped;
+            SectionName = sectionName ?? string.Empty;
+            SectionRva = sectionRva;
+            SectionSize = sectionSize;
+        }
+    }
+
+    public sealed class ArchitectureDirectoryInfo
+    {
+        public uint VirtualAddress { get; }
+        public uint Size { get; }
+        public bool IsMapped { get; }
+        public string SectionName { get; }
+
+        public ArchitectureDirectoryInfo(uint virtualAddress, uint size, bool isMapped, string sectionName)
+        {
+            VirtualAddress = virtualAddress;
+            Size = size;
+            IsMapped = isMapped;
+            SectionName = sectionName ?? string.Empty;
+        }
+    }
+
+    public sealed class GlobalPtrDirectoryInfo
+    {
+        public uint VirtualAddress { get; }
+        public uint Size { get; }
+        public bool IsMapped { get; }
+        public string SectionName { get; }
+
+        public GlobalPtrDirectoryInfo(uint virtualAddress, uint size, bool isMapped, string sectionName)
+        {
+            VirtualAddress = virtualAddress;
+            Size = size;
+            IsMapped = isMapped;
+            SectionName = sectionName ?? string.Empty;
+        }
+    }
+
+    public sealed class IatDirectoryInfo
+    {
+        public uint VirtualAddress { get; }
+        public uint Size { get; }
+        public bool IsMapped { get; }
+        public string SectionName { get; }
+        public uint EntryCount { get; }
+        public uint EntrySize { get; }
+        public bool SizeAligned { get; }
+
+        public IatDirectoryInfo(
+            uint virtualAddress,
+            uint size,
+            bool isMapped,
+            string sectionName,
+            uint entryCount,
+            uint entrySize,
+            bool sizeAligned)
+        {
+            VirtualAddress = virtualAddress;
+            Size = size;
+            IsMapped = isMapped;
+            SectionName = sectionName ?? string.Empty;
+            EntryCount = entryCount;
+            EntrySize = entrySize;
+            SizeAligned = sizeAligned;
+        }
+    }
+
+    public sealed class CoffStringTableEntry
+    {
+        public uint Offset { get; }
+        public string Value { get; }
+
+        public CoffStringTableEntry(uint offset, string value)
+        {
+            Offset = offset;
+            Value = value ?? string.Empty;
+        }
+    }
+
+    public sealed class CoffSymbolInfo
+    {
+        public int Index { get; }
+        public string Name { get; }
+        public uint Value { get; }
+        public short SectionNumber { get; }
+        public string SectionName { get; }
+        public ushort Type { get; }
+        public byte StorageClass { get; }
+        public byte AuxSymbolCount { get; }
+        public byte[] AuxData { get; }
+
+        public CoffSymbolInfo(
+            int index,
+            string name,
+            uint value,
+            short sectionNumber,
+            string sectionName,
+            ushort type,
+            byte storageClass,
+            byte auxSymbolCount,
+            byte[] auxData)
+        {
+            Index = index;
+            Name = name ?? string.Empty;
+            Value = value;
+            SectionNumber = sectionNumber;
+            SectionName = sectionName ?? string.Empty;
+            Type = type;
+            StorageClass = storageClass;
+            AuxSymbolCount = auxSymbolCount;
+            AuxData = auxData ?? Array.Empty<byte>();
+        }
+    }
+
+    public sealed class CoffLineNumberInfo
+    {
+        public string SectionName { get; }
+        public int SectionIndex { get; }
+        public uint VirtualAddress { get; }
+        public uint SymbolIndex { get; }
+        public ushort LineNumber { get; }
+        public bool IsFunction { get; }
+        public long FileOffset { get; }
+
+        public CoffLineNumberInfo(
+            string sectionName,
+            int sectionIndex,
+            uint virtualAddress,
+            uint symbolIndex,
+            ushort lineNumber,
+            bool isFunction,
+            long fileOffset)
+        {
+            SectionName = sectionName ?? string.Empty;
+            SectionIndex = sectionIndex;
+            VirtualAddress = virtualAddress;
+            SymbolIndex = symbolIndex;
+            LineNumber = lineNumber;
+            IsFunction = isFunction;
+            FileOffset = fileOffset;
+        }
+    }
+
     public sealed class AuthenticodeSignerStatusInfo
     {
         public string Subject { get; }
@@ -1861,7 +2032,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 9;
+        public const int CurrentSchemaVersion = 10;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -1903,6 +2074,10 @@ namespace PECoff
         public SubsystemInfo Subsystem { get; }
         public DllCharacteristicsInfo DllCharacteristics { get; }
         public SecurityFeaturesInfo SecurityFeatures { get; }
+        public IReadOnlyList<DataDirectoryInfo> DataDirectories { get; }
+        public ArchitectureDirectoryInfo ArchitectureDirectory { get; }
+        public GlobalPtrDirectoryInfo GlobalPtrDirectory { get; }
+        public IatDirectoryInfo IatDirectory { get; }
         public bool HasCertificate { get; }
         public byte[] Certificate { get; }
         public IReadOnlyList<byte[]> Certificates { get; }
@@ -1946,6 +2121,9 @@ namespace PECoff
         public LoadConfigInfo LoadConfig { get; }
         public IReadOnlyList<string> AssemblyReferences { get; }
         public IReadOnlyList<AssemblyReferenceInfo> AssemblyReferenceInfos { get; }
+        public IReadOnlyList<CoffSymbolInfo> CoffSymbols { get; }
+        public IReadOnlyList<CoffStringTableEntry> CoffStringTable { get; }
+        public IReadOnlyList<CoffLineNumberInfo> CoffLineNumbers { get; }
 
         internal PECOFFResult(
             string filePath,
@@ -1987,6 +2165,10 @@ namespace PECoff
             SubsystemInfo subsystem,
             DllCharacteristicsInfo dllCharacteristics,
             SecurityFeaturesInfo securityFeatures,
+            DataDirectoryInfo[] dataDirectories,
+            ArchitectureDirectoryInfo architectureDirectory,
+            GlobalPtrDirectoryInfo globalPtrDirectory,
+            IatDirectoryInfo iatDirectory,
             bool hasCertificate,
             byte[] certificate,
             byte[][] certificates,
@@ -2029,7 +2211,10 @@ namespace PECoff
             TlsInfo tlsInfo,
             LoadConfigInfo loadConfig,
             string[] assemblyReferences,
-            AssemblyReferenceInfo[] assemblyReferenceInfos)
+            AssemblyReferenceInfo[] assemblyReferenceInfos,
+            CoffSymbolInfo[] coffSymbols,
+            CoffStringTableEntry[] coffStringTable,
+            CoffLineNumberInfo[] coffLineNumbers)
         {
             SchemaVersion = CurrentSchemaVersion;
             FilePath = filePath ?? string.Empty;
@@ -2071,6 +2256,10 @@ namespace PECoff
             Subsystem = subsystem;
             DllCharacteristics = dllCharacteristics;
             SecurityFeatures = securityFeatures;
+            DataDirectories = Array.AsReadOnly(dataDirectories ?? Array.Empty<DataDirectoryInfo>());
+            ArchitectureDirectory = architectureDirectory;
+            GlobalPtrDirectory = globalPtrDirectory;
+            IatDirectory = iatDirectory;
             HasCertificate = hasCertificate;
             Certificate = certificate ?? Array.Empty<byte>();
             Certificates = Array.AsReadOnly(certificates ?? Array.Empty<byte[]>());
@@ -2114,6 +2303,9 @@ namespace PECoff
             LoadConfig = loadConfig;
             AssemblyReferences = Array.AsReadOnly(assemblyReferences ?? Array.Empty<string>());
             AssemblyReferenceInfos = Array.AsReadOnly(assemblyReferenceInfos ?? Array.Empty<AssemblyReferenceInfo>());
+            CoffSymbols = Array.AsReadOnly(coffSymbols ?? Array.Empty<CoffSymbolInfo>());
+            CoffStringTable = Array.AsReadOnly(coffStringTable ?? Array.Empty<CoffStringTableEntry>());
+            CoffLineNumbers = Array.AsReadOnly(coffLineNumbers ?? Array.Empty<CoffLineNumberInfo>());
         }
 
         public string ToJsonReport(bool includeBinary = false, bool indented = true, bool stableOrdering = true)
@@ -2229,6 +2421,10 @@ namespace PECoff
                 Subsystem,
                 DllCharacteristics,
                 SecurityFeatures,
+                DataDirectories,
+                ArchitectureDirectory,
+                GlobalPtrDirectory,
+                IatDirectory,
                 HasCertificate,
                 CertificateEntries = certificateEntries,
                 Resources,
@@ -2269,7 +2465,10 @@ namespace PECoff
                 TlsInfo,
                 LoadConfig,
                 AssemblyReferences = assemblyRefs,
-                AssemblyReferenceInfos
+                AssemblyReferenceInfos,
+                CoffSymbols,
+                CoffStringTable,
+                CoffLineNumbers
             };
 
             return JsonSerializer.Serialize(report, options);

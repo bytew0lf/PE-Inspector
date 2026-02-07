@@ -549,6 +549,29 @@ namespace PECoff
             { 0x00E9, "Cvtpgd (10.00)" }
         };
 
+        private static readonly string[] DataDirectoryNames =
+        {
+            "Export",
+            "Import",
+            "Resource",
+            "Exception",
+            "Certificate",
+            "BaseRelocation",
+            "Debug",
+            "Architecture",
+            "GlobalPtr",
+            "TLS",
+            "LoadConfig",
+            "BoundImport",
+            "IAT",
+            "DelayImport",
+            "CLR",
+            "Reserved"
+        };
+
+        private const int CoffSymbolSize = 18;
+        private const int CoffLineNumberSize = 6;
+
         private sealed class ImportDescriptorInternal
         {
             public string DllName { get; }
@@ -2219,6 +2242,30 @@ namespace PECoff
             }
         }
 
+        private DataDirectoryInfo[] _dataDirectoryInfos = Array.Empty<DataDirectoryInfo>();
+        public DataDirectoryInfo[] DataDirectories
+        {
+            get { return _dataDirectoryInfos; }
+        }
+
+        private ArchitectureDirectoryInfo _architectureDirectory;
+        public ArchitectureDirectoryInfo ArchitectureDirectory
+        {
+            get { return _architectureDirectory; }
+        }
+
+        private GlobalPtrDirectoryInfo _globalPtrDirectory;
+        public GlobalPtrDirectoryInfo GlobalPtrDirectory
+        {
+            get { return _globalPtrDirectory; }
+        }
+
+        private IatDirectoryInfo _iatDirectory;
+        public IatDirectoryInfo IatDirectory
+        {
+            get { return _iatDirectory; }
+        }
+
         private readonly List<PackingHintInfo> _packingHints = new List<PackingHintInfo>();
         public PackingHintInfo[] PackingHints
         {
@@ -2234,6 +2281,24 @@ namespace PECoff
         public AssemblyReferenceInfo[] AssemblyReferenceInfos
         {
             get { return _assemblyReferenceInfos.ToArray(); }
+        }
+
+        private readonly List<CoffSymbolInfo> _coffSymbols = new List<CoffSymbolInfo>();
+        public CoffSymbolInfo[] CoffSymbols
+        {
+            get { return _coffSymbols.ToArray(); }
+        }
+
+        private readonly List<CoffStringTableEntry> _coffStringTable = new List<CoffStringTableEntry>();
+        public CoffStringTableEntry[] CoffStringTable
+        {
+            get { return _coffStringTable.ToArray(); }
+        }
+
+        private readonly List<CoffLineNumberInfo> _coffLineNumbers = new List<CoffLineNumberInfo>();
+        public CoffLineNumberInfo[] CoffLineNumbers
+        {
+            get { return _coffLineNumbers.ToArray(); }
         }
 
         public ParseResult ParseResult => _parseResult;
@@ -2489,6 +2554,503 @@ namespace PECoff
 
             result = default;
             return false;
+        }
+
+        private static string GetDataDirectoryName(int index)
+        {
+            if (index >= 0 && index < DataDirectoryNames.Length)
+            {
+                return DataDirectoryNames[index];
+            }
+
+            return "Directory" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        private static string NormalizeSectionName(IMAGE_SECTION_HEADER section)
+        {
+            return section.Section.TrimEnd('\0');
+        }
+
+        private void BuildDataDirectoryInfos(IMAGE_DATA_DIRECTORY[] directories, List<IMAGE_SECTION_HEADER> sections, bool isPe32Plus)
+        {
+            if (directories == null || directories.Length == 0)
+            {
+                _dataDirectoryInfos = Array.Empty<DataDirectoryInfo>();
+                _architectureDirectory = null;
+                _globalPtrDirectory = null;
+                _iatDirectory = null;
+                return;
+            }
+
+            DataDirectoryInfo[] infos = new DataDirectoryInfo[directories.Length];
+            for (int i = 0; i < directories.Length; i++)
+            {
+                IMAGE_DATA_DIRECTORY directory = directories[i];
+                bool mapped = false;
+                string sectionName = string.Empty;
+                uint sectionRva = 0;
+                uint sectionSize = 0;
+                if (directory.Size > 0 &&
+                    TryGetSectionByRvaRange(sections, directory.VirtualAddress, directory.Size, out IMAGE_SECTION_HEADER section))
+                {
+                    mapped = true;
+                    sectionName = NormalizeSectionName(section);
+                    sectionRva = section.VirtualAddress;
+                    sectionSize = GetSectionSpan(section);
+                }
+
+                infos[i] = new DataDirectoryInfo(
+                    i,
+                    GetDataDirectoryName(i),
+                    directory.VirtualAddress,
+                    directory.Size,
+                    mapped,
+                    sectionName,
+                    sectionRva,
+                    sectionSize);
+            }
+
+            _dataDirectoryInfos = infos;
+
+            _architectureDirectory = BuildArchitectureDirectoryInfo(directories, sections);
+            _globalPtrDirectory = BuildGlobalPtrDirectoryInfo(directories, sections);
+            _iatDirectory = BuildIatDirectoryInfo(directories, sections, isPe32Plus);
+        }
+
+        private ArchitectureDirectoryInfo BuildArchitectureDirectoryInfo(
+            IMAGE_DATA_DIRECTORY[] directories,
+            List<IMAGE_SECTION_HEADER> sections)
+        {
+            const int index = 7;
+            if (directories == null || index >= directories.Length)
+            {
+                return null;
+            }
+
+            IMAGE_DATA_DIRECTORY directory = directories[index];
+            if (directory.Size == 0 && directory.VirtualAddress == 0)
+            {
+                return null;
+            }
+
+            IMAGE_SECTION_HEADER section = default;
+            bool mapped = directory.Size > 0 &&
+                          TryGetSectionByRvaRange(sections, directory.VirtualAddress, directory.Size, out section);
+            string sectionName = mapped ? NormalizeSectionName(section) : string.Empty;
+            if (directory.Size > 0 && !mapped)
+            {
+                Warn(ParseIssueCategory.OptionalHeader, $"{GetDataDirectoryName(index)} directory is not mapped to a section.");
+            }
+
+            return new ArchitectureDirectoryInfo(directory.VirtualAddress, directory.Size, mapped, sectionName);
+        }
+
+        private GlobalPtrDirectoryInfo BuildGlobalPtrDirectoryInfo(
+            IMAGE_DATA_DIRECTORY[] directories,
+            List<IMAGE_SECTION_HEADER> sections)
+        {
+            const int index = 8;
+            if (directories == null || index >= directories.Length)
+            {
+                return null;
+            }
+
+            IMAGE_DATA_DIRECTORY directory = directories[index];
+            if (directory.Size == 0 && directory.VirtualAddress == 0)
+            {
+                return null;
+            }
+
+            IMAGE_SECTION_HEADER section = default;
+            bool mapped = directory.Size > 0 &&
+                          TryGetSectionByRvaRange(sections, directory.VirtualAddress, directory.Size, out section);
+            string sectionName = mapped ? NormalizeSectionName(section) : string.Empty;
+            if (directory.Size > 0 && !mapped)
+            {
+                Warn(ParseIssueCategory.OptionalHeader, $"{GetDataDirectoryName(index)} directory is not mapped to a section.");
+            }
+
+            return new GlobalPtrDirectoryInfo(directory.VirtualAddress, directory.Size, mapped, sectionName);
+        }
+
+        private IatDirectoryInfo BuildIatDirectoryInfo(
+            IMAGE_DATA_DIRECTORY[] directories,
+            List<IMAGE_SECTION_HEADER> sections,
+            bool isPe32Plus)
+        {
+            const int index = 12;
+            if (directories == null || index >= directories.Length)
+            {
+                return null;
+            }
+
+            IMAGE_DATA_DIRECTORY directory = directories[index];
+            if (directory.Size == 0 && directory.VirtualAddress == 0)
+            {
+                return null;
+            }
+
+            IMAGE_SECTION_HEADER section = default;
+            bool mapped = directory.Size > 0 &&
+                          TryGetSectionByRvaRange(sections, directory.VirtualAddress, directory.Size, out section);
+            string sectionName = mapped ? NormalizeSectionName(section) : string.Empty;
+            if (directory.Size > 0 && !mapped)
+            {
+                Warn(ParseIssueCategory.OptionalHeader, "IAT directory is not mapped to a section.");
+            }
+
+            uint entrySize = isPe32Plus ? 8u : 4u;
+            bool sizeAligned = entrySize != 0 && directory.Size % entrySize == 0;
+            if (directory.Size > 0 && !sizeAligned)
+            {
+                Warn(ParseIssueCategory.Imports, "IAT directory size is not aligned to pointer size.");
+            }
+
+            uint entryCount = entrySize == 0 ? 0 : directory.Size / entrySize;
+            return new IatDirectoryInfo(directory.VirtualAddress, directory.Size, mapped, sectionName, entryCount, entrySize, sizeAligned);
+        }
+
+        private void ParseCoffSymbolTable(uint pointerToSymbolTable, uint numberOfSymbols, List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (pointerToSymbolTable == 0 || numberOfSymbols == 0)
+            {
+                return;
+            }
+
+            if (PEFileStream == null)
+            {
+                return;
+            }
+
+            long fileLength = PEFileStream.Length;
+            long tableSize = (long)numberOfSymbols * CoffSymbolSize;
+            if (tableSize <= 0 || tableSize > int.MaxValue)
+            {
+                Warn(ParseIssueCategory.Header, "COFF symbol table size exceeds supported limits.");
+                return;
+            }
+
+            if (pointerToSymbolTable >= fileLength || pointerToSymbolTable + tableSize > fileLength)
+            {
+                Warn(ParseIssueCategory.Header, "COFF symbol table extends beyond end of file.");
+                return;
+            }
+
+            if (!TrySetPosition(pointerToSymbolTable, (int)tableSize))
+            {
+                Warn(ParseIssueCategory.Header, "COFF symbol table offset outside file bounds.");
+                return;
+            }
+
+            byte[] symbolData = new byte[tableSize];
+            ReadExactly(PEFileStream, symbolData, 0, symbolData.Length);
+
+            long stringTableOffset = pointerToSymbolTable + tableSize;
+            Dictionary<uint, string> stringTable = new Dictionary<uint, string>();
+            if (stringTableOffset + 4 <= fileLength)
+            {
+                if (TrySetPosition(stringTableOffset, 4))
+                {
+                    byte[] lengthBytes = new byte[4];
+                    ReadExactly(PEFileStream, lengthBytes, 0, lengthBytes.Length);
+                    uint stringTableLength = BitConverter.ToUInt32(lengthBytes, 0);
+                    if (stringTableLength >= 4 && stringTableLength <= fileLength - stringTableOffset)
+                    {
+                        int stringDataLength = (int)stringTableLength - 4;
+                        if (stringDataLength > 0)
+                        {
+                            byte[] stringData = new byte[stringDataLength];
+                            ReadExactly(PEFileStream, stringData, 0, stringData.Length);
+                            ParseCoffStringTable(stringData, stringTable);
+                        }
+                    }
+                    else if (stringTableLength != 0)
+                    {
+                        Warn(ParseIssueCategory.Header, "COFF string table length is invalid.");
+                    }
+                }
+            }
+
+            for (int index = 0; index < numberOfSymbols; index++)
+            {
+                int symbolOffset = index * CoffSymbolSize;
+                if (symbolOffset + CoffSymbolSize > symbolData.Length)
+                {
+                    break;
+                }
+
+                ReadOnlySpan<byte> entry = new ReadOnlySpan<byte>(symbolData, symbolOffset, CoffSymbolSize);
+                string name = ResolveCoffSymbolName(entry, stringTable);
+                uint value = BitConverter.ToUInt32(entry.Slice(8, 4));
+                short sectionNumber = BitConverter.ToInt16(entry.Slice(12, 2));
+                ushort type = BitConverter.ToUInt16(entry.Slice(14, 2));
+                byte storageClass = entry[16];
+                byte auxCount = entry[17];
+
+                string sectionName = string.Empty;
+                if (sectionNumber > 0 && sectionNumber <= sections.Count)
+                {
+                    sectionName = NormalizeSectionName(sections[sectionNumber - 1]);
+                }
+
+                byte[] auxData = Array.Empty<byte>();
+                int auxBytes = auxCount * CoffSymbolSize;
+                if (auxBytes > 0)
+                {
+                    int auxStart = symbolOffset + CoffSymbolSize;
+                    int auxAvailable = symbolData.Length - auxStart;
+                    int auxLength = Math.Min(auxBytes, auxAvailable);
+                    if (auxLength > 0)
+                    {
+                        auxData = new byte[auxLength];
+                        Array.Copy(symbolData, auxStart, auxData, 0, auxLength);
+                    }
+                }
+
+                _coffSymbols.Add(new CoffSymbolInfo(
+                    index,
+                    name,
+                    value,
+                    sectionNumber,
+                    sectionName,
+                    type,
+                    storageClass,
+                    auxCount,
+                    auxData));
+
+                if (auxCount > 0)
+                {
+                    index += auxCount;
+                }
+            }
+        }
+
+        private void ParseCoffLineNumbers(List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (PEFileStream == null || sections == null || sections.Count == 0)
+            {
+                return;
+            }
+
+            long fileLength = PEFileStream.Length;
+            for (int i = 0; i < sections.Count; i++)
+            {
+                IMAGE_SECTION_HEADER section = sections[i];
+                if (section.NumberOfLinenumbers == 0)
+                {
+                    continue;
+                }
+
+                if (section.PointerToLinenumbers == 0)
+                {
+                    Warn(ParseIssueCategory.Header, $"Section {NormalizeSectionName(section)} has line numbers count but no pointer.");
+                    continue;
+                }
+
+                long offset = section.PointerToLinenumbers;
+                long totalSize = (long)section.NumberOfLinenumbers * CoffLineNumberSize;
+                if (offset + totalSize > fileLength)
+                {
+                    Warn(ParseIssueCategory.Header, $"Line number table for section {NormalizeSectionName(section)} exceeds file size.");
+                    totalSize = Math.Max(0, fileLength - offset);
+                }
+
+                if (totalSize <= 0 || totalSize > int.MaxValue)
+                {
+                    continue;
+                }
+
+                if (!TrySetPosition(offset, (int)totalSize))
+                {
+                    Warn(ParseIssueCategory.Header, $"Line number table for section {NormalizeSectionName(section)} outside file bounds.");
+                    continue;
+                }
+
+                byte[] buffer = new byte[totalSize];
+                ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+
+                int entries = buffer.Length / CoffLineNumberSize;
+                for (int j = 0; j < entries; j++)
+                {
+                    int entryOffset = j * CoffLineNumberSize;
+                    uint addressOrIndex = BitConverter.ToUInt32(buffer, entryOffset);
+                    ushort line = BitConverter.ToUInt16(buffer, entryOffset + 4);
+                    bool isFunction = line == 0;
+                    uint virtualAddress = isFunction ? 0u : addressOrIndex;
+                    uint symbolIndex = isFunction ? addressOrIndex : 0u;
+                    _coffLineNumbers.Add(new CoffLineNumberInfo(
+                        NormalizeSectionName(section),
+                        i + 1,
+                        virtualAddress,
+                        symbolIndex,
+                        line,
+                        isFunction,
+                        offset + entryOffset));
+                }
+            }
+        }
+
+        private void ParseCoffStringTable(byte[] data, Dictionary<uint, string> table)
+        {
+            if (data == null || data.Length == 0)
+            {
+                return;
+            }
+
+            int index = 0;
+            while (index < data.Length)
+            {
+                int start = index;
+                while (index < data.Length && data[index] != 0)
+                {
+                    index++;
+                }
+
+                int length = index - start;
+                if (length > 0)
+                {
+                    string value = Encoding.UTF8.GetString(data, start, length);
+                    uint offset = (uint)(start + 4);
+                    if (!table.ContainsKey(offset))
+                    {
+                        table[offset] = value;
+                    }
+                    _coffStringTable.Add(new CoffStringTableEntry(offset, value));
+                }
+
+                index++;
+            }
+        }
+
+        internal static bool TryParseCoffSymbolTableForTest(
+            byte[] symbolData,
+            byte[] stringTableData,
+            string[] sectionNames,
+            out CoffSymbolInfo[] symbols,
+            out CoffStringTableEntry[] stringTableEntries)
+        {
+            symbols = Array.Empty<CoffSymbolInfo>();
+            stringTableEntries = Array.Empty<CoffStringTableEntry>();
+
+            if (symbolData == null || symbolData.Length < CoffSymbolSize)
+            {
+                return false;
+            }
+
+            Dictionary<uint, string> stringTable = new Dictionary<uint, string>();
+            List<CoffStringTableEntry> entries = new List<CoffStringTableEntry>();
+            if (stringTableData != null && stringTableData.Length > 0)
+            {
+                int index = 0;
+                while (index < stringTableData.Length)
+                {
+                    int start = index;
+                    while (index < stringTableData.Length && stringTableData[index] != 0)
+                    {
+                        index++;
+                    }
+
+                    int length = index - start;
+                    if (length > 0)
+                    {
+                        string value = Encoding.UTF8.GetString(stringTableData, start, length);
+                        uint offset = (uint)(start + 4);
+                        if (!stringTable.ContainsKey(offset))
+                        {
+                            stringTable[offset] = value;
+                        }
+                        entries.Add(new CoffStringTableEntry(offset, value));
+                    }
+
+                    index++;
+                }
+            }
+
+            List<CoffSymbolInfo> parsed = new List<CoffSymbolInfo>();
+            int totalSymbols = symbolData.Length / CoffSymbolSize;
+            for (int index = 0; index < totalSymbols; index++)
+            {
+                int symbolOffset = index * CoffSymbolSize;
+                ReadOnlySpan<byte> entry = new ReadOnlySpan<byte>(symbolData, symbolOffset, CoffSymbolSize);
+                string name = ResolveCoffSymbolName(entry, stringTable);
+                uint value = BitConverter.ToUInt32(entry.Slice(8, 4));
+                short sectionNumber = BitConverter.ToInt16(entry.Slice(12, 2));
+                ushort type = BitConverter.ToUInt16(entry.Slice(14, 2));
+                byte storageClass = entry[16];
+                byte auxCount = entry[17];
+
+                string sectionName = string.Empty;
+                if (sectionNumber > 0 && sectionNames != null && sectionNumber <= sectionNames.Length)
+                {
+                    sectionName = sectionNames[sectionNumber - 1] ?? string.Empty;
+                }
+
+                byte[] auxData = Array.Empty<byte>();
+                int auxBytes = auxCount * CoffSymbolSize;
+                if (auxBytes > 0)
+                {
+                    int auxStart = symbolOffset + CoffSymbolSize;
+                    int auxAvailable = symbolData.Length - auxStart;
+                    int auxLength = Math.Min(auxBytes, auxAvailable);
+                    if (auxLength > 0)
+                    {
+                        auxData = new byte[auxLength];
+                        Array.Copy(symbolData, auxStart, auxData, 0, auxLength);
+                    }
+                }
+
+                parsed.Add(new CoffSymbolInfo(
+                    index,
+                    name,
+                    value,
+                    sectionNumber,
+                    sectionName,
+                    type,
+                    storageClass,
+                    auxCount,
+                    auxData));
+
+                if (auxCount > 0)
+                {
+                    index += auxCount;
+                }
+            }
+
+            symbols = parsed.ToArray();
+            stringTableEntries = entries.ToArray();
+            return true;
+        }
+
+        private static string ResolveCoffSymbolName(ReadOnlySpan<byte> entry, Dictionary<uint, string> stringTable)
+        {
+            if (entry.Length < CoffSymbolSize)
+            {
+                return string.Empty;
+            }
+
+            uint zeroCheck = BitConverter.ToUInt32(entry.Slice(0, 4));
+            if (zeroCheck == 0)
+            {
+                uint offset = BitConverter.ToUInt32(entry.Slice(4, 4));
+                if (offset != 0 && stringTable != null && stringTable.TryGetValue(offset, out string value))
+                {
+                    return value ?? string.Empty;
+                }
+
+                return string.Empty;
+            }
+
+            int length = 0;
+            for (int i = 0; i < 8; i++)
+            {
+                if (entry[i] == 0)
+                {
+                    break;
+                }
+                length++;
+            }
+
+            return length == 0 ? string.Empty : Encoding.ASCII.GetString(entry.Slice(0, length));
         }
 
         private static uint GetSectionSpan(IMAGE_SECTION_HEADER section)
@@ -3042,6 +3604,10 @@ namespace PECoff
                 _subsystemInfo,
                 _dllCharacteristicsInfo,
                 _securityFeaturesInfo,
+                _dataDirectoryInfos,
+                _architectureDirectory,
+                _globalPtrDirectory,
+                _iatDirectory,
                 HasCertificate,
                 _certificate ?? Array.Empty<byte>(),
                 _certificates.ToArray(),
@@ -3084,7 +3650,10 @@ namespace PECoff
                 _tlsInfo,
                 _loadConfig,
                 _assemblyReferenceInfos.Select(r => r.Name).ToArray(),
-                _assemblyReferenceInfos.ToArray());
+                _assemblyReferenceInfos.ToArray(),
+                _coffSymbols.ToArray(),
+                _coffStringTable.ToArray(),
+                _coffLineNumbers.ToArray());
         }
 
         private static bool TryGetIntSize(uint size, out int intSize)
@@ -10841,6 +11410,9 @@ namespace PECoff
                 _resourceMenus.Clear();
                 _resourceToolbars.Clear();
                 _iconGroups.Clear();
+                _coffSymbols.Clear();
+                _coffStringTable.Clear();
+                _coffLineNumbers.Clear();
                 _versionInfoDetails = null;
                 _sectionEntropies.Clear();
                 _sectionSlacks.Clear();
@@ -10873,6 +11445,10 @@ namespace PECoff
                 _richHeader = null;
                 _tlsInfo = null;
                 _loadConfig = null;
+                _dataDirectoryInfos = Array.Empty<DataDirectoryInfo>();
+                _architectureDirectory = null;
+                _globalPtrDirectory = null;
+                _iatDirectory = null;
                 _clrMetadata = null;
                 _strongNameSignature = null;
                 _strongNameValidation = null;
@@ -11043,6 +11619,9 @@ namespace PECoff
 
                     ValidateSections(header, peHeader, sections, dataDirectory);
                     BuildSectionPermissionInfos(sections);
+                    BuildDataDirectoryInfos(dataDirectory, sections, isPe32Plus);
+                    ParseCoffSymbolTable(peHeader.FileHeader.PointerToSymbolTable, peHeader.FileHeader.NumberOfSymbols, sections);
+                    ParseCoffLineNumbers(sections);
 
                     for (int i = 0; i < dataDirectory.Length; i++)
                     {

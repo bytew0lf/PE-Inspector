@@ -332,6 +332,64 @@ namespace PE_FileInspector
                 sb.AppendLine();
             }
 
+            if (filter.ShouldInclude("data-directories"))
+            {
+                sb.AppendLine("Data Directories:");
+                if (pe.DataDirectories.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (DataDirectoryInfo dir in pe.DataDirectories)
+                    {
+                        string mapping = dir.IsMapped
+                            ? " | Section: " + Safe(dir.SectionName) + " (RVA: 0x" + dir.SectionRva.ToString("X8", CultureInfo.InvariantCulture) +
+                              " | Size: " + dir.SectionSize.ToString(CultureInfo.InvariantCulture) + ")"
+                            : string.Empty;
+                        sb.AppendLine("  - [" + dir.Index.ToString(CultureInfo.InvariantCulture) + "] " + Safe(dir.Name) +
+                                      " | RVA: 0x" + dir.VirtualAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Size: " + dir.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | Present: " + dir.IsPresent +
+                                      " | Mapped: " + dir.IsMapped +
+                                      mapping);
+                    }
+                }
+
+                if (pe.ArchitectureDirectory != null ||
+                    pe.GlobalPtrDirectory != null ||
+                    pe.IatDirectory != null)
+                {
+                    sb.AppendLine("  Special Directories:");
+                    if (pe.ArchitectureDirectory != null)
+                    {
+                        sb.AppendLine("    Architecture: RVA 0x" + pe.ArchitectureDirectory.VirtualAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Size: " + pe.ArchitectureDirectory.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | Mapped: " + pe.ArchitectureDirectory.IsMapped +
+                                      " | Section: " + Safe(pe.ArchitectureDirectory.SectionName));
+                    }
+                    if (pe.GlobalPtrDirectory != null)
+                    {
+                        sb.AppendLine("    GlobalPtr: RVA 0x" + pe.GlobalPtrDirectory.VirtualAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Size: " + pe.GlobalPtrDirectory.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | Mapped: " + pe.GlobalPtrDirectory.IsMapped +
+                                      " | Section: " + Safe(pe.GlobalPtrDirectory.SectionName));
+                    }
+                    if (pe.IatDirectory != null)
+                    {
+                        sb.AppendLine("    IAT: RVA 0x" + pe.IatDirectory.VirtualAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Size: " + pe.IatDirectory.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | Entries: " + pe.IatDirectory.EntryCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | EntrySize: " + pe.IatDirectory.EntrySize.ToString(CultureInfo.InvariantCulture) +
+                                      " | Aligned: " + pe.IatDirectory.SizeAligned +
+                                      " | Mapped: " + pe.IatDirectory.IsMapped +
+                                      " | Section: " + Safe(pe.IatDirectory.SectionName));
+                    }
+                }
+
+                sb.AppendLine();
+            }
+
             if (filter.ShouldInclude("section-entropy"))
             {
                 sb.AppendLine("Section Entropy:");
@@ -1196,6 +1254,88 @@ namespace PE_FileInspector
                 }
             }
             sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("coff-symbols"))
+            {
+                sb.AppendLine("COFF Symbols:");
+                if (pe.CoffSymbols.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Count: " + pe.CoffSymbols.Length.ToString(CultureInfo.InvariantCulture));
+                    foreach (CoffSymbolInfo symbol in pe.CoffSymbols.Take(100))
+                    {
+                        sb.AppendLine("  - [" + symbol.Index.ToString(CultureInfo.InvariantCulture) + "] " + Safe(symbol.Name) +
+                                      " | Value: 0x" + symbol.Value.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Section: " + Safe(symbol.SectionName) +
+                                      " (" + symbol.SectionNumber.ToString(CultureInfo.InvariantCulture) + ")" +
+                                      " | Type: 0x" + symbol.Type.ToString("X4", CultureInfo.InvariantCulture) +
+                                      " | StorageClass: " + symbol.StorageClass.ToString(CultureInfo.InvariantCulture) +
+                                      " | Aux: " + symbol.AuxSymbolCount.ToString(CultureInfo.InvariantCulture));
+                    }
+                    if (pe.CoffSymbols.Length > 100)
+                    {
+                        sb.AppendLine("  (truncated)");
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("coff-string-table"))
+            {
+                sb.AppendLine("COFF String Table:");
+                if (pe.CoffStringTable.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Count: " + pe.CoffStringTable.Length.ToString(CultureInfo.InvariantCulture));
+                    foreach (CoffStringTableEntry entry in pe.CoffStringTable.Take(100))
+                    {
+                        sb.AppendLine("  - Offset: 0x" + entry.Offset.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Value: " + Safe(entry.Value));
+                    }
+                    if (pe.CoffStringTable.Length > 100)
+                    {
+                        sb.AppendLine("  (truncated)");
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("coff-line-numbers"))
+            {
+                sb.AppendLine("COFF Line Numbers:");
+                if (pe.CoffLineNumbers.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    sb.AppendLine("  Count: " + pe.CoffLineNumbers.Length.ToString(CultureInfo.InvariantCulture));
+                    foreach (CoffLineNumberInfo entry in pe.CoffLineNumbers.Take(100))
+                    {
+                        string kind = entry.IsFunction ? "Function" : "Line";
+                        string address = entry.IsFunction
+                            ? "SymbolIndex: " + entry.SymbolIndex.ToString(CultureInfo.InvariantCulture)
+                            : "Address: 0x" + entry.VirtualAddress.ToString("X8", CultureInfo.InvariantCulture);
+                        sb.AppendLine("  - " + Safe(entry.SectionName) +
+                                      " (" + entry.SectionIndex.ToString(CultureInfo.InvariantCulture) + ")" +
+                                      " | " + kind +
+                                      " | Line: " + entry.LineNumber.ToString(CultureInfo.InvariantCulture) +
+                                      " | " + address +
+                                      " | FileOffset: 0x" + entry.FileOffset.ToString("X8", CultureInfo.InvariantCulture));
+                    }
+                    if (pe.CoffLineNumbers.Length > 100)
+                    {
+                        sb.AppendLine("  (truncated)");
+                    }
+                }
+                sb.AppendLine();
             }
 
             if (filter.ShouldInclude("relocations"))

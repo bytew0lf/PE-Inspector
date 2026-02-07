@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 7,
+  "SchemaVersion": 10,
   "FilePath": "minimal-x86.exe",
   "ParseResult": {
     "Errors": [],
@@ -95,10 +95,192 @@
     "SafeSeh": false,
     "NoSeh": false
   },
+  "DataDirectories": [
+    {
+      "Index": 0,
+      "Name": "Export",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 1,
+      "Name": "Import",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 2,
+      "Name": "Resource",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 3,
+      "Name": "Exception",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 4,
+      "Name": "Certificate",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 5,
+      "Name": "BaseRelocation",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 6,
+      "Name": "Debug",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 7,
+      "Name": "Architecture",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 8,
+      "Name": "GlobalPtr",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 9,
+      "Name": "TLS",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 10,
+      "Name": "LoadConfig",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 11,
+      "Name": "BoundImport",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 12,
+      "Name": "IAT",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 13,
+      "Name": "DelayImport",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 14,
+      "Name": "CLR",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    },
+    {
+      "Index": 15,
+      "Name": "Reserved",
+      "VirtualAddress": 0,
+      "Size": 0,
+      "IsPresent": false,
+      "IsMapped": false,
+      "SectionName": "",
+      "SectionRva": 0,
+      "SectionSize": 0
+    }
+  ],
+  "ArchitectureDirectory": null,
+  "GlobalPtrDirectory": null,
+  "IatDirectory": null,
   "HasCertificate": false,
   "CertificateEntries": [],
   "Resources": [],
   "ResourceStringTables": [],
+  "ResourceStringCoverage": [],
   "ResourceMessageTables": [],
   "ResourceDialogs": [],
   "ResourceAccelerators": [],
@@ -111,6 +293,7 @@
   "IconGroups": [],
   "ClrMetadata": null,
   "StrongNameSignature": null,
+  "StrongNameValidation": null,
   "ReadyToRun": null,
   "Imports": [],
   "ImportEntries": [],
@@ -122,7 +305,8 @@
   "ExportAnomalies": {
     "DuplicateNameCount": 0,
     "DuplicateOrdinalCount": 0,
-    "OrdinalOutOfRangeCount": 0
+    "OrdinalOutOfRangeCount": 0,
+    "ForwarderMissingTargetCount": 0
   },
   "BoundImports": [],
   "DebugDirectories": [],
@@ -132,7 +316,8 @@
     "ZeroSizedBlockCount": 0,
     "EmptyBlockCount": 0,
     "InvalidBlockCount": 0,
-    "OrphanedBlockCount": 0
+    "OrphanedBlockCount": 0,
+    "DiscardableBlockCount": 0
   },
   "ApiSetSchema": {
     "Loaded": false,
@@ -147,5 +332,8 @@
   "TlsInfo": null,
   "LoadConfig": null,
   "AssemblyReferences": [],
-  "AssemblyReferenceInfos": []
+  "AssemblyReferenceInfos": [],
+  "CoffSymbols": [],
+  "CoffStringTable": [],
+  "CoffLineNumbers": []
 }
