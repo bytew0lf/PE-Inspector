@@ -4,25 +4,29 @@ using Xunit;
 public class RelocationTypeTests
 {
     [Theory]
-    [InlineData(11, "HIGH3ADJ")]
-    [InlineData(12, "ARM_MOV32")]
-    [InlineData(13, "RISCV_HIGH20")]
-    [InlineData(14, "RISCV_LOW12I")]
-    [InlineData(15, "RISCV_LOW12S")]
-    public void BaseRelocation_Type_Names_Extended(int type, string expected)
+    [InlineData((ushort)0x01C0, 5, "ARM_MOV32")] // ARM
+    [InlineData((ushort)0x01C4, 7, "THUMB_MOV32")] // ARMNT
+    [InlineData((ushort)0x01C2, 7, "THUMB_MOV32")] // THUMB
+    [InlineData((ushort)0x5032, 5, "RISCV_HIGH20")] // RISCV32
+    [InlineData((ushort)0x5064, 7, "RISCV_LOW12I")] // RISCV64
+    [InlineData((ushort)0x5064, 8, "RISCV_LOW12S")] // RISCV64
+    [InlineData((ushort)0x6264, 8, "LOONGARCH64_MARK_LA")] // LOONGARCH64
+    public void BaseRelocation_Type_Names_Extended(ushort machine, int type, string expected)
     {
-        string name = PECOFF.GetRelocationTypeNameForTest(type);
+        string name = PECOFF.GetRelocationTypeNameForTest(machine, type);
         Assert.Equal(expected, name);
     }
 
     [Theory]
-    [InlineData(8, true)]
-    [InlineData(12, false)]
-    [InlineData(10, false)]
-    [InlineData(31, true)]
-    public void BaseRelocation_Reserved_Detection(int type, bool expected)
+    [InlineData((ushort)0x8664, 5, true)] // AMD64 + ARM/RISCV relocation
+    [InlineData((ushort)0x5032, 5, false)] // RISCV32
+    [InlineData((ushort)0x5064, 8, false)] // RISCV64
+    [InlineData((ushort)0x6264, 8, false)] // LOONGARCH64
+    [InlineData((ushort)0x014c, 8, true)] // x86 + reserved
+    [InlineData((ushort)0x014c, 10, false)] // DIR64 known even if unusual
+    public void BaseRelocation_Reserved_Detection(ushort machine, int type, bool expected)
     {
-        bool reserved = PECOFF.IsRelocationTypeReservedForTest(type);
+        bool reserved = PECOFF.IsRelocationTypeReservedForTest(machine, type);
         Assert.Equal(expected, reserved);
     }
 }

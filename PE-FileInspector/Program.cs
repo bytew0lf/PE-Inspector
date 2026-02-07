@@ -493,6 +493,18 @@ namespace PE_FileInspector
                                           " | Entries: " + pe.ArchitectureDirectory.NumberOfEntries.ToString(CultureInfo.InvariantCulture));
                             sb.AppendLine("      FirstEntryRva: 0x" + pe.ArchitectureDirectory.FirstEntryRva.ToString("X8", CultureInfo.InvariantCulture) +
                                           " | SizeOfData: " + pe.ArchitectureDirectory.SizeOfData.ToString(CultureInfo.InvariantCulture));
+                            if (pe.ArchitectureDirectory.ParsedEntryCount > 0)
+                            {
+                                string truncated = pe.ArchitectureDirectory.EntriesTruncated ? " (truncated)" : string.Empty;
+                                sb.AppendLine("      ParsedEntries: " + pe.ArchitectureDirectory.ParsedEntryCount.ToString(CultureInfo.InvariantCulture) + truncated);
+                                foreach (ArchitectureDirectoryEntryInfo entry in pe.ArchitectureDirectory.Entries.Take(5))
+                                {
+                                    sb.AppendLine("        FixupRva: 0x" + entry.FixupRva.ToString("X8", CultureInfo.InvariantCulture) +
+                                                  " | NewInstruction: 0x" + entry.NewInstruction.ToString("X8", CultureInfo.InvariantCulture) +
+                                                  " | Mapped: " + entry.FixupMapped +
+                                                  " | Section: " + Safe(entry.FixupSectionName));
+                                }
+                            }
                         }
                     }
                     if (pe.GlobalPtrDirectory != null)
@@ -504,6 +516,13 @@ namespace PE_FileInspector
                         if (pe.GlobalPtrDirectory.ValueMapped)
                         {
                             sb.AppendLine("      Value: 0x" + pe.GlobalPtrDirectory.Value.ToString("X", CultureInfo.InvariantCulture));
+                            if (pe.GlobalPtrDirectory.HasRva)
+                            {
+                                sb.AppendLine("      RVA: 0x" + pe.GlobalPtrDirectory.Rva.ToString("X8", CultureInfo.InvariantCulture) +
+                                              " (" + Safe(pe.GlobalPtrDirectory.RvaKind) + ")" +
+                                              " | Mapped: " + pe.GlobalPtrDirectory.RvaMapped +
+                                              " | Section: " + Safe(pe.GlobalPtrDirectory.RvaSectionName));
+                            }
                         }
                     }
                     if (pe.IatDirectory != null)
@@ -519,6 +538,23 @@ namespace PE_FileInspector
                         {
                             sb.AppendLine("      NonZero: " + pe.IatDirectory.NonZeroEntryCount.ToString(CultureInfo.InvariantCulture) +
                                           " | Zero: " + pe.IatDirectory.ZeroEntryCount.ToString(CultureInfo.InvariantCulture));
+                            if (pe.IatDirectory.SampleCount > 0)
+                            {
+                                string truncated = pe.IatDirectory.SamplesTruncated ? " (truncated)" : string.Empty;
+                                sb.AppendLine("      Samples: " + pe.IatDirectory.SampleCount.ToString(CultureInfo.InvariantCulture) +
+                                              " | Mapped: " + pe.IatDirectory.MappedEntryCount.ToString(CultureInfo.InvariantCulture) + truncated);
+                                foreach (IatEntryInfo entry in pe.IatDirectory.Samples.Take(5))
+                                {
+                                    sb.AppendLine("        [" + entry.Index.ToString(CultureInfo.InvariantCulture) + "] 0x" +
+                                                  entry.Value.ToString("X", CultureInfo.InvariantCulture) +
+                                                  (entry.HasRva
+                                                      ? " | RVA: 0x" + entry.Rva.ToString("X8", CultureInfo.InvariantCulture) +
+                                                        " (" + Safe(entry.RvaKind) + ")" +
+                                                        " | Mapped: " + entry.Mapped +
+                                                        " | Section: " + Safe(entry.SectionName)
+                                                      : " | RVA: n/a"));
+                                }
+                            }
                         }
                     }
                 }

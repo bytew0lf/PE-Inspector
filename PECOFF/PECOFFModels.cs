@@ -927,6 +927,9 @@ namespace PECoff
         public uint ExceptionHandlerRva { get; }
         public IReadOnlyList<uint> EpilogScopes { get; }
         public IReadOnlyList<uint> UnwindCodeWords { get; }
+        public int OpcodeCount { get; }
+        public bool HasFinishOpcode { get; }
+        public IReadOnlyList<string> OpcodeSummaries { get; }
         public string RawPreview { get; }
 
         public Arm32UnwindInfoDetail(
@@ -946,6 +949,9 @@ namespace PECoff
             uint exceptionHandlerRva,
             uint[] epilogScopes,
             uint[] unwindCodeWords,
+            int opcodeCount,
+            bool hasFinishOpcode,
+            string[] opcodeSummaries,
             string rawPreview)
         {
             FunctionBegin = functionBegin;
@@ -964,6 +970,9 @@ namespace PECoff
             ExceptionHandlerRva = exceptionHandlerRva;
             EpilogScopes = Array.AsReadOnly(epilogScopes ?? Array.Empty<uint>());
             UnwindCodeWords = Array.AsReadOnly(unwindCodeWords ?? Array.Empty<uint>());
+            OpcodeCount = opcodeCount;
+            HasFinishOpcode = hasFinishOpcode;
+            OpcodeSummaries = Array.AsReadOnly(opcodeSummaries ?? Array.Empty<string>());
             RawPreview = rawPreview ?? string.Empty;
         }
     }
@@ -974,6 +983,11 @@ namespace PECoff
         public uint FunctionEnd { get; }
         public uint UnwindInfoAddress { get; }
         public uint Header { get; }
+        public byte Version { get; }
+        public byte Flags { get; }
+        public int DescriptorCount { get; }
+        public int TrailingBytes { get; }
+        public string DescriptorPreview { get; }
         public int SizeBytes { get; }
         public string RawPreview { get; }
 
@@ -982,6 +996,11 @@ namespace PECoff
             uint functionEnd,
             uint unwindInfoAddress,
             uint header,
+            byte version,
+            byte flags,
+            int descriptorCount,
+            int trailingBytes,
+            string descriptorPreview,
             int sizeBytes,
             string rawPreview)
         {
@@ -989,6 +1008,11 @@ namespace PECoff
             FunctionEnd = functionEnd;
             UnwindInfoAddress = unwindInfoAddress;
             Header = header;
+            Version = version;
+            Flags = flags;
+            DescriptorCount = descriptorCount;
+            TrailingBytes = trailingBytes;
+            DescriptorPreview = descriptorPreview ?? string.Empty;
             SizeBytes = sizeBytes;
             RawPreview = rawPreview ?? string.Empty;
         }
@@ -2415,6 +2439,9 @@ namespace PECoff
         public uint SizeOfData { get; }
         public uint FirstEntryRva { get; }
         public uint NumberOfEntries { get; }
+        public int ParsedEntryCount { get; }
+        public bool EntriesTruncated { get; }
+        public IReadOnlyList<ArchitectureDirectoryEntryInfo> Entries { get; }
 
         public ArchitectureDirectoryInfo(
             uint virtualAddress,
@@ -2427,7 +2454,10 @@ namespace PECoff
             uint minorVersion,
             uint sizeOfData,
             uint firstEntryRva,
-            uint numberOfEntries)
+            uint numberOfEntries,
+            int parsedEntryCount,
+            bool entriesTruncated,
+            ArchitectureDirectoryEntryInfo[] entries)
         {
             VirtualAddress = virtualAddress;
             Size = size;
@@ -2440,6 +2470,29 @@ namespace PECoff
             SizeOfData = sizeOfData;
             FirstEntryRva = firstEntryRva;
             NumberOfEntries = numberOfEntries;
+            ParsedEntryCount = parsedEntryCount;
+            EntriesTruncated = entriesTruncated;
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<ArchitectureDirectoryEntryInfo>());
+        }
+    }
+
+    public sealed class ArchitectureDirectoryEntryInfo
+    {
+        public uint FixupRva { get; }
+        public uint NewInstruction { get; }
+        public bool FixupMapped { get; }
+        public string FixupSectionName { get; }
+
+        public ArchitectureDirectoryEntryInfo(
+            uint fixupRva,
+            uint newInstruction,
+            bool fixupMapped,
+            string fixupSectionName)
+        {
+            FixupRva = fixupRva;
+            NewInstruction = newInstruction;
+            FixupMapped = fixupMapped;
+            FixupSectionName = fixupSectionName ?? string.Empty;
         }
     }
 
@@ -2451,6 +2504,11 @@ namespace PECoff
         public string SectionName { get; }
         public bool ValueMapped { get; }
         public ulong Value { get; }
+        public bool HasRva { get; }
+        public uint Rva { get; }
+        public string RvaKind { get; }
+        public bool RvaMapped { get; }
+        public string RvaSectionName { get; }
 
         public GlobalPtrDirectoryInfo(
             uint virtualAddress,
@@ -2458,7 +2516,12 @@ namespace PECoff
             bool isMapped,
             string sectionName,
             bool valueMapped,
-            ulong value)
+            ulong value,
+            bool hasRva,
+            uint rva,
+            string rvaKind,
+            bool rvaMapped,
+            string rvaSectionName)
         {
             VirtualAddress = virtualAddress;
             Size = size;
@@ -2466,6 +2529,11 @@ namespace PECoff
             SectionName = sectionName ?? string.Empty;
             ValueMapped = valueMapped;
             Value = value;
+            HasRva = hasRva;
+            Rva = rva;
+            RvaKind = rvaKind ?? string.Empty;
+            RvaMapped = rvaMapped;
+            RvaSectionName = rvaSectionName ?? string.Empty;
         }
     }
 
@@ -2480,6 +2548,10 @@ namespace PECoff
         public bool SizeAligned { get; }
         public uint NonZeroEntryCount { get; }
         public uint ZeroEntryCount { get; }
+        public uint SampleCount { get; }
+        public bool SamplesTruncated { get; }
+        public uint MappedEntryCount { get; }
+        public IReadOnlyList<IatEntryInfo> Samples { get; }
 
         public IatDirectoryInfo(
             uint virtualAddress,
@@ -2490,7 +2562,11 @@ namespace PECoff
             uint entrySize,
             bool sizeAligned,
             uint nonZeroEntryCount,
-            uint zeroEntryCount)
+            uint zeroEntryCount,
+            uint sampleCount,
+            bool samplesTruncated,
+            uint mappedEntryCount,
+            IatEntryInfo[] samples)
         {
             VirtualAddress = virtualAddress;
             Size = size;
@@ -2501,6 +2577,42 @@ namespace PECoff
             SizeAligned = sizeAligned;
             NonZeroEntryCount = nonZeroEntryCount;
             ZeroEntryCount = zeroEntryCount;
+            SampleCount = sampleCount;
+            SamplesTruncated = samplesTruncated;
+            MappedEntryCount = mappedEntryCount;
+            Samples = Array.AsReadOnly(samples ?? Array.Empty<IatEntryInfo>());
+        }
+    }
+
+    public sealed class IatEntryInfo
+    {
+        public uint Index { get; }
+        public ulong Value { get; }
+        public bool IsZero { get; }
+        public bool HasRva { get; }
+        public uint Rva { get; }
+        public string RvaKind { get; }
+        public bool Mapped { get; }
+        public string SectionName { get; }
+
+        public IatEntryInfo(
+            uint index,
+            ulong value,
+            bool isZero,
+            bool hasRva,
+            uint rva,
+            string rvaKind,
+            bool mapped,
+            string sectionName)
+        {
+            Index = index;
+            Value = value;
+            IsZero = isZero;
+            HasRva = hasRva;
+            Rva = rva;
+            RvaKind = rvaKind ?? string.Empty;
+            Mapped = mapped;
+            SectionName = sectionName ?? string.Empty;
         }
     }
 
@@ -3692,7 +3804,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 22;
+        public const int CurrentSchemaVersion = 23;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }

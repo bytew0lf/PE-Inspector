@@ -729,7 +729,8 @@ namespace PECoff
             IMAGE_FILE_MACHINE_ARM = 0x1c0,
             IMAGE_FILE_MACHINE_ARMNT = 0x1c4,
             IMAGE_FILE_MACHINE_ARM64 = 0xaa64,
-            IMAGE_FILE_MACHINE_ARM64EC = 0xa64e,
+            IMAGE_FILE_MACHINE_ARM64EC = 0xA641,
+            IMAGE_FILE_MACHINE_ARM64X = 0xA64E,
             
             IMAGE_FILE_MACHINE_EBC = 0xebc, // EFI Byte Code
 
@@ -761,6 +762,13 @@ namespace PECoff
             IMAGE_FILE_MACHINE_SH4 = 0x1a6,
             IMAGE_FILE_MACHINE_SH5 = 0x1a8,
             IMAGE_FILE_MACHINE_THUMB = 0x1c2,
+
+            IMAGE_FILE_MACHINE_LOONGARCH32 = 0x6232,
+            IMAGE_FILE_MACHINE_LOONGARCH64 = 0x6264,
+
+            IMAGE_FILE_MACHINE_RISCV32 = 0x5032,
+            IMAGE_FILE_MACHINE_RISCV64 = 0x5064,
+            IMAGE_FILE_MACHINE_RISCV128 = 0x5128,
             
 
             IMAGE_FILE_MACHINE_PURE_MSIL = 0xc0ee
@@ -3290,6 +3298,9 @@ namespace PECoff
             uint sizeOfData = 0;
             uint firstEntryRva = 0;
             uint numberOfEntries = 0;
+            List<ArchitectureDirectoryEntryInfo> entries = new List<ArchitectureDirectoryEntryInfo>();
+            int parsedEntryCount = 0;
+            bool entriesTruncated = false;
             if (mapped && directory.Size >= 24 &&
                 TryGetFileOffset(sections, directory.VirtualAddress, out long archOffset) &&
                 TrySetPosition(archOffset, 24))
@@ -3297,6 +3308,42 @@ namespace PECoff
                 byte[] buffer = new byte[24];
                 ReadExactly(PEFileStream, buffer, 0, buffer.Length);
                 parsed = TryParseArchitectureHeader(buffer, out magic, out major, out minor, out sizeOfData, out firstEntryRva, out numberOfEntries);
+                if (parsed && numberOfEntries > 0 && firstEntryRva != 0)
+                {
+                    uint entrySize = 8;
+                    uint maxEntriesBySize = sizeOfData > 0 ? sizeOfData / entrySize : 0;
+                    if (maxEntriesBySize == 0 && directory.Size > 24)
+                    {
+                        maxEntriesBySize = (directory.Size - 24) / entrySize;
+                    }
+
+                    uint toRead = maxEntriesBySize > 0 ? Math.Min(numberOfEntries, maxEntriesBySize) : numberOfEntries;
+                    int maxEntries = 64;
+                    entriesTruncated = toRead > maxEntries;
+                    int readCount = (int)Math.Min(toRead, (uint)maxEntries);
+                    if (readCount > 0 &&
+                        TryGetFileOffset(sections, firstEntryRva, out long entriesOffset) &&
+                        TrySetPosition(entriesOffset, readCount * (int)entrySize))
+                    {
+                        byte[] entryBuffer = new byte[readCount * (int)entrySize];
+                        ReadExactly(PEFileStream, entryBuffer, 0, entryBuffer.Length);
+                        int cursor = 0;
+                        for (int i = 0; i < readCount; i++)
+                        {
+                            uint fixupRva = ReadUInt32(entryBuffer, cursor);
+                            uint newInst = ReadUInt32(entryBuffer, cursor + 4);
+                            cursor += (int)entrySize;
+                            bool fixupMapped = TryGetSectionByRva(sections, fixupRva, out IMAGE_SECTION_HEADER fixupSection);
+                            string fixupSectionName = fixupMapped ? NormalizeSectionName(fixupSection) : string.Empty;
+                            entries.Add(new ArchitectureDirectoryEntryInfo(fixupRva, newInst, fixupMapped, fixupSectionName));
+                        }
+                        parsedEntryCount = entries.Count;
+                    }
+                    else if (!TryGetFileOffset(sections, firstEntryRva, out _))
+                    {
+                        Warn(ParseIssueCategory.OptionalHeader, $"{GetDataDirectoryName(index)} entries RVA is not mapped to a section.");
+                    }
+                }
             }
 
             return new ArchitectureDirectoryInfo(
@@ -3310,7 +3357,10 @@ namespace PECoff
                 minor,
                 sizeOfData,
                 firstEntryRva,
-                numberOfEntries);
+                numberOfEntries,
+                parsedEntryCount,
+                entriesTruncated,
+                entries.ToArray());
         }
 
         private GlobalPtrDirectoryInfo BuildGlobalPtrDirectoryInfo(
@@ -3341,12 +3391,26 @@ namespace PECoff
 
             bool valueMapped = false;
             ulong value = 0;
+            bool hasRva = false;
+            uint rva = 0;
+            string rvaKind = string.Empty;
+            bool rvaMapped = false;
+            string rvaSectionName = string.Empty;
             int pointerSize = isPe32Plus ? 8 : 4;
             if (mapped && TryGetFileOffset(sections, directory.VirtualAddress, out long gpOffset) &&
                 TrySetPosition(gpOffset, pointerSize))
             {
                 value = isPe32Plus ? PEFile.ReadUInt64() : PEFile.ReadUInt32();
                 valueMapped = true;
+                if (TryComputeRvaFromPointer(value, _imageBase, _sizeOfImage, out rva, out rvaKind))
+                {
+                    hasRva = true;
+                    if (TryGetSectionByRva(sections, rva, out IMAGE_SECTION_HEADER rvaSection))
+                    {
+                        rvaMapped = true;
+                        rvaSectionName = NormalizeSectionName(rvaSection);
+                    }
+                }
             }
 
             return new GlobalPtrDirectoryInfo(
@@ -3355,7 +3419,12 @@ namespace PECoff
                 mapped,
                 sectionName,
                 valueMapped,
-                value);
+                value,
+                hasRva,
+                rva,
+                rvaKind,
+                rvaMapped,
+                rvaSectionName);
         }
 
         private IatDirectoryInfo BuildIatDirectoryInfo(
@@ -3394,10 +3463,15 @@ namespace PECoff
             uint entryCount = entrySize == 0 ? 0 : directory.Size / entrySize;
             uint nonZeroCount = 0;
             uint zeroCount = 0;
+            uint sampleCount = 0;
+            bool samplesTruncated = false;
+            uint mappedEntryCount = 0;
+            List<IatEntryInfo> samples = new List<IatEntryInfo>();
             if (mapped && entrySize > 0 && directory.Size >= entrySize &&
                 TryGetFileOffset(sections, directory.VirtualAddress, out long iatOffset))
             {
                 CountIatEntries(iatOffset, directory.Size, entrySize, out nonZeroCount, out zeroCount);
+                ReadIatSamples(iatOffset, directory.Size, entrySize, sections, out samples, out sampleCount, out samplesTruncated, out mappedEntryCount);
             }
 
             return new IatDirectoryInfo(
@@ -3409,7 +3483,11 @@ namespace PECoff
                 entrySize,
                 sizeAligned,
                 nonZeroCount,
-                zeroCount);
+                zeroCount,
+                sampleCount,
+                samplesTruncated,
+                mappedEntryCount,
+                samples.ToArray());
         }
 
         private void ParseCoffSymbolTable(uint pointerToSymbolTable, uint numberOfSymbols, List<IMAGE_SECTION_HEADER> sections)
@@ -7802,6 +7880,81 @@ namespace PECoff
             }
         }
 
+        private void ReadIatSamples(
+            long fileOffset,
+            uint size,
+            uint entrySize,
+            List<IMAGE_SECTION_HEADER> sections,
+            out List<IatEntryInfo> samples,
+            out uint sampleCount,
+            out bool samplesTruncated,
+            out uint mappedCount)
+        {
+            samples = new List<IatEntryInfo>();
+            sampleCount = 0;
+            mappedCount = 0;
+            samplesTruncated = false;
+
+            if (PEFileStream == null || entrySize == 0 || size == 0)
+            {
+                return;
+            }
+
+            long fileLength = PEFileStream.Length;
+            if (fileOffset < 0 || fileOffset >= fileLength)
+            {
+                return;
+            }
+
+            uint alignedSize = size - (size % entrySize);
+            if (alignedSize == 0)
+            {
+                return;
+            }
+
+            uint availableEntries = alignedSize / entrySize;
+            int maxSamples = 16;
+            samplesTruncated = availableEntries > maxSamples;
+            int readCount = (int)Math.Min(availableEntries, (uint)maxSamples);
+            int toRead = readCount * (int)entrySize;
+            if (!TrySetPosition(fileOffset, toRead))
+            {
+                return;
+            }
+
+            byte[] buffer = new byte[toRead];
+            ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+            int offset = 0;
+            for (int i = 0; i < readCount; i++)
+            {
+                ulong value = entrySize == 8
+                    ? BitConverter.ToUInt64(buffer, offset)
+                    : BitConverter.ToUInt32(buffer, offset);
+                offset += (int)entrySize;
+
+                bool isZero = value == 0;
+                bool hasRva = false;
+                uint rva = 0;
+                string rvaKind = string.Empty;
+                bool mapped = false;
+                string sectionName = string.Empty;
+
+                if (!isZero && TryComputeRvaFromPointer(value, _imageBase, _sizeOfImage, out rva, out rvaKind))
+                {
+                    hasRva = true;
+                    if (TryGetSectionByRva(sections, rva, out IMAGE_SECTION_HEADER section))
+                    {
+                        mapped = true;
+                        sectionName = NormalizeSectionName(section);
+                        mappedCount++;
+                    }
+                }
+
+                samples.Add(new IatEntryInfo((uint)i, value, isZero, hasRva, rva, rvaKind, mapped, sectionName));
+                sampleCount++;
+            }
+        }
+
         private static ulong ReadUInt64(ReadOnlySpan<byte> buffer, int offset)
         {
             if (offset + 7 >= buffer.Length)
@@ -10273,14 +10426,24 @@ namespace PECoff
                 rawDataPreview);
         }
 
+        internal static string GetRelocationTypeNameForTest(ushort machine, int type)
+        {
+            return GetRelocationTypeName((MachineTypes)machine, type);
+        }
+
+        internal static bool IsRelocationTypeReservedForTest(ushort machine, int type)
+        {
+            return IsRelocationTypeReserved((MachineTypes)machine, type);
+        }
+
         internal static string GetRelocationTypeNameForTest(int type)
         {
-            return GetRelocationTypeName(type);
+            return GetRelocationTypeName(MachineTypes.IMAGE_FILE_MACHINE_UNKNOWN, type);
         }
 
         internal static bool IsRelocationTypeReservedForTest(int type)
         {
-            return IsRelocationTypeReserved(type);
+            return IsRelocationTypeReserved(MachineTypes.IMAGE_FILE_MACHINE_UNKNOWN, type);
         }
 
         private static bool IsLikelyText(string text)
@@ -10524,6 +10687,108 @@ namespace PECoff
             Array.Copy(data, 0, headerBytes, 0, headerBytes.Length);
             IMAGE_DOS_HEADER header = headerBytes.ToStructure<IMAGE_DOS_HEADER>();
             return TryParseDosRelocationsFromBuffer(header, data, out info);
+        }
+
+        internal static bool TryComputeRvaFromPointerForTest(ulong value, ulong imageBase, uint sizeOfImage, out uint rva, out string kind)
+        {
+            return TryComputeRvaFromPointer(value, imageBase, sizeOfImage, out rva, out kind);
+        }
+
+        internal static bool TryParseArchitectureDirectoryDataForTest(byte[] data, out ArchitectureDirectoryInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 24)
+            {
+                return false;
+            }
+
+            if (!TryParseArchitectureHeader(data, out uint magic, out uint major, out uint minor, out uint sizeOfData, out uint firstEntryRva, out uint numberOfEntries))
+            {
+                return false;
+            }
+
+            List<ArchitectureDirectoryEntryInfo> entries = new List<ArchitectureDirectoryEntryInfo>();
+            int parsedCount = 0;
+            bool truncated = false;
+            uint entrySize = 8;
+            if (numberOfEntries > 0 && firstEntryRva < data.Length)
+            {
+                uint maxEntriesBySize = sizeOfData > 0 ? sizeOfData / entrySize : 0;
+                uint toRead = maxEntriesBySize > 0 ? Math.Min(numberOfEntries, maxEntriesBySize) : numberOfEntries;
+                int maxEntries = 64;
+                truncated = toRead > maxEntries;
+                int readCount = (int)Math.Min(toRead, (uint)maxEntries);
+                int offset = (int)firstEntryRva;
+                for (int i = 0; i < readCount && offset + entrySize <= data.Length; i++)
+                {
+                    uint fixupRva = ReadUInt32(data, offset);
+                    uint newInst = ReadUInt32(data, offset + 4);
+                    entries.Add(new ArchitectureDirectoryEntryInfo(fixupRva, newInst, false, string.Empty));
+                    offset += (int)entrySize;
+                }
+                parsedCount = entries.Count;
+            }
+
+            info = new ArchitectureDirectoryInfo(
+                0,
+                (uint)data.Length,
+                true,
+                string.Empty,
+                true,
+                magic,
+                major,
+                minor,
+                sizeOfData,
+                firstEntryRva,
+                numberOfEntries,
+                parsedCount,
+                truncated,
+                entries.ToArray());
+            return true;
+        }
+
+        internal static bool TryParseIatSamplesForTest(byte[] data, bool isPe32Plus, ulong imageBase, uint sizeOfImage, out IatEntryInfo[] samples, out uint mappedCount)
+        {
+            samples = Array.Empty<IatEntryInfo>();
+            mappedCount = 0;
+            if (data == null)
+            {
+                return false;
+            }
+
+            uint entrySize = isPe32Plus ? 8u : 4u;
+            if (data.Length < entrySize)
+            {
+                return false;
+            }
+
+            uint alignedSize = (uint)data.Length - ((uint)data.Length % entrySize);
+            int maxSamples = 16;
+            int readCount = (int)Math.Min(alignedSize / entrySize, (uint)maxSamples);
+            List<IatEntryInfo> local = new List<IatEntryInfo>(readCount);
+            int offset = 0;
+            for (int i = 0; i < readCount; i++)
+            {
+                ulong value = entrySize == 8
+                    ? BitConverter.ToUInt64(data, offset)
+                    : BitConverter.ToUInt32(data, offset);
+                offset += (int)entrySize;
+
+                bool isZero = value == 0;
+                bool hasRva = false;
+                uint rva = 0;
+                string kind = string.Empty;
+                if (!isZero && TryComputeRvaFromPointer(value, imageBase, sizeOfImage, out rva, out kind))
+                {
+                    hasRva = true;
+                    mappedCount++;
+                }
+
+                local.Add(new IatEntryInfo((uint)i, value, isZero, hasRva, rva, kind, false, string.Empty));
+            }
+
+            samples = local.ToArray();
+            return true;
         }
 
         internal static bool TryParsePdbInfoForTest(string path, out PdbInfo info)
@@ -12880,7 +13145,7 @@ namespace PECoff
                         typeCounts[type]++;
                     }
 
-                    if (IsRelocationTypeReserved(type))
+                    if (IsRelocationTypeReserved(_machineType, type))
                     {
                         reservedTypeCount++;
                     }
@@ -12896,7 +13161,7 @@ namespace PECoff
                     }
                     if (accumulator.Samples.Count < 5)
                     {
-                        accumulator.Samples.Add(new RelocationSampleInfo(entryRva, type, GetRelocationTypeName(type)));
+                        accumulator.Samples.Add(new RelocationSampleInfo(entryRva, type, GetRelocationTypeName(_machineType, type)));
                     }
                 }
 
@@ -12941,7 +13206,7 @@ namespace PECoff
             {
                 foreach (BaseRelocationSectionAccumulator accumulator in summaries.Values)
                 {
-                    RelocationTypeSummary[] topTypes = BuildTopRelocationTypes(accumulator.TypeCounts, 3);
+                    RelocationTypeSummary[] topTypes = BuildTopRelocationTypes(_machineType, accumulator.TypeCounts, 3);
                     _baseRelocationSections.Add(new BaseRelocationSectionSummary(
                         accumulator.SectionName,
                         accumulator.SectionRva,
@@ -13007,7 +13272,7 @@ namespace PECoff
             return accumulator;
         }
 
-        private static RelocationTypeSummary[] BuildTopRelocationTypes(int[] typeCounts, int maxItems)
+        private static RelocationTypeSummary[] BuildTopRelocationTypes(MachineTypes machine, int[] typeCounts, int maxItems)
         {
             if (typeCounts == null || typeCounts.Length == 0 || maxItems <= 0)
             {
@@ -13020,11 +13285,11 @@ namespace PECoff
                 .OrderByDescending(item => item.count)
                 .ThenBy(item => item.index)
                 .Take(maxItems)
-                .Select(item => new RelocationTypeSummary(item.index, GetRelocationTypeName(item.index), item.count))
+                .Select(item => new RelocationTypeSummary(item.index, GetRelocationTypeName(machine, item.index), item.count))
                 .ToArray();
         }
 
-        private static string GetRelocationTypeName(int type)
+        private static string GetRelocationTypeName(MachineTypes machine, int type)
         {
             switch (type)
             {
@@ -13033,22 +13298,55 @@ namespace PECoff
                 case 2: return "LOW";
                 case 3: return "HIGHLOW";
                 case 4: return "HIGHADJ";
-                case 5: return "MIPS_JMPADDR";
-                case 6: return "SECTION";
-                case 7: return "REL32";
-                case 8: return "RESERVED";
-                case 9: return "MIPS_JMPADDR16";
+                case 5:
+                    if (IsArmMachine(machine))
+                    {
+                        return "ARM_MOV32";
+                    }
+                    if (IsRiscVMachine(machine))
+                    {
+                        return "RISCV_HIGH20";
+                    }
+                    if (IsMipsMachine(machine))
+                    {
+                        return "MIPS_JMPADDR";
+                    }
+                    return "RESERVED";
+                case 6:
+                    return "RESERVED";
+                case 7:
+                    if (IsThumbMachine(machine))
+                    {
+                        return "THUMB_MOV32";
+                    }
+                    if (IsRiscVMachine(machine))
+                    {
+                        return "RISCV_LOW12I";
+                    }
+                    return "RESERVED";
+                case 8:
+                    if (IsRiscVMachine(machine))
+                    {
+                        return "RISCV_LOW12S";
+                    }
+                    if (machine == MachineTypes.IMAGE_FILE_MACHINE_LOONGARCH32)
+                    {
+                        return "LOONGARCH32_MARK_LA";
+                    }
+                    if (machine == MachineTypes.IMAGE_FILE_MACHINE_LOONGARCH64)
+                    {
+                        return "LOONGARCH64_MARK_LA";
+                    }
+                    return "RESERVED";
+                case 9:
+                    return IsMipsMachine(machine) ? "MIPS_JMPADDR16" : "RESERVED";
                 case 10: return "DIR64";
                 case 11: return "HIGH3ADJ";
-                case 12: return "ARM_MOV32";
-                case 13: return "RISCV_HIGH20";
-                case 14: return "RISCV_LOW12I";
-                case 15: return "RISCV_LOW12S";
                 default: return string.Format(CultureInfo.InvariantCulture, "TYPE_{0}", type);
             }
         }
 
-        private static bool IsRelocationTypeKnown(int type)
+        private static bool IsRelocationTypeKnown(MachineTypes machine, int type)
         {
             switch (type)
             {
@@ -13057,25 +13355,70 @@ namespace PECoff
                 case 2:
                 case 3:
                 case 4:
-                case 5:
-                case 6:
-                case 7:
-                case 9:
                 case 10:
                 case 11:
-                case 12:
-                case 13:
-                case 14:
-                case 15:
                     return true;
+                case 5:
+                    return IsArmMachine(machine) || IsRiscVMachine(machine) || IsMipsMachine(machine);
+                case 6:
+                    return false;
+                case 7:
+                    return IsThumbMachine(machine) || IsRiscVMachine(machine);
+                case 8:
+                    return IsRiscVMachine(machine) || IsLoongArchMachine(machine);
+                case 9:
+                    return IsMipsMachine(machine);
                 default:
                     return false;
             }
         }
 
-        private static bool IsRelocationTypeReserved(int type)
+        private static bool IsRelocationTypeReserved(MachineTypes machine, int type)
         {
-            return !IsRelocationTypeKnown(type);
+            return !IsRelocationTypeKnown(machine, type);
+        }
+
+        private static bool IsRiscVMachine(MachineTypes machine)
+        {
+            return machine == MachineTypes.IMAGE_FILE_MACHINE_RISCV32 ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_RISCV64 ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_RISCV128;
+        }
+
+        private static bool IsLoongArchMachine(MachineTypes machine)
+        {
+            return machine == MachineTypes.IMAGE_FILE_MACHINE_LOONGARCH32 ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_LOONGARCH64;
+        }
+
+        private static bool IsArmMachine(MachineTypes machine)
+        {
+            return machine == MachineTypes.IMAGE_FILE_MACHINE_ARM ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_ARMNT ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_THUMB;
+        }
+
+        private static bool IsThumbMachine(MachineTypes machine)
+        {
+            return machine == MachineTypes.IMAGE_FILE_MACHINE_THUMB ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_ARMNT;
+        }
+
+        private static bool IsMipsMachine(MachineTypes machine)
+        {
+            switch (machine)
+            {
+                case MachineTypes.IMAGE_FILE_MACHINE_R3000:
+                case MachineTypes.IMAGE_FILE_MACHINE_R4000:
+                case MachineTypes.IMAGE_FILE_MACHINE_R10000:
+                case MachineTypes.IMAGE_FILE_MACHINE_WCEMIPSV2:
+                case MachineTypes.IMAGE_FILE_MACHINE_MIPS16:
+                case MachineTypes.IMAGE_FILE_MACHINE_MIPSFPU:
+                case MachineTypes.IMAGE_FILE_MACHINE_MIPSFPU16:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         private static string GetMachineName(ushort machine)
@@ -13091,6 +13434,7 @@ namespace PECoff
                     case MachineTypes.IMAGE_FILE_MACHINE_ARMNT: return "ARMNT";
                     case MachineTypes.IMAGE_FILE_MACHINE_ARM64: return "ARM64";
                     case MachineTypes.IMAGE_FILE_MACHINE_ARM64EC: return "ARM64EC";
+                    case MachineTypes.IMAGE_FILE_MACHINE_ARM64X: return "ARM64X";
                     case MachineTypes.IMAGE_FILE_MACHINE_IA64: return "IA64";
                     case MachineTypes.IMAGE_FILE_MACHINE_EBC: return "EBC";
                     case MachineTypes.IMAGE_FILE_MACHINE_POWERPC: return "PowerPC";
@@ -13103,6 +13447,11 @@ namespace PECoff
                     case MachineTypes.IMAGE_FILE_MACHINE_MIPS16: return "MIPS16";
                     case MachineTypes.IMAGE_FILE_MACHINE_MIPSFPU: return "MIPSFPU";
                     case MachineTypes.IMAGE_FILE_MACHINE_MIPSFPU16: return "MIPSFPU16";
+                    case MachineTypes.IMAGE_FILE_MACHINE_LOONGARCH32: return "LoongArch32";
+                    case MachineTypes.IMAGE_FILE_MACHINE_LOONGARCH64: return "LoongArch64";
+                    case MachineTypes.IMAGE_FILE_MACHINE_RISCV32: return "RISC-V32";
+                    case MachineTypes.IMAGE_FILE_MACHINE_RISCV64: return "RISC-V64";
+                    case MachineTypes.IMAGE_FILE_MACHINE_RISCV128: return "RISC-V128";
                     case MachineTypes.IMAGE_FILE_MACHINE_THUMB: return "Thumb";
                     case MachineTypes.IMAGE_FILE_MACHINE_PURE_MSIL: return "MSIL";
                     default: return type.ToString();
@@ -13204,6 +13553,7 @@ namespace PECoff
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_ARM64:
                 case MachineTypes.IMAGE_FILE_MACHINE_ARM64EC:
+                case MachineTypes.IMAGE_FILE_MACHINE_ARM64X:
                     switch (type)
                     {
                         case 0x0000: return "ABSOLUTE";
@@ -13318,7 +13668,8 @@ namespace PECoff
             }
 
             bool isArm64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64 ||
-                _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64EC;
+                _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64EC ||
+                _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64X;
             bool isArm32 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM ||
                 _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARMNT;
             int entrySize = (isArm64 || isArm32) ? 8 : 12;
@@ -13405,7 +13756,8 @@ namespace PECoff
 
             bool isAmd64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_AMD64;
             bool isArm64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64 ||
-                _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64EC;
+                _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64EC ||
+                _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM64X;
             bool isArm32 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM ||
                 _machineType == MachineTypes.IMAGE_FILE_MACHINE_ARMNT;
             bool isIa64 = _machineType == MachineTypes.IMAGE_FILE_MACHINE_IA64;
@@ -13730,7 +14082,17 @@ namespace PECoff
                         continue;
                     }
 
-                    int readSize = 16;
+                    int readSize = 32;
+                    long maxAvailable = PEFileStream.Length - offset;
+                    if (maxAvailable < 16)
+                    {
+                        Warn(ParseIssueCategory.Sections, "IA64 unwind info header outside file bounds.");
+                        continue;
+                    }
+                    if (maxAvailable < readSize)
+                    {
+                        readSize = (int)maxAvailable;
+                    }
                     if (!TrySetPosition(offset, readSize))
                     {
                         Warn(ParseIssueCategory.Sections, "IA64 unwind info header outside file bounds.");
@@ -13740,11 +14102,24 @@ namespace PECoff
                     byte[] buffer = new byte[readSize];
                     ReadExactly(PEFileStream, buffer, 0, buffer.Length);
                     uint header = ReadUInt32(buffer, 0);
+                    byte version = (byte)(header & 0x07);
+                    byte flags = (byte)((header >> 3) & 0x1F);
+                    int descriptorBytes = Math.Max(0, buffer.Length - 4);
+                    int descriptorCount = descriptorBytes / 8;
+                    int trailing = descriptorBytes % 8;
+                    string descriptorPreview = descriptorBytes > 0
+                        ? BuildHexPreview(new ReadOnlySpan<byte>(buffer, 4, Math.Min(descriptorBytes, 16)), 32)
+                        : string.Empty;
                     Ia64UnwindInfoDetail detail = new Ia64UnwindInfoDetail(
                         func.BeginAddress,
                         func.EndAddress,
                         func.UnwindInfoAddress,
                         header,
+                        version,
+                        flags,
+                        descriptorCount,
+                        trailing,
+                        descriptorPreview,
                         readSize,
                         BuildHexPreview(buffer, 32));
                     _ia64UnwindInfoDetails.Add(detail);
@@ -14058,6 +14433,7 @@ namespace PECoff
                 offset += 4;
             }
 
+            string[] opcodeSummaries = DecodeArm32UnwindOpcodes(codeWordList, out bool hasFinish, out int opcodeCount);
             string preview = BuildHexPreview(data, 32);
             detail = new Arm32UnwindInfoDetail(
                 func.BeginAddress,
@@ -14076,6 +14452,9 @@ namespace PECoff
                 exceptionHandlerRva,
                 epilogScopes.ToArray(),
                 codeWordList.ToArray(),
+                opcodeCount,
+                hasFinish,
+                opcodeSummaries,
                 preview);
             return true;
         }
@@ -14125,12 +14504,25 @@ namespace PECoff
 
             int sizeBytes = Math.Min(data.Length, 16);
             uint header = ReadUInt32(data, 0);
+            byte version = (byte)(header & 0x07);
+            byte flags = (byte)((header >> 3) & 0x1F);
+            int descriptorBytes = Math.Max(0, Math.Min(data.Length, sizeBytes) - 4);
+            int descriptorCount = descriptorBytes / 8;
+            int trailing = descriptorBytes % 8;
+            string descriptorPreview = descriptorBytes > 0
+                ? BuildHexPreview(new ReadOnlySpan<byte>(data, 4, Math.Min(descriptorBytes, 16)), 32)
+                : string.Empty;
             string preview = BuildHexPreview(new ReadOnlySpan<byte>(data, 0, sizeBytes), 32);
             return new Ia64UnwindInfoDetail(
                 func.BeginAddress,
                 func.EndAddress,
                 func.UnwindInfoAddress,
                 header,
+                version,
+                flags,
+                descriptorCount,
+                trailing,
+                descriptorPreview,
                 sizeBytes,
                 preview);
         }
@@ -14160,6 +14552,72 @@ namespace PECoff
             }
 
             return codes.ToArray();
+        }
+
+        private static string[] DecodeArm32UnwindOpcodes(List<uint> codeWords, out bool hasFinishOpcode, out int opcodeCount)
+        {
+            hasFinishOpcode = false;
+            opcodeCount = 0;
+            if (codeWords == null || codeWords.Count == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> opcodes = new List<string>();
+            int maxOps = 32;
+            foreach (uint word in codeWords)
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    byte opcode = (byte)((word >> (i * 8)) & 0xFF);
+                    opcodeCount++;
+                    string name = DescribeArm32UnwindOpcode(opcode, out bool isFinish);
+                    opcodes.Add(name);
+                    if (isFinish)
+                    {
+                        hasFinishOpcode = true;
+                        return opcodes.ToArray();
+                    }
+                    if (opcodes.Count >= maxOps)
+                    {
+                        return opcodes.ToArray();
+                    }
+                }
+            }
+
+            return opcodes.ToArray();
+        }
+
+        private static string DescribeArm32UnwindOpcode(byte opcode, out bool isFinish)
+        {
+            isFinish = false;
+            if (opcode == 0xB0)
+            {
+                isFinish = true;
+                return "FINISH";
+            }
+            if (opcode == 0xB1)
+            {
+                return "POP_MASK";
+            }
+            if (opcode == 0xB2)
+            {
+                return "VSP_SET";
+            }
+            if (opcode == 0xB3)
+            {
+                return "POP_REGS";
+            }
+            if (opcode <= 0x7F)
+            {
+                return "VSP_ADD";
+            }
+            if (opcode <= 0xBF)
+            {
+                return "VSP_SUB";
+            }
+
+            return "OP_0x" + opcode.ToString("X2", CultureInfo.InvariantCulture);
         }
 
         private static bool TryDecodeArm64UnwindCode(ReadOnlySpan<byte> data, int index, out Arm64UnwindCodeInfo info, out int length)
@@ -16733,6 +17191,36 @@ namespace PECoff
                 rva = (uint)address;
                 source = "RVA";
                 return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryComputeRvaFromPointer(ulong value, ulong imageBase, uint sizeOfImage, out uint rva, out string kind)
+        {
+            rva = 0;
+            kind = string.Empty;
+            if (value == 0 || sizeOfImage == 0)
+            {
+                return false;
+            }
+
+            if (value < sizeOfImage)
+            {
+                rva = (uint)value;
+                kind = "RVA";
+                return true;
+            }
+
+            if (imageBase != 0 && value >= imageBase)
+            {
+                ulong diff = value - imageBase;
+                if (diff < sizeOfImage)
+                {
+                    rva = (uint)diff;
+                    kind = "VA";
+                    return true;
+                }
             }
 
             return false;

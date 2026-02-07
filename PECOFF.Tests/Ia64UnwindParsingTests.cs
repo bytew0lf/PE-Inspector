@@ -21,6 +21,9 @@ public class Ia64UnwindParsingTests
         Assert.NotNull(detail);
         Assert.Equal(header, detail.Header);
         Assert.Equal(16, detail.SizeBytes);
+        Assert.Equal((byte)(header & 0x07), detail.Version);
+        Assert.Equal((byte)((header >> 3) & 0x1F), detail.Flags);
+        Assert.True(detail.DescriptorCount >= 1);
         Assert.False(string.IsNullOrWhiteSpace(detail.RawPreview));
     }
 }

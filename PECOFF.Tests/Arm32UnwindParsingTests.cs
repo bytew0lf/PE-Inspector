@@ -20,7 +20,7 @@ public class Arm32UnwindParsingTests
         byte[] data = new byte[4 + (epilogCount * 4) + (codeWords * 4)];
         BitConverter.GetBytes(header).CopyTo(data, 0);
         BitConverter.GetBytes(0x12345678u).CopyTo(data, 4);
-        BitConverter.GetBytes(0xABCDEF00u).CopyTo(data, 8);
+        BitConverter.GetBytes(0x000000B0u).CopyTo(data, 8);
 
         Arm32UnwindInfoDetail detail = PECOFF.BuildArm32UnwindInfoDetailForTest(func, data);
         Assert.NotNull(detail);
@@ -30,5 +30,7 @@ public class Arm32UnwindParsingTests
         Assert.Equal(codeWords, detail.CodeWords);
         Assert.Single(detail.EpilogScopes);
         Assert.Single(detail.UnwindCodeWords);
+        Assert.True(detail.OpcodeCount > 0);
+        Assert.True(detail.HasFinishOpcode);
     }
 }
