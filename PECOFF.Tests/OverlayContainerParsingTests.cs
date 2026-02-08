@@ -39,6 +39,7 @@ public class OverlayContainerParsingTests
         Assert.Equal("7-Zip", info.Type);
         Assert.Single(info.Entries);
         Assert.Equal("encoded.txt", info.Entries[0].Name);
+        Assert.Contains("pack=", info.Notes, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

@@ -160,6 +160,7 @@ Defaults:
 - v29: Relocation anomaly totals, TLS index mapping, and debug raw fallback entries.
 - v30: Authenticode policy evaluation summary, CLR signature decoding + EH clause summary, and PDB symbol record parsing.
 - v31: COFF archive thin/SYM64 handling + import object variants, TE entrypoint file offsets + mapping, and load-config truncation tracking.
+- v32: Manifest edge metadata (supported OS/longPath/active code page), debug exception summaries, and richer overlay notes.
 
 ## Current Coverage Map (auto-generated)
 
@@ -182,17 +183,17 @@ Status legend:
 | TLS | `full` | Callbacks + raw data mapping, hash/preview, template sizing + index mapping. |
 | Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation. |
 | Exception directory | `full` | AMD64/ARM64/ARM32/IA64 decode + range validation, x86 SEH. |
-| Resources | `full` | Strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, message tables, RT_VERSION extensions. |
+| Resources | `full` | Strings, dialogs/menus/toolbars, manifests/MUI edge fields, icons/cursors/bitmaps, message tables, RT_VERSION extensions. |
 | Resources (extended) | `full` | Fonts/fontdir, rcdata format detection, dlginit, animated cursor/icon. |
-| Debug directory | `full` | CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, embedded PDB, SPGO, PDB hash + raw fallback. |
+| Debug directory | `full` | CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, embedded PDB, SPGO, PDB hash + exception summaries + raw fallback. |
 | PDB/MSF streams | `full` | MSF directory + PDB signature/age, DBI/TPI/GSI/publics + symbol record parsing. |
 | CLR/.NET | `full` | Metadata tables, token cross-refs, signature decode, method body IL sizes + EH clauses, R2R header. |
 | Certificates/Authenticode | `full` | PKCS7 signers/timestamps, CT hints/logs, WinTrust (Windows), trust-store status + policy evaluation. |
 | COFF objects | `full` | Symbols/aux/relocs/line numbers, COMDAT selection hints. |
 | COFF archives/import libs | `full` | Archive headers, longnames, thin/SYM64 support, import object variants. |
 | UEFI TE images | `full` | Header/sections, base relocations, entrypoint/base-of-code file offsets + mapping checks. |
-| Overlay containers | `full` | ZIP/RAR4/5/7z container parsing. |
-| Rich header | `full` | Toolchain signature summaries. |
+| Overlay containers | `full` | ZIP/RAR4/5/7z container parsing + encoded-header method notes. |
+| Rich header | `full` | Toolchain signature summaries + extended product mapping. |
 
 ### Load-Config matrix (Win8→Win11)
 The parser records a version hint based on which field groups are present and preserves any trailing bytes beyond the known layout.

@@ -563,7 +563,27 @@ namespace PECoff
             { 0x00E6, "Linker (10.00)" },
             { 0x00E7, "Cvtomf (10.00)" },
             { 0x00E8, "Cvtres (10.00)" },
-            { 0x00E9, "Cvtpgd (10.00)" }
+            { 0x00E9, "Cvtpgd (10.00)" },
+            { 0x00EA, "Linker (11.00)" },
+            { 0x00EB, "Cvtomf (11.00)" },
+            { 0x00EC, "Cvtres (11.00)" },
+            { 0x00ED, "Cvtpgd (11.00)" },
+            { 0x00EE, "Linker (12.00)" },
+            { 0x00EF, "Cvtomf (12.00)" },
+            { 0x00F0, "Cvtres (12.00)" },
+            { 0x00F1, "Cvtpgd (12.00)" },
+            { 0x00F2, "Linker (13.00)" },
+            { 0x00F3, "Cvtomf (13.00)" },
+            { 0x00F4, "Cvtres (13.00)" },
+            { 0x00F5, "Cvtpgd (13.00)" },
+            { 0x00F6, "Linker (14.00)" },
+            { 0x00F7, "Cvtomf (14.00)" },
+            { 0x00F8, "Cvtres (14.00)" },
+            { 0x00F9, "Cvtpgd (14.00)" },
+            { 0x00FA, "Linker (15.00)" },
+            { 0x00FB, "Cvtomf (15.00)" },
+            { 0x00FC, "Cvtres (15.00)" },
+            { 0x00FD, "Cvtpgd (15.00)" }
         };
 
         private static readonly byte[] Msf70Signature = Encoding.ASCII.GetBytes("Microsoft C/C++ MSF 7.00\r\n\u001ADS\0\0\0");
@@ -7466,7 +7486,11 @@ namespace PECoff
             if (methodId.Length == 1 && methodId[0] == 0x00)
             {
                 decodedHeader = packed;
-                notes = "EncodedHeader decoded via copy";
+                notes = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "EncodedHeader decoded via copy (pack={0}, unpack={1})",
+                    packSize,
+                    unpackSize);
                 return true;
             }
 
@@ -7474,7 +7498,12 @@ namespace PECoff
             {
                 if (SevenZipLzmaDecoder.TryDecodeLzma(packed, properties, unpackSize, out decodedHeader))
                 {
-                    notes = "EncodedHeader decoded via LZMA";
+                    notes = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "EncodedHeader decoded via {0} (pack={1}, unpack={2})",
+                        methodName,
+                        packSize,
+                        unpackSize);
                     return true;
                 }
 
@@ -7486,7 +7515,12 @@ namespace PECoff
             {
                 if (SevenZipLzmaDecoder.TryDecodeLzma2(packed, properties, unpackSize, out decodedHeader))
                 {
-                    notes = "EncodedHeader decoded via LZMA2";
+                    notes = string.Format(
+                        CultureInfo.InvariantCulture,
+                        "EncodedHeader decoded via {0} (pack={1}, unpack={2})",
+                        methodName,
+                        packSize,
+                        unpackSize);
                     return true;
                 }
 
@@ -11415,6 +11449,18 @@ namespace PECoff
             {
                 details = AppendNote(details, "uiLanguage=" + schema.UiLanguage);
             }
+            if (!string.IsNullOrWhiteSpace(schema.LongPathAware))
+            {
+                details = AppendNote(details, "longPathAware=" + schema.LongPathAware);
+            }
+            if (!string.IsNullOrWhiteSpace(schema.ActiveCodePage))
+            {
+                details = AppendNote(details, "activeCodePage=" + schema.ActiveCodePage);
+            }
+            if (schema.SupportedOsGuids.Count > 0)
+            {
+                details = AppendNote(details, "supportedOS=" + string.Join(",", schema.SupportedOsGuids));
+            }
             if (!string.IsNullOrWhiteSpace(schema.AssemblyIdentityName))
             {
                 details = AppendNote(details, "assembly=" + schema.AssemblyIdentityName);
@@ -13140,10 +13186,24 @@ namespace PECoff
                 string dpiAwareness = dpiAwarenessElement?.Value ?? string.Empty;
                 XElement uiLanguageElement = FindFirstElement(root, "uiLanguage");
                 string uiLanguage = uiLanguageElement?.Value ?? string.Empty;
+                XElement longPathAwareElement = FindFirstElement(root, "longPathAware");
+                string longPathAware = longPathAwareElement?.Value ?? string.Empty;
+                XElement activeCodePageElement = FindFirstElement(root, "activeCodePage");
+                string activeCodePage = activeCodePageElement?.Value ?? string.Empty;
+
+                string[] supportedOs = root
+                    .Descendants()
+                    .Where(element => string.Equals(element.Name.LocalName, "supportedOS", StringComparison.OrdinalIgnoreCase))
+                    .Select(element => element.Attribute("Id")?.Value ?? element.Attribute("id")?.Value ?? string.Empty)
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
 
                 dpiAware = dpiAware?.Trim() ?? string.Empty;
                 dpiAwareness = dpiAwareness?.Trim() ?? string.Empty;
                 uiLanguage = uiLanguage?.Trim() ?? string.Empty;
+                longPathAware = longPathAware?.Trim() ?? string.Empty;
+                activeCodePage = activeCodePage?.Trim() ?? string.Empty;
 
                 List<string> validationMessages = new List<string>();
                 if (!string.Equals(rootElement, "assembly", StringComparison.OrdinalIgnoreCase))
@@ -13179,6 +13239,9 @@ namespace PECoff
                     dpiAware,
                     dpiAwareness,
                     uiLanguage,
+                    supportedOs,
+                    longPathAware,
+                    activeCodePage,
                     validationMessages.Count == 0,
                     validationMessages.ToArray());
                 return true;
@@ -17298,6 +17361,7 @@ namespace PECoff
                 DebugBorlandInfo borland = null;
                 DebugReservedInfo reserved = null;
                 DebugRawInfo fixup = null;
+                DebugExceptionInfo exceptionInfo = null;
                 DebugMiscInfo misc = null;
                 DebugOmapInfo omapToSource = null;
                 DebugOmapInfo omapFromSource = null;
@@ -17429,6 +17493,14 @@ namespace PECoff
                         fixup = BuildDebugRawInfo(data);
                     }
                 }
+                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Exception && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
+                        TryParseDebugExceptionData(data, out DebugExceptionInfo parsed))
+                    {
+                        exceptionInfo = parsed;
+                    }
+                }
                 else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Misc && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
@@ -17518,6 +17590,7 @@ namespace PECoff
                     borland != null ||
                     reserved != null ||
                     fixup != null ||
+                    exceptionInfo != null ||
                     misc != null ||
                     omapToSource != null ||
                     omapFromSource != null ||
@@ -17560,6 +17633,7 @@ namespace PECoff
                     borland,
                     reserved,
                     fixup,
+                    exceptionInfo,
                     misc,
                     omapToSource,
                     omapFromSource,
@@ -17703,6 +17777,32 @@ namespace PECoff
 
             info = new DebugMiscInfo(dataType, length, isUnicode, payload);
             return true;
+        }
+
+        private static bool TryParseDebugExceptionData(byte[] data, out DebugExceptionInfo info)
+        {
+            info = null;
+            if (data == null || data.Length < 4)
+            {
+                return false;
+            }
+
+            bool aligned = (data.Length % 4) == 0;
+            int count = data.Length / 4;
+            int sampleCount = Math.Min(count, 16);
+            uint[] samples = new uint[sampleCount];
+            for (int i = 0; i < sampleCount; i++)
+            {
+                samples[i] = ReadUInt32(data, i * 4);
+            }
+
+            info = new DebugExceptionInfo(count, aligned, samples);
+            return true;
+        }
+
+        internal static bool TryParseDebugExceptionDataForTest(byte[] data, out DebugExceptionInfo info)
+        {
+            return TryParseDebugExceptionData(data, out info);
         }
 
         private static bool TryParseOmapData(byte[] data, out DebugOmapInfo info)

@@ -2069,6 +2069,16 @@ namespace PE_FileInspector
                     {
                         sb.AppendLine("    CLSID: " + entry.Clsid.ClassId.ToString());
                     }
+                    if (entry.Exception != null)
+                    {
+                        sb.AppendLine("    Exception: Entries=" + entry.Exception.EntryCount.ToString(CultureInfo.InvariantCulture) +
+                                      " | Aligned=" + entry.Exception.IsAligned.ToString(CultureInfo.InvariantCulture));
+                        if (entry.Exception.SampleRvas.Count > 0)
+                        {
+                            sb.AppendLine("      Sample: " + string.Join(", ", entry.Exception.SampleRvas.Take(8)
+                                .Select(value => "0x" + value.ToString("X8", CultureInfo.InvariantCulture))));
+                        }
+                    }
                     if (entry.Other != null)
                     {
                         sb.AppendLine("    Raw: " + entry.Other.DataLength.ToString(CultureInfo.InvariantCulture) +

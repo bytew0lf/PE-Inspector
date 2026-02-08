@@ -21,4 +21,12 @@ public class RichHeaderTests
         Assert.Contains("Linker", toolchain.Tools);
         Assert.Contains("Cvtres", toolchain.Tools);
     }
+
+    [Fact]
+    public void RichHeader_Decode_Extended_Product_Names()
+    {
+        string name = PECOFF.DecodeRichProductNameForTest(0x00F6);
+        Assert.Contains("Linker", name);
+        Assert.Contains("14.00", name);
+    }
 }

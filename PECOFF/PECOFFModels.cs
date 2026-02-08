@@ -352,6 +352,20 @@ namespace PECoff
         }
     }
 
+    public sealed class DebugExceptionInfo
+    {
+        public int EntryCount { get; }
+        public bool IsAligned { get; }
+        public IReadOnlyList<uint> SampleRvas { get; }
+
+        public DebugExceptionInfo(int entryCount, bool isAligned, uint[] sampleRvas)
+        {
+            EntryCount = entryCount < 0 ? 0 : entryCount;
+            IsAligned = isAligned;
+            SampleRvas = Array.AsReadOnly(sampleRvas ?? Array.Empty<uint>());
+        }
+    }
+
     public sealed class DebugPogoEntryInfo
     {
         public uint Rva { get; }
@@ -800,6 +814,7 @@ namespace PECoff
         public DebugBorlandInfo Borland { get; }
         public DebugReservedInfo Reserved { get; }
         public DebugRawInfo Fixup { get; }
+        public DebugExceptionInfo Exception { get; }
         public DebugMiscInfo Misc { get; }
         public DebugOmapInfo OmapToSource { get; }
         public DebugOmapInfo OmapFromSource { get; }
@@ -832,6 +847,7 @@ namespace PECoff
             DebugBorlandInfo borland,
             DebugReservedInfo reserved,
             DebugRawInfo fixup,
+            DebugExceptionInfo exception,
             DebugMiscInfo misc,
             DebugOmapInfo omapToSource,
             DebugOmapInfo omapFromSource,
@@ -863,6 +879,7 @@ namespace PECoff
             Borland = borland;
             Reserved = reserved;
             Fixup = fixup;
+            Exception = exception;
             Misc = misc;
             OmapToSource = omapToSource;
             OmapFromSource = omapFromSource;
@@ -4473,6 +4490,9 @@ namespace PECoff
         public string DpiAware { get; }
         public string DpiAwareness { get; }
         public string UiLanguage { get; }
+        public IReadOnlyList<string> SupportedOsGuids { get; }
+        public string LongPathAware { get; }
+        public string ActiveCodePage { get; }
         public bool IsValid { get; }
         public IReadOnlyList<string> ValidationMessages { get; }
 
@@ -4490,6 +4510,9 @@ namespace PECoff
             string dpiAware,
             string dpiAwareness,
             string uiLanguage,
+            string[] supportedOsGuids,
+            string longPathAware,
+            string activeCodePage,
             bool isValid,
             string[] validationMessages)
         {
@@ -4506,6 +4529,9 @@ namespace PECoff
             DpiAware = dpiAware ?? string.Empty;
             DpiAwareness = dpiAwareness ?? string.Empty;
             UiLanguage = uiLanguage ?? string.Empty;
+            SupportedOsGuids = Array.AsReadOnly(supportedOsGuids ?? Array.Empty<string>());
+            LongPathAware = longPathAware ?? string.Empty;
+            ActiveCodePage = activeCodePage ?? string.Empty;
             IsValid = isValid;
             ValidationMessages = Array.AsReadOnly(validationMessages ?? Array.Empty<string>());
         }
@@ -4513,7 +4539,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 31;
+        public const int CurrentSchemaVersion = 32;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }

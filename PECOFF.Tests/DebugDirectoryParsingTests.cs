@@ -151,4 +151,19 @@ public class DebugDirectoryParsingTests
         Assert.True(info.Entries[0].HasSeh);
         Assert.Equal((byte)2, info.Entries[0].FrameType);
     }
+
+    [Fact]
+    public void ExceptionData_Parses_Rva_Samples()
+    {
+        byte[] data = new byte[12];
+        BitConverter.GetBytes(0x1000u).CopyTo(data, 0);
+        BitConverter.GetBytes(0x2000u).CopyTo(data, 4);
+        BitConverter.GetBytes(0x3000u).CopyTo(data, 8);
+
+        bool parsed = PECOFF.TryParseDebugExceptionDataForTest(data, out DebugExceptionInfo info);
+        Assert.True(parsed);
+        Assert.Equal(3, info.EntryCount);
+        Assert.True(info.IsAligned);
+        Assert.Equal((uint)0x1000, info.SampleRvas[0]);
+    }
 }
