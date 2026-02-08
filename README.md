@@ -2,7 +2,7 @@
 # PE-Inspector
 ![Build](https://github.com/bytew0lf/PE-Inspector/actions/workflows/ci.yml/badge.svg?branch=main)
 
-Extracts information from a PECOFF file.
+Extracts information from a PECOFF file. 
 
 Just execute the PE-Inspector like this:
 
