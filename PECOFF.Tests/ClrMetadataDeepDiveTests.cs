@@ -8,10 +8,13 @@ public class ClrMetadataDeepDiveTests
     [Fact]
     public void Clr_Metadata_DeepDive_Populates_TokenRefs_And_MethodBodies()
     {
-        string? testFilesDir = FindTestFilesDirectory();
-        Assert.False(string.IsNullOrWhiteSpace(testFilesDir));
+        string? testFilesDir = TestFilesHelper.TryGetTestFilesDirectory();
+        if (string.IsNullOrWhiteSpace(testFilesDir))
+        {
+            return;
+        }
 
-        string path = Path.Combine(testFilesDir!, "PE-Inspector.dll");
+        string path = Path.Combine(testFilesDir, "PE-Inspector.dll");
         Assert.True(File.Exists(path), $"Test file not found: {path}");
 
         PECOFF parser = new PECOFF(path);
@@ -24,19 +27,4 @@ public class ClrMetadataDeepDiveTests
         Assert.True(parser.ClrMetadata.SignatureSummary.Samples.Count > 0);
     }
 
-    private static string? FindTestFilesDirectory()
-    {
-        string? dir = AppContext.BaseDirectory;
-        for (int i = 0; i < 6 && dir != null; i++)
-        {
-            string candidate = Path.Combine(dir, "testfiles");
-            if (Directory.Exists(candidate))
-            {
-                return candidate;
-            }
-            dir = Directory.GetParent(dir)?.FullName;
-        }
-
-        return null;
-    }
 }

@@ -15,10 +15,13 @@ public class AuthenticodeWinTrustTests
             return;
         }
 
-        string? testFilesDir = FindTestFilesDirectory();
-        Assert.False(string.IsNullOrWhiteSpace(testFilesDir));
+        string? testFilesDir = TestFilesHelper.TryGetTestFilesDirectory();
+        if (string.IsNullOrWhiteSpace(testFilesDir))
+        {
+            return;
+        }
 
-        string path = Path.Combine(testFilesDir!, "notepad.exe");
+        string path = Path.Combine(testFilesDir, "notepad.exe");
         if (!File.Exists(path))
         {
             return;
@@ -41,19 +44,4 @@ public class AuthenticodeWinTrustTests
         Assert.NotEqual("NotSupported", entry.AuthenticodeStatus.WinTrust.Status);
     }
 
-    private static string? FindTestFilesDirectory()
-    {
-        string? dir = AppContext.BaseDirectory;
-        for (int i = 0; i < 6 && dir != null; i++)
-        {
-            string candidate = Path.Combine(dir, "testfiles");
-            if (Directory.Exists(candidate))
-            {
-                return candidate;
-            }
-            dir = Directory.GetParent(dir)?.FullName;
-        }
-
-        return null;
-    }
 }

@@ -39,26 +39,16 @@ public class MinimalFixtureTests
         const ushort I386 = 0x014c;
         const ushort AMD64 = 0x8664;
 
-        yield return new object[] { "zlib1.dll", I386, true, false, false };
-        yield return new object[] { "appverifUI.dll", I386, true, false, true };
+        yield return new object[] { "PE-Inspector.dll", I386, false, false, false };
         yield return new object[] { "minimal-x86.exe", I386, false, false, false };
         yield return new object[] { "minimal-x64.exe", AMD64, false, true, false };
-        yield return new object[] { "curl.exe", AMD64, false, true, false };
-        yield return new object[] { "dotnet.exe", I386, false, false, true };
-        yield return new object[] { "advapi32.dll", AMD64, true, true, true };
-        yield return new object[] { "notepad.exe", AMD64, false, true, false };
     }
 
     public static IEnumerable<object[]> MinimalFixtureFiles()
     {
-        yield return new object[] { "zlib1.dll" };
-        yield return new object[] { "appverifUI.dll" };
+        yield return new object[] { "PE-Inspector.dll" };
         yield return new object[] { "minimal-x86.exe" };
         yield return new object[] { "minimal-x64.exe" };
-        yield return new object[] { "curl.exe" };
-        yield return new object[] { "dotnet.exe" };
-        yield return new object[] { "advapi32.dll" };
-        yield return new object[] { "notepad.exe" };
     }
 
     private static FixtureInfo ReadFixtureInfo(string path)

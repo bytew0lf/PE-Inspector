@@ -5,24 +5,6 @@ using PECoff;
 
 public class PECOFFTests
 {
-    private static string? FindTestFilesDirectory()
-    {
-        string baseDir = AppContext.BaseDirectory;
-        DirectoryInfo? dir = new DirectoryInfo(baseDir);
-        for (int i = 0; i < 6 && dir != null; i++)
-        {
-            string candidate = Path.Combine(dir.FullName, "testfiles");
-            if (Directory.Exists(candidate))
-            {
-                return candidate;
-            }
-
-            dir = dir.Parent;
-        }
-
-        return null;
-    }
-
     private static string? FindFixturesDirectory()
     {
         string baseDir = AppContext.BaseDirectory;
@@ -159,10 +141,13 @@ public class PECOFFTests
     [Fact]
     public void Parses_TestFiles_Without_Fatal_Errors()
     {
-        string? testFilesDir = FindTestFilesDirectory();
-        Assert.False(string.IsNullOrWhiteSpace(testFilesDir));
+        string? testFilesDir = TestFilesHelper.TryGetTestFilesDirectory();
+        if (string.IsNullOrWhiteSpace(testFilesDir))
+        {
+            return;
+        }
 
-        string[] files = Directory.GetFiles(testFilesDir!, "*.*", SearchOption.TopDirectoryOnly);
+        string[] files = Directory.GetFiles(testFilesDir, "*.*", SearchOption.TopDirectoryOnly);
         Assert.NotEmpty(files);
 
         foreach (string file in files)

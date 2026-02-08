@@ -12,7 +12,7 @@ public class LazyParsingTests
         string? fixturesDir = FindFixturesDirectory();
         Assert.False(string.IsNullOrWhiteSpace(fixturesDir));
 
-        string path = Path.Combine(fixturesDir!, "minimal", "notepad.exe");
+        string path = Path.Combine(fixturesDir!, "minimal", "PE-Inspector.dll");
         Assert.True(File.Exists(path));
 
         PECOFFOptions options = new PECOFFOptions { LazyParseDataDirectories = true };

@@ -39,7 +39,7 @@ public class OptionsAndCallbackTests
         string? fixtures = FindFixturesDirectory();
         Assert.False(string.IsNullOrWhiteSpace(fixtures));
 
-        string path = Path.Combine(fixtures!, "minimal", "zlib1.dll");
+        string path = Path.Combine(fixtures!, "minimal", "minimal-x86.exe");
         byte[] data = File.ReadAllBytes(path);
         int fileAlignmentOffset = FindFileAlignmentOffset(data);
         Assert.True(fileAlignmentOffset >= 0);

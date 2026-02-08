@@ -101,7 +101,7 @@ Optional parameters:
     dotnet run --project tools/JsonSnapshotGenerator/JsonSnapshotGenerator.csproj -- --fixtures <path> --output <path>
 
 ### Minimal fixtures
-Small deterministic fixtures live in `PECOFF.Tests/Fixtures/minimal/` and are used for fast metadata sanity checks and option-policy coverage. The folder includes a handful of copied binaries from `testfiles` plus two synthetic stubs (`minimal-x86.exe`, `minimal-x64.exe`) that keep edge-case parsing stable across environments.
+Small deterministic fixtures live in `PECOFF.Tests/Fixtures/minimal/` and are used for fast metadata sanity checks and option-policy coverage. The folder includes a compact `PE-Inspector.dll` sample plus two synthetic stubs (`minimal-x86.exe`, `minimal-x64.exe`) that keep edge-case parsing stable across environments.
 
 ### Build scripts
 Self-contained single-file builds are available via the scripts in `scripts/`.

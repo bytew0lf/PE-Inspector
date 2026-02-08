@@ -11,7 +11,7 @@ public class ImportExportFuzzTests
         string? fixtures = FindFixturesDirectory();
         Assert.False(string.IsNullOrWhiteSpace(fixtures));
 
-        string basePath = Path.Combine(fixtures!, "minimal", "zlib1.dll");
+        string basePath = Path.Combine(fixtures!, "minimal", "minimal-x86.exe");
         byte[] baseData = File.ReadAllBytes(basePath);
         Assert.True(TryGetDataDirectoryOffset(baseData, out int dataDirOffset));
 

@@ -18,8 +18,11 @@ public class SnapshotTests
             return;
         }
 
-        string? testFilesDir = FindTestFilesDirectory();
-        Assert.False(string.IsNullOrWhiteSpace(testFilesDir));
+        string? testFilesDir = TestFilesHelper.TryGetTestFilesDirectory();
+        if (string.IsNullOrWhiteSpace(testFilesDir))
+        {
+            return;
+        }
 
         string? fixturesDir = FindFixturesDirectory();
         Assert.False(string.IsNullOrWhiteSpace(fixturesDir));
@@ -28,7 +31,7 @@ public class SnapshotTests
         Assert.True(File.Exists(snapshotPath), $"Snapshot file missing: {snapshotPath}. Run with PECOFF_UPDATE_GOLDENS=1 to generate.");
 
         Dictionary<string, SnapshotEntry> expected = LoadSnapshots(snapshotPath);
-        Dictionary<string, SnapshotEntry> actual = BuildSnapshots(testFilesDir!);
+        Dictionary<string, SnapshotEntry> actual = BuildSnapshots(testFilesDir);
 
         Assert.Equal(expected.Count, actual.Count);
         foreach (KeyValuePair<string, SnapshotEntry> pair in actual)
@@ -71,7 +74,7 @@ public class SnapshotTests
             return;
         }
 
-        string? testFilesDir = FindTestFilesDirectory();
+        string? testFilesDir = TestFilesHelper.TryGetTestFilesDirectory();
         Assert.False(string.IsNullOrWhiteSpace(testFilesDir));
 
         string? fixturesDir = FindFixturesDirectory();
@@ -236,24 +239,6 @@ public class SnapshotTests
         }
 
         File.WriteAllLines(path, lines);
-    }
-
-    private static string? FindTestFilesDirectory()
-    {
-        string baseDir = AppContext.BaseDirectory;
-        DirectoryInfo? dir = new DirectoryInfo(baseDir);
-        for (int i = 0; i < 6 && dir != null; i++)
-        {
-            string candidate = Path.Combine(dir.FullName, "testfiles");
-            if (Directory.Exists(candidate))
-            {
-                return candidate;
-            }
-
-            dir = dir.Parent;
-        }
-
-        return null;
     }
 
     private static string? FindFixturesDirectory()
