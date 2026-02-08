@@ -1,6 +1,6 @@
 
 # PE-Inspector
-![Build](https://github.com/bytew0lf/PE-Inspector/actions/workflows/ci.yml/badge.svg?branch=main)
+[![Build](https://github.com/bytew0lf/PE-Inspector/actions/workflows/ci.yml/badge.svg)](https://github.com/bytew0lf/PE-Inspector/actions/workflows/ci.yml)
 
 Extracts information from a PECOFF file. 
 
