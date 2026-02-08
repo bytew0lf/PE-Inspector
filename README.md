@@ -160,7 +160,7 @@ High-level PE/COFF structures and current coverage:
 - Resources (extended): implemented (fonts/fontdir, rcdata with format detection including protobuf/flatbuffers/unity bundles, dlginit, animated cursor/icon)
 - Debug directory: implemented (CodeView/PDB, MSF stream directory + PDB signature/age, COFF, POGO, VC_FEATURE, EX_DLLCHARACTERISTICS, FPO, MISC, OMAP, REPRO, ILTCG, MPX, CLSID, FIXUP, Borland, reserved, embedded portable PDB, SPGO, PDB hash)
 - Relocations: implemented (summaries + anomalies, machine-aware base relocation mapping incl. RISC-V/LoongArch)
-- Exception directory: implemented (unwind + validation, AMD64/ARM64 full decode, ARM32 opcode decode, IA64 descriptor summaries, x86 SEH handler table)
+- Exception directory: implemented (unwind + validation, AMD64/ARM64 full decode, ARM32 opcode decode + length checks, IA64 descriptor summaries, x86 SEH handler table)
 - TLS: implemented (callbacks + raw data mapping/alignment, hash/preview, template sizing/zero-fill notes)
 - Load config: implemented (guard flags, guard tables, code integrity, enclave config + imports, CHPE, dynamic reloc tables, SEH handler metadata + entries, versioned layout + trailing fields)
 
@@ -178,7 +178,7 @@ The parser records a version hint based on which field groups are present and pr
 - COFF objects: header/sections (incl. bigobj) + symbols/line numbers/relocations
 - COFF archives/import libraries: archive headers, symbol table summary, longnames, import objects
 - UEFI TE images: header + sections
-- COFF symbols/line numbers/string table: implemented when present (aux symbol decoding + weak extern defaults)
+- COFF symbols/line numbers/string table: implemented when present (aux symbol decoding incl. file/section/function/weak extern/CLR token + weak extern defaults)
 
 ## Contents of the output file
 The CSV-Output currently contains the following values for each analyzed file.

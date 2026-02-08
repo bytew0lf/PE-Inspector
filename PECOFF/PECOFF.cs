@@ -3911,6 +3911,33 @@ namespace PECoff
                 return results.ToArray();
             }
 
+            if (storageClass == 0x6B && auxData.Length >= CoffSymbolSize) // CLR_TOKEN
+            {
+                uint token = ReadUInt32(auxData, 0);
+                results.Add(new CoffAuxSymbolInfo(
+                    "ClrToken",
+                    string.Empty,
+                    token,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    string.Empty,
+                    string.Empty,
+                    0,
+                    0,
+                    string.Empty,
+                    string.Empty,
+                    BuildHexPreview(auxData, 32)));
+                return results.ToArray();
+            }
+
             for (int i = 0; i < totalAux; i++)
             {
                 int offset = i * CoffSymbolSize;
@@ -10514,6 +10541,11 @@ namespace PECoff
             return GetRelocationTypeName((MachineTypes)machine, type);
         }
 
+        internal static string GetCoffRelocationTypeNameForTest(ushort machine, ushort type)
+        {
+            return GetCoffRelocationTypeName((MachineTypes)machine, type);
+        }
+
         internal static bool IsRelocationTypeReservedForTest(ushort machine, int type)
         {
             return IsRelocationTypeReserved((MachineTypes)machine, type);
@@ -10527,6 +10559,16 @@ namespace PECoff
         internal static bool IsRelocationTypeReservedForTest(int type)
         {
             return IsRelocationTypeReserved(MachineTypes.IMAGE_FILE_MACHINE_UNKNOWN, type);
+        }
+
+        internal static CoffAuxSymbolInfo[] DecodeCoffAuxSymbolsForTest(
+            string name,
+            ushort type,
+            byte storageClass,
+            byte auxCount,
+            byte[] auxData)
+        {
+            return DecodeCoffAuxSymbols(name ?? string.Empty, type, storageClass, auxCount, auxData);
         }
 
         private static bool IsLikelyText(string text)
@@ -13794,6 +13836,7 @@ namespace PECoff
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_ARM:
                 case MachineTypes.IMAGE_FILE_MACHINE_ARMNT:
+                case MachineTypes.IMAGE_FILE_MACHINE_THUMB:
                     switch (type)
                     {
                         case 0x0000: return "ABSOLUTE";
@@ -14299,6 +14342,14 @@ namespace PECoff
                     if (TryParseArm32UnwindInfoDetail(func, buffer, out Arm32UnwindInfoDetail detail))
                     {
                         _arm32UnwindInfoDetails.Add(detail);
+                        uint functionSize = func.EndAddress > func.BeginAddress
+                            ? func.EndAddress - func.BeginAddress
+                            : 0;
+                        if (functionSize > 0 && detail.FunctionLengthBytes > functionSize)
+                        {
+                            Warn(ParseIssueCategory.Sections, "ARM unwind function length exceeds function size.");
+                        }
+
                         if (!detail.ReservedBitsValid)
                         {
                             Warn(ParseIssueCategory.Sections, "ARM unwind header has non-zero reserved bits.");
