@@ -2004,6 +2004,26 @@ namespace PECoff
             }
         }
 
+        private readonly List<ResourceIconInfo> _resourceIcons = new List<ResourceIconInfo>();
+        public ResourceIconInfo[] ResourceIcons
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceIcons.ToArray();
+            }
+        }
+
+        private readonly List<ResourceCursorInfo> _resourceCursors = new List<ResourceCursorInfo>();
+        public ResourceCursorInfo[] ResourceCursors
+        {
+            get
+            {
+                EnsureResourcesParsed();
+                return _resourceCursors.ToArray();
+            }
+        }
+
         private readonly List<ResourceCursorGroupInfo> _resourceCursorGroups = new List<ResourceCursorGroupInfo>();
         public ResourceCursorGroupInfo[] ResourceCursorGroups
         {
@@ -3567,6 +3587,8 @@ namespace PECoff
                 string typeName = DecodeCoffSymbolTypeName(type);
                 byte storageClass = entry[16];
                 byte auxCount = entry[17];
+                string storageClassName = GetCoffStorageClassName(storageClass);
+                string scopeName = GetCoffSymbolScopeName(sectionNumber, storageClass);
 
                 string sectionName = string.Empty;
                 if (sectionNumber > 0 && sectionNumber <= sections.Count)
@@ -3599,6 +3621,8 @@ namespace PECoff
                     type,
                     typeName,
                     storageClass,
+                    storageClassName,
+                    scopeName,
                     auxCount,
                     auxData,
                     auxSymbols));
@@ -3782,6 +3806,9 @@ namespace PECoff
                     0,
                     string.Empty,
                     string.Empty,
+                    false,
+                    true,
+                    string.Empty,
                     0,
                     0,
                     string.Empty,
@@ -3813,6 +3840,9 @@ namespace PECoff
                     0,
                     string.Empty,
                     string.Empty,
+                    false,
+                    true,
+                    string.Empty,
                     0,
                     0,
                     string.Empty,
@@ -3843,6 +3873,9 @@ namespace PECoff
                     0,
                     string.Empty,
                     string.Empty,
+                    false,
+                    true,
+                    string.Empty,
                     0,
                     0,
                     string.Empty,
@@ -3859,6 +3892,17 @@ namespace PECoff
                 uint checksum = ReadUInt32(auxData, 8);
                 ushort sectionNumber = ReadUInt16(auxData, 12);
                 byte selection = auxData[14];
+                bool isComdat = selection != 0;
+                bool comdatSelectionValid = selection <= 7;
+                string comdatNote = string.Empty;
+                if (isComdat && !comdatSelectionValid)
+                {
+                    comdatNote = "Invalid COMDAT selection.";
+                }
+                else if (selection == 5 && sectionNumber == 0)
+                {
+                    comdatNote = "Associative COMDAT missing section index.";
+                }
                 results.Add(new CoffAuxSymbolInfo(
                     "SectionDefinition",
                     string.Empty,
@@ -3875,6 +3919,9 @@ namespace PECoff
                     selection,
                     GetComdatSelectionName(selection),
                     string.Empty,
+                    isComdat,
+                    comdatSelectionValid,
+                    comdatNote,
                     0,
                     0,
                     string.Empty,
@@ -3903,6 +3950,9 @@ namespace PECoff
                     0,
                     string.Empty,
                     string.Empty,
+                    false,
+                    true,
+                    string.Empty,
                     tagIndex,
                     characteristics,
                     GetWeakExternalCharacteristicsName(characteristics),
@@ -3929,6 +3979,9 @@ namespace PECoff
                     0,
                     0,
                     string.Empty,
+                    string.Empty,
+                    false,
+                    true,
                     string.Empty,
                     0,
                     0,
@@ -3958,6 +4011,9 @@ namespace PECoff
                     0,
                     0,
                     string.Empty,
+                    string.Empty,
+                    false,
+                    true,
                     string.Empty,
                     0,
                     0,
@@ -3993,6 +4049,7 @@ namespace PECoff
                 {
                     CoffAuxSymbolInfo info = symbol.AuxSymbols[j];
                     string associatedSectionName = info.AssociatedSectionName;
+                    string comdatNote = info.ComdatSelectionNote;
                     if (info != null &&
                         string.Equals(info.Kind, "SectionDefinition", StringComparison.OrdinalIgnoreCase) &&
                         info.Selection == 5 &&
@@ -4006,6 +4063,16 @@ namespace PECoff
                             associatedSectionName = resolvedSection;
                             updated = true;
                         }
+                    }
+
+                    if (info != null &&
+                        info.IsComdat &&
+                        info.Selection == 5 &&
+                        string.IsNullOrEmpty(associatedSectionName) &&
+                        string.IsNullOrEmpty(comdatNote))
+                    {
+                        comdatNote = "Associative COMDAT missing section.";
+                        updated = true;
                     }
 
                     if (info != null &&
@@ -4031,6 +4098,9 @@ namespace PECoff
                                 info.Selection,
                                 info.SelectionName,
                                 associatedSectionName,
+                                info.IsComdat,
+                                info.ComdatSelectionValid,
+                                comdatNote,
                                 info.WeakTagIndex,
                                 info.WeakCharacteristics,
                                 info.WeakCharacteristicsName,
@@ -4058,6 +4128,9 @@ namespace PECoff
                                     info.Selection,
                                     info.SelectionName,
                                     associatedSectionName,
+                                    info.IsComdat,
+                                    info.ComdatSelectionValid,
+                                    comdatNote,
                                     info.WeakTagIndex,
                                     info.WeakCharacteristics,
                                     info.WeakCharacteristicsName,
@@ -4091,6 +4164,9 @@ namespace PECoff
                                 info.Selection,
                                 info.SelectionName,
                                 associatedSectionName,
+                                info.IsComdat,
+                                info.ComdatSelectionValid,
+                                comdatNote,
                                 info.WeakTagIndex,
                                 info.WeakCharacteristics,
                                 info.WeakCharacteristicsName,
@@ -4116,6 +4192,8 @@ namespace PECoff
                         symbol.Type,
                         symbol.TypeName,
                         symbol.StorageClass,
+                        symbol.StorageClassName,
+                        symbol.ScopeName,
                         symbol.AuxSymbolCount,
                         symbol.AuxData,
                         aux);
@@ -4306,6 +4384,8 @@ namespace PECoff
                     }
                 }
 
+                string storageClassName = GetCoffStorageClassName(storageClass);
+                string scopeName = GetCoffSymbolScopeName(sectionNumber, storageClass);
                 CoffAuxSymbolInfo[] auxSymbols = DecodeCoffAuxSymbols(name, type, storageClass, auxCount, auxData);
 
                 parsed.Add(new CoffSymbolInfo(
@@ -4317,6 +4397,8 @@ namespace PECoff
                     type,
                     typeName,
                     storageClass,
+                    storageClassName,
+                    scopeName,
                     auxCount,
                     auxData,
                     auxSymbols));
@@ -4941,6 +5023,8 @@ namespace PECoff
                 _resourceManifests.ToArray(),
                 _resourceLocaleCoverage.ToArray(),
                 _resourceBitmaps.ToArray(),
+                _resourceIcons.ToArray(),
+                _resourceCursors.ToArray(),
                 _resourceCursorGroups.ToArray(),
                 _resourceFonts.ToArray(),
                 _resourceFontDirectories.ToArray(),
@@ -8654,6 +8738,74 @@ namespace PECoff
             }
         }
 
+        private void DecodeResourceIcons(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceIcons.Clear();
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.Icon)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] owned))
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> data = owned.Length > 0 ? owned : dataSpan;
+                if (TryParseIconResource(data, out int width, out int height, out ushort bitCount, out bool isPng, out uint pngWidth, out uint pngHeight))
+                {
+                    _resourceIcons.Add(new ResourceIconInfo(
+                        entry.NameId,
+                        entry.LanguageId,
+                        width,
+                        height,
+                        bitCount,
+                        isPng,
+                        pngWidth,
+                        pngHeight,
+                        entry.Size));
+                }
+            }
+        }
+
+        private void DecodeResourceCursors(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _resourceCursors.Clear();
+            for (int i = 0; i < _resources.Count; i++)
+            {
+                ResourceEntry entry = _resources[i];
+                if (entry.TypeId != (uint)ResourceType.Cursor)
+                {
+                    continue;
+                }
+
+                if (!TryGetResourceDataSpan(resourceBuffer, resourceBaseRva, entry.DataRva, entry.Size, sections, out ReadOnlySpan<byte> dataSpan, out byte[] owned))
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<byte> data = owned.Length > 0 ? owned : dataSpan;
+                if (TryParseCursorResource(data, out ushort hotspotX, out ushort hotspotY, out int width, out int height, out ushort bitCount, out bool isPng, out uint pngWidth, out uint pngHeight))
+                {
+                    _resourceCursors.Add(new ResourceCursorInfo(
+                        entry.NameId,
+                        entry.LanguageId,
+                        hotspotX,
+                        hotspotY,
+                        width,
+                        height,
+                        bitCount,
+                        isPng,
+                        pngWidth,
+                        pngHeight,
+                        entry.Size));
+                }
+            }
+        }
+
         private void DecodeResourceFonts(ReadOnlySpan<byte> resourceBuffer, uint resourceBaseRva, List<IMAGE_SECTION_HEADER> sections)
         {
             _resourceFonts.Clear();
@@ -8888,6 +9040,8 @@ namespace PECoff
             DecodeResourceIconGroups(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceCursorGroups(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceBitmaps(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceIcons(resourceSpan, resourceSection.VirtualAddress, sections);
+            DecodeResourceCursors(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceFonts(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceFontDirectories(resourceSpan, resourceSection.VirtualAddress, sections);
             DecodeResourceDlgInit(resourceSpan, resourceSection.VirtualAddress, sections);
@@ -9531,6 +9685,102 @@ namespace PECoff
             compression = ReadUInt32(data, 16);
             imageSize = ReadUInt32(data, 20);
             return width != 0 && height != 0;
+        }
+
+        private static bool TryParseIconResource(
+            ReadOnlySpan<byte> data,
+            out int width,
+            out int height,
+            out ushort bitCount,
+            out bool isPng,
+            out uint pngWidth,
+            out uint pngHeight)
+        {
+            width = 0;
+            height = 0;
+            bitCount = 0;
+            isPng = false;
+            pngWidth = 0;
+            pngHeight = 0;
+
+            if (data.Length == 0)
+            {
+                return false;
+            }
+
+            if (TryParsePngIcon(data, out uint parsedWidth, out uint parsedHeight))
+            {
+                isPng = true;
+                pngWidth = parsedWidth;
+                pngHeight = parsedHeight;
+                width = (int)parsedWidth;
+                height = (int)parsedHeight;
+                return true;
+            }
+
+            if (TryParseBitmapInfoHeader(data, out int dibWidth, out int dibHeight, out ushort dibBitCount, out uint _compression, out uint _imageSize))
+            {
+                width = dibWidth;
+                height = (dibHeight > 0 && (dibHeight % 2) == 0) ? dibHeight / 2 : dibHeight;
+                bitCount = dibBitCount;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryParseCursorResource(
+            ReadOnlySpan<byte> data,
+            out ushort hotspotX,
+            out ushort hotspotY,
+            out int width,
+            out int height,
+            out ushort bitCount,
+            out bool isPng,
+            out uint pngWidth,
+            out uint pngHeight)
+        {
+            hotspotX = 0;
+            hotspotY = 0;
+            width = 0;
+            height = 0;
+            bitCount = 0;
+            isPng = false;
+            pngWidth = 0;
+            pngHeight = 0;
+
+            if (data.Length < 4)
+            {
+                return false;
+            }
+
+            hotspotX = ReadUInt16(data, 0);
+            hotspotY = ReadUInt16(data, 2);
+            ReadOnlySpan<byte> imageData = data.Slice(4);
+            if (imageData.Length == 0)
+            {
+                return false;
+            }
+
+            if (TryParsePngIcon(imageData, out uint parsedWidth, out uint parsedHeight))
+            {
+                isPng = true;
+                pngWidth = parsedWidth;
+                pngHeight = parsedHeight;
+                width = (int)parsedWidth;
+                height = (int)parsedHeight;
+                return true;
+            }
+
+            if (TryParseBitmapInfoHeader(imageData, out int dibWidth, out int dibHeight, out ushort dibBitCount, out uint _compression, out uint _imageSize))
+            {
+                width = dibWidth;
+                height = (dibHeight > 0 && (dibHeight % 2) == 0) ? dibHeight / 2 : dibHeight;
+                bitCount = dibBitCount;
+                return true;
+            }
+
+            return false;
         }
 
         private static string GetBitmapCompressionName(uint compression)
@@ -10571,6 +10821,16 @@ namespace PECoff
             return DecodeCoffAuxSymbols(name ?? string.Empty, type, storageClass, auxCount, auxData);
         }
 
+        internal static string GetCoffStorageClassNameForTest(byte storageClass)
+        {
+            return GetCoffStorageClassName(storageClass);
+        }
+
+        internal static string GetCoffSymbolScopeNameForTest(short sectionNumber, byte storageClass)
+        {
+            return GetCoffSymbolScopeName(sectionNumber, storageClass);
+        }
+
         private static bool IsLikelyText(string text)
         {
             if (string.IsNullOrWhiteSpace(text))
@@ -11070,6 +11330,30 @@ namespace PECoff
             out uint imageSize)
         {
             return TryParseBitmapInfoHeader(data, out width, out height, out bitCount, out compression, out imageSize);
+        }
+
+        internal static ResourceIconInfo TryParseIconResourceForTest(byte[] data)
+        {
+            if (data == null)
+            {
+                return null;
+            }
+
+            return TryParseIconResource(data, out int width, out int height, out ushort bitCount, out bool isPng, out uint pngWidth, out uint pngHeight)
+                ? new ResourceIconInfo(0, 0, width, height, bitCount, isPng, pngWidth, pngHeight, (uint)data.Length)
+                : null;
+        }
+
+        internal static ResourceCursorInfo TryParseCursorResourceForTest(byte[] data)
+        {
+            if (data == null)
+            {
+                return null;
+            }
+
+            return TryParseCursorResource(data, out ushort hotspotX, out ushort hotspotY, out int width, out int height, out ushort bitCount, out bool isPng, out uint pngWidth, out uint pngHeight)
+                ? new ResourceCursorInfo(0, 0, hotspotX, hotspotY, width, height, bitCount, isPng, pngWidth, pngHeight, (uint)data.Length)
+                : null;
         }
 
         internal static bool TryParseCursorGroupForTest(byte[] groupData, out ResourceCursorGroupInfo group)
@@ -13902,6 +14186,68 @@ namespace PECoff
                 case 6: return "LARGEST";
                 case 7: return "NEWEST";
                 default: return string.Format(CultureInfo.InvariantCulture, "0x{0:X2}", selection);
+            }
+        }
+
+        private static string GetCoffStorageClassName(byte storageClass)
+        {
+            switch (storageClass)
+            {
+                case 0x00: return "NULL";
+                case 0x01: return "AUTOMATIC";
+                case 0x02: return "EXTERNAL";
+                case 0x03: return "STATIC";
+                case 0x04: return "REGISTER";
+                case 0x05: return "EXTERNAL_DEF";
+                case 0x06: return "LABEL";
+                case 0x07: return "UNDEFINED_LABEL";
+                case 0x08: return "MEMBER_OF_STRUCT";
+                case 0x09: return "ARGUMENT";
+                case 0x0A: return "STRUCT_TAG";
+                case 0x0B: return "MEMBER_OF_UNION";
+                case 0x0C: return "UNION_TAG";
+                case 0x0D: return "TYPE_DEFINITION";
+                case 0x0E: return "UNDEFINED_STATIC";
+                case 0x0F: return "ENUM_TAG";
+                case 0x10: return "MEMBER_OF_ENUM";
+                case 0x11: return "REGISTER_PARAM";
+                case 0x12: return "BIT_FIELD";
+                case 0x13: return "BLOCK";
+                case 0x14: return "FUNCTION";
+                case 0x15: return "END_OF_STRUCT";
+                case 0x67: return "FILE";
+                case 0x68: return "SECTION";
+                case 0x69: return "WEAK_EXTERNAL";
+                case 0x6B: return "CLR_TOKEN";
+                default: return string.Format(CultureInfo.InvariantCulture, "0x{0:X2}", storageClass);
+            }
+        }
+
+        private static string GetCoffSymbolScopeName(short sectionNumber, byte storageClass)
+        {
+            if (sectionNumber == 0)
+            {
+                return "Undefined";
+            }
+
+            if (sectionNumber == -1)
+            {
+                return "Absolute";
+            }
+
+            if (sectionNumber == -2)
+            {
+                return "Debug";
+            }
+
+            switch (storageClass)
+            {
+                case 0x02: return "External";
+                case 0x03: return "Static";
+                case 0x67: return "File";
+                case 0x68: return "Section";
+                case 0x69: return "WeakExternal";
+                default: return "Other";
             }
         }
 
@@ -20020,10 +20366,35 @@ namespace PECoff
             }
 
             _sections = sections;
+            if (sections.Count > 0)
+            {
+                uint maxEnd = 0;
+                foreach (IMAGE_SECTION_HEADER section in sections)
+                {
+                    uint span = GetSectionSpan(section);
+                    uint end = section.VirtualAddress + span;
+                    if (end > maxEnd)
+                    {
+                        maxEnd = end;
+                    }
+                }
+                _sizeOfImage = maxEnd;
+            }
             BuildSectionPermissionInfos(sections);
             ComputeOverlayInfo(sections);
             ComputeSectionEntropies(sections);
             ComputePackingHints(sections);
+
+            _baseRelocations.Clear();
+            _baseRelocationSections.Clear();
+            _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0);
+            if (teHeader.BaseRelocationTable.Size > 0 && teHeader.BaseRelocationTable.VirtualAddress > 0)
+            {
+                _hasRelocationDirectory = true;
+                _relocationsParsed = false;
+                ParseBaseRelocationTable(teHeader.BaseRelocationTable, sections);
+                _relocationsParsed = true;
+            }
 
             SubsystemInfo subsystemInfo = _subsystemInfo;
             TeDataDirectoryInfo[] directories = new[]
@@ -20047,6 +20418,9 @@ namespace PECoff
                 teHeader.Subsystem,
                 subsystemInfo?.Name ?? string.Empty,
                 teHeader.StrippedSize,
+                (ushort)headerSize,
+                (uint)sectionTableOffset,
+                (uint)sectionTableSize,
                 teHeader.AddressOfEntryPoint,
                 teHeader.BaseOfCode,
                 teHeader.ImageBase,
@@ -20126,6 +20500,50 @@ namespace PECoff
                 {
                     Warn(ParseIssueCategory.Header, "COFF archive member data exceeds file bounds.");
                     break;
+                }
+
+                bool isGnuExtendedName = false;
+                int extendedNameLength = 0;
+                string nameFieldTrimmed = nameField.Trim();
+                if (nameFieldTrimmed.StartsWith("#1/", StringComparison.Ordinal))
+                {
+                    string lengthText = nameFieldTrimmed.Substring(3).Trim();
+                    if (int.TryParse(lengthText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedLength) && parsedLength > 0)
+                    {
+                        isGnuExtendedName = true;
+                        extendedNameLength = parsedLength;
+                    }
+                }
+
+                if (isGnuExtendedName)
+                {
+                    if (extendedNameLength > size)
+                    {
+                        Warn(ParseIssueCategory.Header, "COFF archive extended name length exceeds member size.");
+                        extendedNameLength = 0;
+                    }
+                    else if (dataOffset + extendedNameLength > PEFileStream.Length)
+                    {
+                        Warn(ParseIssueCategory.Header, "COFF archive extended name exceeds file bounds.");
+                        extendedNameLength = 0;
+                    }
+
+                    if (extendedNameLength > 0)
+                    {
+                        byte[] nameBytes = new byte[extendedNameLength];
+                        PEFileStream.Position = dataOffset;
+                        ReadExactly(PEFileStream, nameBytes, 0, nameBytes.Length);
+                        name = Encoding.ASCII.GetString(nameBytes).TrimEnd('\0', '/');
+                        dataOffset += extendedNameLength;
+                        size -= extendedNameLength;
+                    }
+                }
+                else if (nameFieldTrimmed.StartsWith("/", StringComparison.Ordinal) &&
+                         nameFieldTrimmed.Length > 1 &&
+                         char.IsDigit(nameFieldTrimmed[1]) &&
+                         string.IsNullOrWhiteSpace(longNameTable))
+                {
+                    Warn(ParseIssueCategory.Header, "COFF archive member references long name table but none was found.");
                 }
 
                 bool isSymbolTable = string.Equals(name, "/", StringComparison.Ordinal) ||
@@ -20577,6 +20995,10 @@ namespace PECoff
                 _resourceAccelerators.Clear();
                 _resourceMenus.Clear();
                 _resourceToolbars.Clear();
+                _resourceBitmaps.Clear();
+                _resourceIcons.Clear();
+                _resourceCursors.Clear();
+                _resourceCursorGroups.Clear();
                 _iconGroups.Clear();
                 _resourceFonts.Clear();
                 _resourceFontDirectories.Clear();

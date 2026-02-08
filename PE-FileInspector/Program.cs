@@ -328,8 +328,13 @@ namespace PE_FileInspector
                     sb.AppendLine("    Machine: " + Safe(pe.TeImage.MachineName) + " (0x" + pe.TeImage.Machine.ToString("X4", CultureInfo.InvariantCulture) + ")");
                     sb.AppendLine("    Subsystem: " + Safe(pe.TeImage.SubsystemName) + " (" + pe.TeImage.Subsystem.ToString(CultureInfo.InvariantCulture) + ")");
                     sb.AppendLine("    Sections: " + pe.TeImage.SectionCount.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("    StrippedSize: 0x" + pe.TeImage.StrippedSize.ToString("X4", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    HeaderSize: 0x" + pe.TeImage.HeaderSize.ToString("X4", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    SectionTable: Offset=0x" + pe.TeImage.SectionTableOffset.ToString("X", CultureInfo.InvariantCulture) +
+                                  " Size=" + pe.TeImage.SectionTableSize.ToString(CultureInfo.InvariantCulture));
                     sb.AppendLine("    ImageBase: 0x" + pe.TeImage.ImageBase.ToString("X", CultureInfo.InvariantCulture));
                     sb.AppendLine("    EntryPoint: 0x" + pe.TeImage.AddressOfEntryPoint.ToString("X", CultureInfo.InvariantCulture));
+                    sb.AppendLine("    BaseOfCode: 0x" + pe.TeImage.BaseOfCode.ToString("X", CultureInfo.InvariantCulture));
                     if (pe.TeImage.DataDirectories.Count > 0)
                     {
                         sb.AppendLine("    Directories:");
@@ -1853,6 +1858,8 @@ namespace PE_FileInspector
                                       " | Type: 0x" + symbol.Type.ToString("X4", CultureInfo.InvariantCulture) +
                                       (string.IsNullOrWhiteSpace(symbol.TypeName) ? string.Empty : " (" + Safe(symbol.TypeName) + ")") +
                                       " | StorageClass: " + symbol.StorageClass.ToString(CultureInfo.InvariantCulture) +
+                                      (string.IsNullOrWhiteSpace(symbol.StorageClassName) ? string.Empty : " (" + Safe(symbol.StorageClassName) + ")") +
+                                      " | Scope: " + Safe(symbol.ScopeName) +
                                       " | Aux: " + symbol.AuxSymbolCount.ToString(CultureInfo.InvariantCulture));
                     }
                     if (pe.CoffSymbols.Length > 100)
@@ -2485,6 +2492,34 @@ namespace PE_FileInspector
             sb.AppendLine();
             }
 
+            if (filter.ShouldInclude("resource-icons"))
+            {
+            sb.AppendLine("Resource Icons:");
+            if (pe.ResourceIcons.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceIconInfo icon in pe.ResourceIcons.OrderBy(i => i.NameId).ThenBy(i => i.LanguageId))
+                {
+                    string line = "  - Id#" + icon.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + icon.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Size: " + icon.Width.ToString(CultureInfo.InvariantCulture) +
+                                  "x" + icon.Height.ToString(CultureInfo.InvariantCulture) +
+                                  " | Bits: " + icon.BitCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Bytes: " + icon.Size.ToString(CultureInfo.InvariantCulture);
+                    if (icon.IsPng)
+                    {
+                        line += " | PNG: " + icon.PngWidth.ToString(CultureInfo.InvariantCulture) +
+                                "x" + icon.PngHeight.ToString(CultureInfo.InvariantCulture);
+                    }
+                    sb.AppendLine(line);
+                }
+            }
+            sb.AppendLine();
+            }
+
             if (filter.ShouldInclude("cursor-groups"))
             {
             sb.AppendLine("Cursor Groups:");
@@ -2526,6 +2561,36 @@ namespace PE_FileInspector
                     {
                         sb.AppendLine("    (truncated)");
                     }
+                }
+            }
+            sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("resource-cursors"))
+            {
+            sb.AppendLine("Resource Cursors:");
+            if (pe.ResourceCursors.Length == 0)
+            {
+                sb.AppendLine("  (none)");
+            }
+            else
+            {
+                foreach (ResourceCursorInfo cursor in pe.ResourceCursors.OrderBy(c => c.NameId).ThenBy(c => c.LanguageId))
+                {
+                    string line = "  - Id#" + cursor.NameId.ToString(CultureInfo.InvariantCulture) +
+                                  " | Lang: 0x" + cursor.LanguageId.ToString("X4", CultureInfo.InvariantCulture) +
+                                  " | Hotspot: " + cursor.HotspotX.ToString(CultureInfo.InvariantCulture) +
+                                  "," + cursor.HotspotY.ToString(CultureInfo.InvariantCulture) +
+                                  " | Size: " + cursor.Width.ToString(CultureInfo.InvariantCulture) +
+                                  "x" + cursor.Height.ToString(CultureInfo.InvariantCulture) +
+                                  " | Bits: " + cursor.BitCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Bytes: " + cursor.Size.ToString(CultureInfo.InvariantCulture);
+                    if (cursor.IsPng)
+                    {
+                        line += " | PNG: " + cursor.PngWidth.ToString(CultureInfo.InvariantCulture) +
+                                "x" + cursor.PngHeight.ToString(CultureInfo.InvariantCulture);
+                    }
+                    sb.AppendLine(line);
                 }
             }
             sb.AppendLine();

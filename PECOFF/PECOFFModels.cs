@@ -2437,6 +2437,9 @@ namespace PECoff
         public byte Subsystem { get; }
         public string SubsystemName { get; }
         public ushort StrippedSize { get; }
+        public ushort HeaderSize { get; }
+        public uint SectionTableOffset { get; }
+        public uint SectionTableSize { get; }
         public uint AddressOfEntryPoint { get; }
         public uint BaseOfCode { get; }
         public ulong ImageBase { get; }
@@ -2449,6 +2452,9 @@ namespace PECoff
             byte subsystem,
             string subsystemName,
             ushort strippedSize,
+            ushort headerSize,
+            uint sectionTableOffset,
+            uint sectionTableSize,
             uint addressOfEntryPoint,
             uint baseOfCode,
             ulong imageBase,
@@ -2460,6 +2466,9 @@ namespace PECoff
             Subsystem = subsystem;
             SubsystemName = subsystemName ?? string.Empty;
             StrippedSize = strippedSize;
+            HeaderSize = headerSize;
+            SectionTableOffset = sectionTableOffset;
+            SectionTableSize = sectionTableSize;
             AddressOfEntryPoint = addressOfEntryPoint;
             BaseOfCode = baseOfCode;
             ImageBase = imageBase;
@@ -2752,6 +2761,9 @@ namespace PECoff
         public byte Selection { get; }
         public string SelectionName { get; }
         public string AssociatedSectionName { get; }
+        public bool IsComdat { get; }
+        public bool ComdatSelectionValid { get; }
+        public string ComdatSelectionNote { get; }
         public uint WeakTagIndex { get; }
         public uint WeakCharacteristics { get; }
         public string WeakCharacteristicsName { get; }
@@ -2774,6 +2786,9 @@ namespace PECoff
             byte selection,
             string selectionName,
             string associatedSectionName,
+            bool isComdat,
+            bool comdatSelectionValid,
+            string comdatSelectionNote,
             uint weakTagIndex,
             uint weakCharacteristics,
             string weakCharacteristicsName,
@@ -2795,6 +2810,9 @@ namespace PECoff
             Selection = selection;
             SelectionName = selectionName ?? string.Empty;
             AssociatedSectionName = associatedSectionName ?? string.Empty;
+            IsComdat = isComdat;
+            ComdatSelectionValid = comdatSelectionValid;
+            ComdatSelectionNote = comdatSelectionNote ?? string.Empty;
             WeakTagIndex = weakTagIndex;
             WeakCharacteristics = weakCharacteristics;
             WeakCharacteristicsName = weakCharacteristicsName ?? string.Empty;
@@ -2813,6 +2831,8 @@ namespace PECoff
         public ushort Type { get; }
         public string TypeName { get; }
         public byte StorageClass { get; }
+        public string StorageClassName { get; }
+        public string ScopeName { get; }
         public byte AuxSymbolCount { get; }
         public byte[] AuxData { get; }
         public IReadOnlyList<CoffAuxSymbolInfo> AuxSymbols { get; }
@@ -2826,6 +2846,8 @@ namespace PECoff
             ushort type,
             string typeName,
             byte storageClass,
+            string storageClassName,
+            string scopeName,
             byte auxSymbolCount,
             byte[] auxData,
             CoffAuxSymbolInfo[] auxSymbols)
@@ -2838,6 +2860,8 @@ namespace PECoff
             Type = type;
             TypeName = typeName ?? string.Empty;
             StorageClass = storageClass;
+            StorageClassName = storageClassName ?? string.Empty;
+            ScopeName = scopeName ?? string.Empty;
             AuxSymbolCount = auxSymbolCount;
             AuxData = auxData ?? Array.Empty<byte>();
             AuxSymbols = Array.AsReadOnly(auxSymbols ?? Array.Empty<CoffAuxSymbolInfo>());
@@ -3879,7 +3903,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 24;
+        public const int CurrentSchemaVersion = 25;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -3947,6 +3971,8 @@ namespace PECoff
         public IReadOnlyList<ResourceManifestInfo> ResourceManifests { get; }
         public IReadOnlyList<ResourceLocaleCoverageInfo> ResourceLocaleCoverage { get; }
         public IReadOnlyList<ResourceBitmapInfo> ResourceBitmaps { get; }
+        public IReadOnlyList<ResourceIconInfo> ResourceIcons { get; }
+        public IReadOnlyList<ResourceCursorInfo> ResourceCursors { get; }
         public IReadOnlyList<ResourceCursorGroupInfo> ResourceCursorGroups { get; }
         public IReadOnlyList<ResourceFontInfo> ResourceFonts { get; }
         public IReadOnlyList<ResourceFontDirInfo> ResourceFontDirectories { get; }
@@ -4059,6 +4085,8 @@ namespace PECoff
             ResourceManifestInfo[] resourceManifests,
             ResourceLocaleCoverageInfo[] resourceLocaleCoverage,
             ResourceBitmapInfo[] resourceBitmaps,
+            ResourceIconInfo[] resourceIcons,
+            ResourceCursorInfo[] resourceCursors,
             ResourceCursorGroupInfo[] resourceCursorGroups,
             ResourceFontInfo[] resourceFonts,
             ResourceFontDirInfo[] resourceFontDirectories,
@@ -4171,6 +4199,8 @@ namespace PECoff
             ResourceManifests = Array.AsReadOnly(resourceManifests ?? Array.Empty<ResourceManifestInfo>());
             ResourceLocaleCoverage = Array.AsReadOnly(resourceLocaleCoverage ?? Array.Empty<ResourceLocaleCoverageInfo>());
             ResourceBitmaps = Array.AsReadOnly(resourceBitmaps ?? Array.Empty<ResourceBitmapInfo>());
+            ResourceIcons = Array.AsReadOnly(resourceIcons ?? Array.Empty<ResourceIconInfo>());
+            ResourceCursors = Array.AsReadOnly(resourceCursors ?? Array.Empty<ResourceCursorInfo>());
             ResourceCursorGroups = Array.AsReadOnly(resourceCursorGroups ?? Array.Empty<ResourceCursorGroupInfo>());
             ResourceFonts = Array.AsReadOnly(resourceFonts ?? Array.Empty<ResourceFontInfo>());
             ResourceFontDirectories = Array.AsReadOnly(resourceFontDirectories ?? Array.Empty<ResourceFontDirInfo>());
@@ -4359,6 +4389,8 @@ namespace PECoff
                 ResourceManifests,
                 ResourceLocaleCoverage = resourceCoverage,
                 ResourceBitmaps,
+                ResourceIcons,
+                ResourceCursors,
                 ResourceCursorGroups,
                 ResourceFonts,
                 ResourceFontDirectories,
@@ -4543,6 +4575,82 @@ namespace PECoff
             Compression = compression;
             CompressionName = compressionName ?? string.Empty;
             ImageSize = imageSize;
+        }
+    }
+
+    public sealed class ResourceIconInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public int Width { get; }
+        public int Height { get; }
+        public ushort BitCount { get; }
+        public bool IsPng { get; }
+        public uint PngWidth { get; }
+        public uint PngHeight { get; }
+        public uint Size { get; }
+
+        public ResourceIconInfo(
+            uint nameId,
+            ushort languageId,
+            int width,
+            int height,
+            ushort bitCount,
+            bool isPng,
+            uint pngWidth,
+            uint pngHeight,
+            uint size)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            Width = width;
+            Height = height;
+            BitCount = bitCount;
+            IsPng = isPng;
+            PngWidth = pngWidth;
+            PngHeight = pngHeight;
+            Size = size;
+        }
+    }
+
+    public sealed class ResourceCursorInfo
+    {
+        public uint NameId { get; }
+        public ushort LanguageId { get; }
+        public ushort HotspotX { get; }
+        public ushort HotspotY { get; }
+        public int Width { get; }
+        public int Height { get; }
+        public ushort BitCount { get; }
+        public bool IsPng { get; }
+        public uint PngWidth { get; }
+        public uint PngHeight { get; }
+        public uint Size { get; }
+
+        public ResourceCursorInfo(
+            uint nameId,
+            ushort languageId,
+            ushort hotspotX,
+            ushort hotspotY,
+            int width,
+            int height,
+            ushort bitCount,
+            bool isPng,
+            uint pngWidth,
+            uint pngHeight,
+            uint size)
+        {
+            NameId = nameId;
+            LanguageId = languageId;
+            HotspotX = hotspotX;
+            HotspotY = hotspotY;
+            Width = width;
+            Height = height;
+            BitCount = bitCount;
+            IsPng = isPng;
+            PngWidth = pngWidth;
+            PngHeight = pngHeight;
+            Size = size;
         }
     }
 

@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 24,
+  "SchemaVersion": 25,
   "FilePath": "minimal-x86.exe",
   "ParseResult": {
     "Errors": [],
@@ -294,6 +294,8 @@
   "ResourceManifests": [],
   "ResourceLocaleCoverage": [],
   "ResourceBitmaps": [],
+  "ResourceIcons": [],
+  "ResourceCursors": [],
   "ResourceCursorGroups": [],
   "ResourceFonts": [],
   "ResourceFontDirectories": [],

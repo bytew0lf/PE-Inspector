@@ -22,7 +22,7 @@ Notes:
 The report contains all analysis details, and any embedded certificates are written to the output directory with their native extensions (e.g. `.cer`, `.p7b`) and additionally as PEM (`.pem`).
 Use `--sections` to emit only selected report sections, or `--exclude-sections` to omit sections (comma-separated keys). Keys are normalized to lowercase with dashes, for example:
 
-`file-info`, `version-info`, `pe-analysis`, `data-directories`, `section-entropy`, `section-permissions`, `section-padding`, `certificates`, `parse-status`, `findings`, `clr`, `strong-name`, `readytorun`, `assembly-refs`, `imports`, `import-details`, `import-descriptors`, `delay-import-details`, `delay-import-descriptors`, `bound-imports`, `exports`, `export-anomalies`, `export-details`, `exception`, `debug`, `coff-symbols`, `coff-string-table`, `coff-line-numbers`, `relocations`, `tls`, `load-config`, `rich-header`, `version-info-details`, `icon-groups`, `cursor-groups`, `bitmaps`, `resource-fonts`, `resource-fontdirs`, `resource-dlginit`, `resource-animated-cursors`, `resource-animated-icons`, `resource-rcdata`, `resources`, `resource-string-tables`, `resource-string-coverage`, `resource-message-tables`, `resource-dialogs`, `resource-accelerators`, `resource-menus`, `resource-toolbars`, `resource-manifests`, `resource-locale-coverage`.
+`file-info`, `version-info`, `pe-analysis`, `data-directories`, `section-entropy`, `section-permissions`, `section-padding`, `certificates`, `parse-status`, `findings`, `clr`, `strong-name`, `readytorun`, `assembly-refs`, `imports`, `import-details`, `import-descriptors`, `delay-import-details`, `delay-import-descriptors`, `bound-imports`, `exports`, `export-anomalies`, `export-details`, `exception`, `debug`, `coff-symbols`, `coff-string-table`, `coff-line-numbers`, `relocations`, `tls`, `load-config`, `rich-header`, `version-info-details`, `icon-groups`, `resource-icons`, `cursor-groups`, `resource-cursors`, `bitmaps`, `resource-fonts`, `resource-fontdirs`, `resource-dlginit`, `resource-animated-cursors`, `resource-animated-icons`, `resource-rcdata`, `resources`, `resource-string-tables`, `resource-string-coverage`, `resource-message-tables`, `resource-dialogs`, `resource-accelerators`, `resource-menus`, `resource-toolbars`, `resource-manifests`, `resource-locale-coverage`.
 
 The report also includes CLR/.NET metadata when present (runtime version, metadata version, stream list, module references, managed resource names/sizes/hashes).
 It now also includes assembly metadata (assembly name/version, MVID, target framework, debuggable attribute, assembly/module attribute lists) and metadata-based assembly references (with public key tokens and resolution hints), plus a runtime hint (IL/Mixed/ReadyToRun).
@@ -145,6 +145,7 @@ Defaults:
 - v22: COFF archive/import-library parsing, DOS relocation table summary, and additional debug directory types (Embedded PDB/SPGO/PDBHASH).
 - v23: Architecture/GlobalPtr/IAT deep decode, ARM32/IA64 unwind details, and machine-aware base relocation types (RISC-V/LoongArch).
 - v24: Load-config version info + trailing field capture, resource group variants, and RT_VERSION extensions.
+- v25: TE header depth + relocations, COFF symbol scope details, COMDAT selection metadata, and raw icon/cursor resources.
 
 ### Coverage map
 High-level PE/COFF structures and current coverage:
@@ -156,7 +157,7 @@ High-level PE/COFF structures and current coverage:
 - Sections: implemented (entropy, permissions, padding)
 - Imports/Exports: implemented (INT/IAT, delay/bound, forwarders, anomalies)
 - Overlay: implemented (size + ZIP/RAR/7z container parsing)
-- Resources: implemented (strings, manifests/MUI, dialogs/menus/toolbars/accelerators, icons/cursors/bitmaps + group variants, message tables, HTML/DLGINCLUDE/PLUGPLAY/VXD raw summaries, RT_VERSION extensions)
+- Resources: implemented (strings, manifests/MUI, dialogs/menus/toolbars/accelerators, icons/cursors/bitmaps + group variants and raw icon/cursor entries, message tables, HTML/DLGINCLUDE/PLUGPLAY/VXD raw summaries, RT_VERSION extensions)
 - Resources (extended): implemented (fonts/fontdir, rcdata with format detection including protobuf/flatbuffers/unity bundles, dlginit, animated cursor/icon)
 - Debug directory: implemented (CodeView/PDB, MSF stream directory + PDB signature/age, COFF, POGO, VC_FEATURE, EX_DLLCHARACTERISTICS, FPO, MISC, OMAP, REPRO, ILTCG, MPX, CLSID, FIXUP, Borland, reserved, embedded portable PDB, SPGO, PDB hash)
 - Relocations: implemented (summaries + anomalies, machine-aware base relocation mapping incl. RISC-V/LoongArch)
@@ -175,9 +176,9 @@ The parser records a version hint based on which field groups are present and pr
 - Win11+: trailing fields beyond known layout (captured as hash/preview)
 - CLR/.NET: implemented (metadata, references, token cross-refs, method body IL sizes, ReadyToRun)
 - Certificates/Authenticode: implemented (PKCS7/signers/timestamps, certificate transparency hints + log IDs, WinTrust status on Windows, catalog lookup on Windows)
-- COFF objects: header/sections (incl. bigobj) + symbols/line numbers/relocations
+- COFF objects: header/sections (incl. bigobj) + symbols/line numbers/relocations (scope + COMDAT selection metadata)
 - COFF archives/import libraries: archive headers, symbol table summary, longnames, import objects
-- UEFI TE images: header + sections
+- UEFI TE images: header + sections + base relocations
 - COFF symbols/line numbers/string table: implemented when present (aux symbol decoding incl. file/section/function/weak extern/CLR token + weak extern defaults)
 
 ## Contents of the output file
