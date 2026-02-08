@@ -345,7 +345,7 @@ namespace PE_FileInspector
                     sb.AppendLine("  Overlay Start: 0x" + pe.OverlayInfo.StartOffset.ToString("X", CultureInfo.InvariantCulture));
                     sb.AppendLine("  Overlay Size: " + pe.OverlayInfo.Size.ToString(CultureInfo.InvariantCulture));
                 }
-                if (pe.OverlayContainers.Count > 0)
+                if (pe.OverlayContainers.Length > 0)
                 {
                     sb.AppendLine("  Overlay Containers:");
                     foreach (OverlayContainerInfo container in pe.OverlayContainers)
@@ -828,9 +828,25 @@ namespace PE_FileInspector
                 if (pe.ParseResult.Warnings.Count > 0)
                 {
                     sb.AppendLine("  Warnings:");
+                    Dictionary<string, int> warningCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+                    List<string> warningOrder = new List<string>();
                     foreach (string warning in pe.ParseResult.Warnings)
                     {
-                        sb.AppendLine("    - " + warning);
+                        if (warningCounts.TryGetValue(warning, out int count))
+                        {
+                            warningCounts[warning] = count + 1;
+                        }
+                        else
+                        {
+                            warningCounts[warning] = 1;
+                            warningOrder.Add(warning);
+                        }
+                    }
+
+                    foreach (string warning in warningOrder)
+                    {
+                        sb.AppendLine("    - " + warning + " [" +
+                                      warningCounts[warning].ToString(CultureInfo.InvariantCulture) + "]");
                     }
                 }
                 sb.AppendLine();
@@ -3326,9 +3342,25 @@ namespace PE_FileInspector
                 foreach (var group in grouped)
                 {
                     sb.AppendLine("    " + group.Key + " (" + group.Count().ToString(CultureInfo.InvariantCulture) + "):");
+                    Dictionary<string, int> messageCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+                    List<string> messageOrder = new List<string>();
                     foreach (ParseIssue issue in group)
                     {
-                        sb.AppendLine("      - " + issue.Message);
+                        if (messageCounts.TryGetValue(issue.Message, out int count))
+                        {
+                            messageCounts[issue.Message] = count + 1;
+                        }
+                        else
+                        {
+                            messageCounts[issue.Message] = 1;
+                            messageOrder.Add(issue.Message);
+                        }
+                    }
+
+                    foreach (string message in messageOrder)
+                    {
+                        sb.AppendLine("      - " + message + " [" +
+                                      messageCounts[message].ToString(CultureInfo.InvariantCulture) + "]");
                     }
                 }
             }

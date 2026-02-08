@@ -12890,12 +12890,36 @@ namespace PECoff
             }
 
             hint = PEFile.ReadUInt16();
-            if (!TryReadNullTerminatedString(fileOffset + 2, out string importName))
+            if (!TryReadNullTerminatedString(fileOffset + 2, out string importName, 512))
             {
                 return false;
             }
 
             name = importName;
+            return true;
+        }
+
+        private static bool IsLikelyImportNameSection(IMAGE_SECTION_HEADER section)
+        {
+            return (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_EXECUTE) == 0;
+        }
+
+        private static bool IsLikelyImportName(string name)
+        {
+            if (string.IsNullOrEmpty(name) || name.Length > 512)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < name.Length; i++)
+            {
+                char ch = name[i];
+                if (ch < 0x21 || ch > 0x7E)
+                {
+                    return false;
+                }
+            }
+
             return true;
         }
 
@@ -12924,6 +12948,8 @@ namespace PECoff
             bool warnedNullThunks = false;
             bool warnedUnmappedThunkEntry = false;
             bool warnedUnmappedNameRva = false;
+            bool warnedExecutableNameRva = false;
+            bool warnedInvalidName = false;
             int nullThunkCount = 0;
             int entryCount = 0;
             for (int index = 0; index < maxIterations; index++)
@@ -12998,21 +13024,39 @@ namespace PECoff
                 }
 
                 uint nameRva = (uint)value;
-                if (TryReadImportByName(sections, nameRva, out ushort hint, out string importName))
+                entryCount++;
+
+                if (!TryGetSectionByRvaRange(sections, nameRva, 2, out IMAGE_SECTION_HEADER nameSection))
                 {
-                    targetList.Add(new ImportEntry(dllName, importName, hint, 0, false, source, thunkEntryRva));
-                    entryCount++;
-                }
-                else if (source == ImportThunkSource.ImportNameTable)
-                {
-                    if (!warnedUnmappedNameRva && !TryGetSectionByRvaRange(sections, nameRva, 2, out _))
+                    if (source == ImportThunkSource.ImportNameTable && !warnedUnmappedNameRva)
                     {
                         Warn(ParseIssueCategory.Imports, $"Import name RVA not mapped to a section for {dllName}.");
                         warnedUnmappedNameRva = true;
                     }
-                    else
+                    continue;
+                }
+
+                if (!IsLikelyImportNameSection(nameSection))
+                {
+                    if (source == ImportThunkSource.ImportNameTable && !warnedExecutableNameRva)
+                    {
+                        Warn(ParseIssueCategory.Imports, $"Import name RVA points to executable section for {dllName}.");
+                        warnedExecutableNameRva = true;
+                    }
+                    continue;
+                }
+
+                if (TryReadImportByName(sections, nameRva, out ushort hint, out string importName) &&
+                    IsLikelyImportName(importName))
+                {
+                    targetList.Add(new ImportEntry(dllName, importName, hint, 0, false, source, thunkEntryRva));
+                }
+                else if (source == ImportThunkSource.ImportNameTable)
+                {
+                    if (!warnedInvalidName)
                     {
                         Warn(ParseIssueCategory.Imports, "Import name entry could not be read.");
+                        warnedInvalidName = true;
                     }
                 }
             }
