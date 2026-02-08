@@ -2416,7 +2416,7 @@ namespace PECoff
             }
         }
 
-        private RelocationAnomalySummary _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0);
+        private RelocationAnomalySummary _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0, 0, 0, 0);
         public RelocationAnomalySummary RelocationAnomalies
         {
             get
@@ -11309,6 +11309,29 @@ namespace PECoff
                 rawDataPreview);
         }
 
+        internal static TlsIndexInfo BuildTlsIndexInfoForTest(
+            ulong address,
+            uint rva,
+            bool hasRva,
+            bool isMapped,
+            string sectionName,
+            uint sectionRva,
+            uint sectionOffset,
+            bool hasValue,
+            uint value)
+        {
+            return BuildTlsIndexInfoCore(
+                address,
+                rva,
+                hasRva,
+                isMapped,
+                sectionName,
+                sectionRva,
+                sectionOffset,
+                hasValue,
+                value);
+        }
+
         internal static string GetRelocationTypeNameForTest(ushort machine, int type)
         {
             return GetRelocationTypeName((MachineTypes)machine, type);
@@ -11332,6 +11355,38 @@ namespace PECoff
         internal static bool IsRelocationTypeReservedForTest(int type)
         {
             return IsRelocationTypeReserved(MachineTypes.IMAGE_FILE_MACHINE_UNKNOWN, type);
+        }
+
+        internal static RelocationAnomalySummary BuildRelocationAnomalySummaryForTest(
+            BaseRelocationBlockInfo[] blocks,
+            int zeroSizedBlocks,
+            int emptyBlocks,
+            int invalidBlocks,
+            int orphanedBlocks,
+            int discardableBlocks)
+        {
+            int reservedTypeCount = 0;
+            int outOfRangeEntryCount = 0;
+            int unmappedEntryCount = 0;
+            if (blocks != null)
+            {
+                foreach (BaseRelocationBlockInfo block in blocks)
+                {
+                    reservedTypeCount += block.ReservedTypeCount;
+                    outOfRangeEntryCount += block.OutOfRangeCount;
+                    unmappedEntryCount += block.UnmappedCount;
+                }
+            }
+
+            return BuildRelocationAnomalySummary(
+                zeroSizedBlocks,
+                emptyBlocks,
+                invalidBlocks,
+                orphanedBlocks,
+                discardableBlocks,
+                reservedTypeCount,
+                outOfRangeEntryCount,
+                unmappedEntryCount);
         }
 
         internal static CoffAuxSymbolInfo[] DecodeCoffAuxSymbolsForTest(
@@ -11575,6 +11630,11 @@ namespace PECoff
         internal static bool TryParseDebugPdbHashDataForTest(byte[] data, out DebugPdbHashInfo info)
         {
             return TryParseDebugPdbHashData(data, out info);
+        }
+
+        internal static DebugRawInfo BuildDebugRawInfoForTest(byte[] data)
+        {
+            return BuildDebugRawInfo(data);
         }
 
         internal static bool TryParseDosRelocationsForTest(byte[] data, out DosRelocationInfo info)
@@ -14565,7 +14625,7 @@ namespace PECoff
 
         private void ParseBaseRelocationTable(IMAGE_DATA_DIRECTORY directory, List<IMAGE_SECTION_HEADER> sections)
         {
-            _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0);
+            _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0, 0, 0, 0);
             if (!TryGetFileOffset(sections, directory.VirtualAddress, out long tableOffset))
             {
                 Warn(ParseIssueCategory.Relocations, "Base relocation table RVA not mapped to a section.");
@@ -14592,6 +14652,9 @@ namespace PECoff
             int invalidBlocks = 0;
             int orphanedBlocks = 0;
             int discardableBlocks = 0;
+            int reservedTypeTotal = 0;
+            int outOfRangeTotal = 0;
+            int unmappedTotal = 0;
 
             int headerSize = Marshal.SizeOf(typeof(IMAGE_BASE_RELOCATION));
             long cursor = tableOffset;
@@ -14726,6 +14789,10 @@ namespace PECoff
                     unmappedCount,
                     isPageAligned));
 
+                reservedTypeTotal += reservedTypeCount;
+                outOfRangeTotal += outOfRangeCount;
+                unmappedTotal += unmappedCount;
+
                 accumulator.BlockCount++;
                 accumulator.EntryCount += entryCount;
                 accumulator.ReservedTypeCount += reservedTypeCount;
@@ -14768,7 +14835,36 @@ namespace PECoff
                 Warn(ParseIssueCategory.Relocations, $"Base relocation blocks reside in discardable sections: {discardableBlocks}.");
             }
 
-            _relocationAnomalies = new RelocationAnomalySummary(zeroSizedBlocks, emptyBlocks, invalidBlocks, orphanedBlocks, discardableBlocks);
+            _relocationAnomalies = BuildRelocationAnomalySummary(
+                zeroSizedBlocks,
+                emptyBlocks,
+                invalidBlocks,
+                orphanedBlocks,
+                discardableBlocks,
+                reservedTypeTotal,
+                outOfRangeTotal,
+                unmappedTotal);
+        }
+
+        private static RelocationAnomalySummary BuildRelocationAnomalySummary(
+            int zeroSizedBlocks,
+            int emptyBlocks,
+            int invalidBlocks,
+            int orphanedBlocks,
+            int discardableBlocks,
+            int reservedTypeCount,
+            int outOfRangeEntryCount,
+            int unmappedEntryCount)
+        {
+            return new RelocationAnomalySummary(
+                zeroSizedBlocks,
+                emptyBlocks,
+                invalidBlocks,
+                orphanedBlocks,
+                discardableBlocks,
+                reservedTypeCount,
+                outOfRangeEntryCount,
+                unmappedEntryCount);
         }
 
         private sealed class BaseRelocationSectionAccumulator
@@ -16868,6 +16964,7 @@ namespace PECoff
                 DebugRawInfo iltcg = null;
                 DebugRawInfo mpx = null;
                 DebugClsidInfo clsid = null;
+                DebugRawInfo other = null;
                 string note = string.Empty;
                 if ((DebugDirectoryType)entry.Type == DebugDirectoryType.CodeView && entry.SizeOfData > 0)
                 {
@@ -17067,6 +17164,39 @@ namespace PECoff
                     }
                 }
 
+                bool hasStructuredData = codeView != null ||
+                    pdbInfo != null ||
+                    coff != null ||
+                    pogo != null ||
+                    vcFeature != null ||
+                    exDll != null ||
+                    fpo != null ||
+                    borland != null ||
+                    reserved != null ||
+                    fixup != null ||
+                    misc != null ||
+                    omapToSource != null ||
+                    omapFromSource != null ||
+                    repro != null ||
+                    embeddedPortablePdb != null ||
+                    spgo != null ||
+                    pdbHash != null ||
+                    iltcg != null ||
+                    mpx != null ||
+                    clsid != null;
+
+                if (!hasStructuredData && entry.SizeOfData > 0)
+                {
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data))
+                    {
+                        other = BuildDebugRawInfo(data);
+                        if (string.IsNullOrWhiteSpace(note))
+                        {
+                            note = "Unparsed debug directory data.";
+                        }
+                    }
+                }
+
                 _debugDirectories.Add(new DebugDirectoryEntry(
                     entry.Characteristics,
                     entry.TimeDateStamp,
@@ -17096,6 +17226,7 @@ namespace PECoff
                     iltcg,
                     mpx,
                     clsid,
+                    other,
                     note));
             }
         }
@@ -17688,6 +17819,7 @@ namespace PECoff
             string rawDataHash = string.Empty;
             string rawDataPreview = string.Empty;
             bool rawDataPreviewIsText = false;
+            TlsIndexInfo indexInfo = null;
 
             if (startRaw != 0 && endRaw >= startRaw)
             {
@@ -17722,6 +17854,45 @@ namespace PECoff
             if (rawDataMapped && rawDataSize > 0)
             {
                 TryComputeTlsRawDataInfo(sections, rawDataRva, rawDataSize, out rawDataHash, out rawDataPreviewIsText, out rawDataPreview);
+            }
+
+            if (indexAddr != 0)
+            {
+                bool hasRva = TryVaToRva(indexAddr, imageBase, out uint indexRva);
+                bool indexMapped = false;
+                string indexSectionName = string.Empty;
+                uint indexSectionRva = 0;
+                uint indexSectionOffset = 0;
+                if (hasRva && TryGetSectionByRva(sections, indexRva, out IMAGE_SECTION_HEADER indexSection))
+                {
+                    indexMapped = true;
+                    indexSectionName = NormalizeSectionName(indexSection.Section);
+                    indexSectionRva = indexSection.VirtualAddress;
+                    if (indexRva >= indexSectionRva)
+                    {
+                        indexSectionOffset = indexRva - indexSectionRva;
+                    }
+                }
+
+                bool hasValue = false;
+                uint indexValue = 0;
+                if (TryGetFileOffsetFromVa(sections, indexAddr, imageBase, out long indexOffset) &&
+                    TrySetPosition(indexOffset, 4))
+                {
+                    indexValue = PEFile.ReadUInt32();
+                    hasValue = true;
+                }
+
+                indexInfo = BuildTlsIndexInfoCore(
+                    indexAddr,
+                    indexRva,
+                    hasRva,
+                    indexMapped,
+                    indexSectionName,
+                    indexSectionRva,
+                    indexSectionOffset,
+                    hasValue,
+                    indexValue);
             }
 
             TlsTemplateInfo templateInfo = BuildTlsTemplateInfo(
@@ -17814,6 +17985,7 @@ namespace PECoff
                 startRaw,
                 endRaw,
                 indexAddr,
+                indexInfo,
                 callbacksAddr,
                 zeroFill,
                 characteristics,
@@ -17885,6 +18057,44 @@ namespace PECoff
                 rawDataHash,
                 rawDataPreviewIsText,
                 rawDataPreview);
+        }
+
+        private static TlsIndexInfo BuildTlsIndexInfoCore(
+            ulong address,
+            uint rva,
+            bool hasRva,
+            bool isMapped,
+            string sectionName,
+            uint sectionRva,
+            uint sectionOffset,
+            bool hasValue,
+            uint value)
+        {
+            string notes = string.Empty;
+            if (address != 0 && !hasRva)
+            {
+                notes = AppendNote(notes, "index VA not in image");
+            }
+            if (hasRva && !isMapped)
+            {
+                notes = AppendNote(notes, "index RVA not mapped to a section");
+            }
+            if (!hasValue && address != 0)
+            {
+                notes = AppendNote(notes, "index value not readable");
+            }
+
+            return new TlsIndexInfo(
+                address,
+                rva,
+                hasRva,
+                isMapped,
+                sectionName,
+                sectionRva,
+                sectionOffset,
+                hasValue,
+                value,
+                notes);
         }
 
         private bool TryComputeTlsRawDataInfo(
@@ -21332,7 +21542,7 @@ namespace PECoff
 
             _baseRelocations.Clear();
             _baseRelocationSections.Clear();
-            _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0);
+            _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0, 0, 0, 0);
             if (teHeader.BaseRelocationTable.Size > 0 && teHeader.BaseRelocationTable.VirtualAddress > 0)
             {
                 _hasRelocationDirectory = true;
@@ -21987,7 +22197,7 @@ namespace PECoff
                 _boundImports.Clear();
                 _debugDirectories.Clear();
                 _baseRelocations.Clear();
-                _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0);
+            _relocationAnomalies = new RelocationAnomalySummary(0, 0, 0, 0, 0, 0, 0, 0);
                 _exceptionDirectoryRva = 0;
                 _exceptionDirectorySize = 0;
                 _exceptionDirectorySectionName = string.Empty;

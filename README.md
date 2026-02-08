@@ -157,6 +157,7 @@ Defaults:
 - v26: PDB DBI/TPI/GSI stream parsing + publics extraction, and cross-platform trust-store status summaries.
 - v27: Section header detail coverage (alignment/size checks + directory containment summary).
 - v28: Data directory validation (size/alignment/mapping checks).
+- v29: Relocation anomaly totals, TLS index mapping, and debug raw fallback entries.
 
 ## Current Coverage Map (auto-generated)
 
@@ -175,13 +176,13 @@ Status legend:
 | Sections | `full` | Header decoding (sizes/flags/align), entropy, permissions, padding, overlaps/align checks, directory containment summaries. |
 | Data directories | `full` | Name/section mapping + Architecture/GlobalPtr/IAT deep decode + size/mapping validation. |
 | Imports/Exports | `partial` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints. |
-| Relocations | `partial` | Summaries + anomaly counts, machine-aware type mapping. |
-| TLS | `partial` | Callbacks + raw data mapping, hash/preview, template sizing notes. |
+| Relocations | `full` | Summaries + anomaly totals, machine-aware type mapping. |
+| TLS | `full` | Callbacks + raw data mapping, hash/preview, template sizing + index mapping. |
 | Load config | `partial` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout. |
-| Exception directory | `partial` | AMD64/ARM64 full decode, ARM32/IA64 summaries, x86 SEH. |
+| Exception directory | `full` | AMD64/ARM64/ARM32/IA64 decode + range validation, x86 SEH. |
 | Resources | `partial` | Strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, message tables, RT_VERSION extensions. |
 | Resources (extended) | `partial` | Fonts/fontdir, rcdata format detection, dlginit, animated cursor/icon. |
-| Debug directory | `partial` | CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, embedded PDB, SPGO, PDB hash. |
+| Debug directory | `full` | CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, embedded PDB, SPGO, PDB hash + raw fallback. |
 | PDB/MSF streams | `partial` | MSF directory + PDB signature/age, DBI/TPI/GSI/publics summaries. |
 | CLR/.NET | `partial` | Metadata tables, token cross-refs, method body IL sizes, R2R header. |
 | Certificates/Authenticode | `partial` | PKCS7 signers/timestamps, CT hints/logs, WinTrust (Windows), trust-store status. |

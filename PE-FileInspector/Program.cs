@@ -1973,6 +1973,15 @@ namespace PE_FileInspector
                     {
                         sb.AppendLine("    CLSID: " + entry.Clsid.ClassId.ToString());
                     }
+                    if (entry.Other != null)
+                    {
+                        sb.AppendLine("    Raw: " + entry.Other.DataLength.ToString(CultureInfo.InvariantCulture) +
+                                      " bytes | " + entry.Other.Sha256);
+                        if (!string.IsNullOrWhiteSpace(entry.Other.Preview))
+                        {
+                            sb.AppendLine("      Preview: " + entry.Other.Preview);
+                        }
+                    }
                 }
             }
             sb.AppendLine();
@@ -2115,7 +2124,10 @@ namespace PE_FileInspector
                                   " | Empty=" + pe.RelocationAnomalies.EmptyBlockCount.ToString(CultureInfo.InvariantCulture) +
                                   " | Invalid=" + pe.RelocationAnomalies.InvalidBlockCount.ToString(CultureInfo.InvariantCulture) +
                                   " | Orphaned=" + pe.RelocationAnomalies.OrphanedBlockCount.ToString(CultureInfo.InvariantCulture) +
-                                  " | Discardable=" + pe.RelocationAnomalies.DiscardableBlockCount.ToString(CultureInfo.InvariantCulture));
+                                  " | Discardable=" + pe.RelocationAnomalies.DiscardableBlockCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | ReservedEntries=" + pe.RelocationAnomalies.ReservedTypeCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | OutOfRangeEntries=" + pe.RelocationAnomalies.OutOfRangeEntryCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | UnmappedEntries=" + pe.RelocationAnomalies.UnmappedEntryCount.ToString(CultureInfo.InvariantCulture));
                 }
             }
             sb.AppendLine();
@@ -2133,6 +2145,25 @@ namespace PE_FileInspector
                 sb.AppendLine("  StartRawData: 0x" + pe.TlsInfo.StartAddressOfRawData.ToString("X", CultureInfo.InvariantCulture));
                 sb.AppendLine("  EndRawData: 0x" + pe.TlsInfo.EndAddressOfRawData.ToString("X", CultureInfo.InvariantCulture));
                 sb.AppendLine("  AddressOfIndex: 0x" + pe.TlsInfo.AddressOfIndex.ToString("X", CultureInfo.InvariantCulture));
+                if (pe.TlsInfo.IndexInfo != null)
+                {
+                    string section = string.IsNullOrWhiteSpace(pe.TlsInfo.IndexInfo.SectionName)
+                        ? string.Empty
+                        : " | Section: " + Safe(pe.TlsInfo.IndexInfo.SectionName) +
+                          " (RVA: 0x" + pe.TlsInfo.IndexInfo.SectionRva.ToString("X8", CultureInfo.InvariantCulture) +
+                          " | Offset: 0x" + pe.TlsInfo.IndexInfo.SectionOffset.ToString("X8", CultureInfo.InvariantCulture) + ")";
+                    string value = pe.TlsInfo.IndexInfo.HasValue
+                        ? " | Value: " + pe.TlsInfo.IndexInfo.Value.ToString(CultureInfo.InvariantCulture)
+                        : string.Empty;
+                    string notes = string.IsNullOrWhiteSpace(pe.TlsInfo.IndexInfo.Notes)
+                        ? string.Empty
+                        : " | Notes: " + Safe(pe.TlsInfo.IndexInfo.Notes);
+                    sb.AppendLine("  Index: RVA 0x" + pe.TlsInfo.IndexInfo.Rva.ToString("X8", CultureInfo.InvariantCulture) +
+                                  " | Mapped: " + pe.TlsInfo.IndexInfo.IsMapped +
+                                  value +
+                                  section +
+                                  notes);
+                }
                 sb.AppendLine("  AddressOfCallbacks: 0x" + pe.TlsInfo.AddressOfCallbacks.ToString("X", CultureInfo.InvariantCulture));
                 sb.AppendLine("  SizeOfZeroFill: " + pe.TlsInfo.SizeOfZeroFill.ToString(CultureInfo.InvariantCulture));
                 sb.AppendLine("  Characteristics: 0x" + pe.TlsInfo.Characteristics.ToString("X8", CultureInfo.InvariantCulture));

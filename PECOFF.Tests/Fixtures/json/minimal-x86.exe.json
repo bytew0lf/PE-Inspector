@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 28,
+  "SchemaVersion": 29,
   "FilePath": "minimal-x86.exe",
   "ParseResult": {
     "Errors": [],
@@ -700,7 +700,10 @@
     "EmptyBlockCount": 0,
     "InvalidBlockCount": 0,
     "OrphanedBlockCount": 0,
-    "DiscardableBlockCount": 0
+    "DiscardableBlockCount": 0,
+    "ReservedTypeCount": 0,
+    "OutOfRangeEntryCount": 0,
+    "UnmappedEntryCount": 0
   },
   "ApiSetSchema": {
     "Loaded": false,

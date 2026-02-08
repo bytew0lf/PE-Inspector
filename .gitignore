@@ -62,6 +62,7 @@ bld/
 [Tt]estfiles/
 [Tt]est-output
 test-output.csv
+CurrentGaps.md
 .DS_Store
 
 # Visual Studio 2015/2017 cache/options directory

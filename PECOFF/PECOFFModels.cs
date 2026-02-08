@@ -769,6 +769,7 @@ namespace PECoff
         public DebugRawInfo Iltcg { get; }
         public DebugRawInfo Mpx { get; }
         public DebugClsidInfo Clsid { get; }
+        public DebugRawInfo Other { get; }
         public string Note { get; }
 
         public DebugDirectoryEntry(
@@ -800,6 +801,7 @@ namespace PECoff
             DebugRawInfo iltcg,
             DebugRawInfo mpx,
             DebugClsidInfo clsid,
+            DebugRawInfo other,
             string note)
         {
             Characteristics = characteristics;
@@ -830,6 +832,7 @@ namespace PECoff
             Iltcg = iltcg;
             Mpx = mpx;
             Clsid = clsid;
+            Other = other;
             Note = note ?? string.Empty;
         }
     }
@@ -1255,19 +1258,28 @@ namespace PECoff
         public int InvalidBlockCount { get; }
         public int OrphanedBlockCount { get; }
         public int DiscardableBlockCount { get; }
+        public int ReservedTypeCount { get; }
+        public int OutOfRangeEntryCount { get; }
+        public int UnmappedEntryCount { get; }
 
         public RelocationAnomalySummary(
             int zeroSizedBlockCount,
             int emptyBlockCount,
             int invalidBlockCount,
             int orphanedBlockCount,
-            int discardableBlockCount)
+            int discardableBlockCount,
+            int reservedTypeCount,
+            int outOfRangeEntryCount,
+            int unmappedEntryCount)
         {
             ZeroSizedBlockCount = zeroSizedBlockCount;
             EmptyBlockCount = emptyBlockCount;
             InvalidBlockCount = invalidBlockCount;
             OrphanedBlockCount = orphanedBlockCount;
             DiscardableBlockCount = discardableBlockCount;
+            ReservedTypeCount = reservedTypeCount;
+            OutOfRangeEntryCount = outOfRangeEntryCount;
+            UnmappedEntryCount = unmappedEntryCount;
         }
     }
 
@@ -1377,6 +1389,7 @@ namespace PECoff
         public ulong StartAddressOfRawData { get; }
         public ulong EndAddressOfRawData { get; }
         public ulong AddressOfIndex { get; }
+        public TlsIndexInfo IndexInfo { get; }
         public ulong AddressOfCallbacks { get; }
         public uint SizeOfZeroFill { get; }
         public uint Characteristics { get; }
@@ -1396,6 +1409,7 @@ namespace PECoff
             ulong startAddressOfRawData,
             ulong endAddressOfRawData,
             ulong addressOfIndex,
+            TlsIndexInfo indexInfo,
             ulong addressOfCallbacks,
             uint sizeOfZeroFill,
             uint characteristics,
@@ -1414,6 +1428,7 @@ namespace PECoff
             StartAddressOfRawData = startAddressOfRawData;
             EndAddressOfRawData = endAddressOfRawData;
             AddressOfIndex = addressOfIndex;
+            IndexInfo = indexInfo;
             AddressOfCallbacks = addressOfCallbacks;
             SizeOfZeroFill = sizeOfZeroFill;
             Characteristics = characteristics;
@@ -1498,6 +1513,44 @@ namespace PECoff
             SectionRva = sectionRva;
             SectionOffset = sectionOffset;
             ResolutionSource = resolutionSource ?? string.Empty;
+        }
+    }
+
+    public sealed class TlsIndexInfo
+    {
+        public ulong Address { get; }
+        public uint Rva { get; }
+        public bool HasRva { get; }
+        public bool IsMapped { get; }
+        public string SectionName { get; }
+        public uint SectionRva { get; }
+        public uint SectionOffset { get; }
+        public bool HasValue { get; }
+        public uint Value { get; }
+        public string Notes { get; }
+
+        public TlsIndexInfo(
+            ulong address,
+            uint rva,
+            bool hasRva,
+            bool isMapped,
+            string sectionName,
+            uint sectionRva,
+            uint sectionOffset,
+            bool hasValue,
+            uint value,
+            string notes)
+        {
+            Address = address;
+            Rva = rva;
+            HasRva = hasRva;
+            IsMapped = isMapped;
+            SectionName = sectionName ?? string.Empty;
+            SectionRva = sectionRva;
+            SectionOffset = sectionOffset;
+            HasValue = hasValue;
+            Value = value;
+            Notes = notes ?? string.Empty;
         }
     }
 
@@ -4256,7 +4309,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 28;
+        public const int CurrentSchemaVersion = 29;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -4594,7 +4647,7 @@ namespace PECoff
             DebugDirectories = Array.AsReadOnly(debugDirectories ?? Array.Empty<DebugDirectoryEntry>());
             BaseRelocations = Array.AsReadOnly(baseRelocations ?? Array.Empty<BaseRelocationBlockInfo>());
             BaseRelocationSections = Array.AsReadOnly(baseRelocationSections ?? Array.Empty<BaseRelocationSectionSummary>());
-            RelocationAnomalies = relocationAnomalies ?? new RelocationAnomalySummary(0, 0, 0, 0, 0);
+            RelocationAnomalies = relocationAnomalies ?? new RelocationAnomalySummary(0, 0, 0, 0, 0, 0, 0, 0);
             ApiSetSchema = apiSetSchema ?? new ApiSetSchemaInfo(false, 0, string.Empty, string.Empty);
             ExceptionFunctions = Array.AsReadOnly(exceptionFunctions ?? Array.Empty<ExceptionFunctionInfo>());
             ExceptionSummary = exceptionSummary;
