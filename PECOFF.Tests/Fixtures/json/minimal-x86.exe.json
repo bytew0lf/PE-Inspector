@@ -1,5 +1,5 @@
 {
-  "SchemaVersion": 26,
+  "SchemaVersion": 27,
   "FilePath": "minimal-x86.exe",
   "ParseResult": {
     "Errors": [],
@@ -70,6 +70,50 @@
       "HasMismatch": false
     }
   ],
+  "SectionHeaders": [
+    {
+      "Name": ".text",
+      "Index": 0,
+      "VirtualAddress": 4096,
+      "VirtualSize": 512,
+      "RawPointer": 512,
+      "RawSize": 512,
+      "Characteristics": 1610612768,
+      "Flags": [
+        "CNT_CODE",
+        "MEM_READ",
+        "MEM_EXECUTE"
+      ],
+      "IsReadable": true,
+      "IsWritable": false,
+      "IsExecutable": true,
+      "IsCode": true,
+      "IsInitializedData": false,
+      "IsUninitializedData": false,
+      "IsDiscardable": false,
+      "IsShared": false,
+      "RawPointerAligned": true,
+      "RawSizeAligned": true,
+      "VirtualAddressAligned": true,
+      "RawDataInFileBounds": true,
+      "HasRawData": true,
+      "HasVirtualData": true,
+      "VirtualPadding": 0,
+      "RawPadding": 0,
+      "HasSizeMismatch": false,
+      "HasSuspiciousPermissions": false,
+      "HasMismatch": false,
+      "RelocationCount": 0,
+      "LineNumberCount": 0
+    }
+  ],
+  "SectionDirectoryCoverage": [
+    {
+      "SectionName": ".text",
+      "Directories": []
+    }
+  ],
+  "UnmappedDataDirectories": [],
   "OptionalHeaderChecksum": 0,
   "ComputedChecksum": 33491,
   "IsChecksumValid": false,

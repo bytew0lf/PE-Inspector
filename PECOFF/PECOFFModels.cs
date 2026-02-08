@@ -3430,6 +3430,113 @@ namespace PECoff
         }
     }
 
+    public sealed class SectionHeaderInfo
+    {
+        public string Name { get; }
+        public int Index { get; }
+        public uint VirtualAddress { get; }
+        public uint VirtualSize { get; }
+        public uint RawPointer { get; }
+        public uint RawSize { get; }
+        public uint Characteristics { get; }
+        public IReadOnlyList<string> Flags { get; }
+        public bool IsReadable { get; }
+        public bool IsWritable { get; }
+        public bool IsExecutable { get; }
+        public bool IsCode { get; }
+        public bool IsInitializedData { get; }
+        public bool IsUninitializedData { get; }
+        public bool IsDiscardable { get; }
+        public bool IsShared { get; }
+        public bool RawPointerAligned { get; }
+        public bool RawSizeAligned { get; }
+        public bool VirtualAddressAligned { get; }
+        public bool RawDataInFileBounds { get; }
+        public bool HasRawData { get; }
+        public bool HasVirtualData { get; }
+        public uint VirtualPadding { get; }
+        public uint RawPadding { get; }
+        public bool HasSizeMismatch { get; }
+        public bool HasSuspiciousPermissions { get; }
+        public bool HasMismatch { get; }
+        public int RelocationCount { get; }
+        public int LineNumberCount { get; }
+
+        public SectionHeaderInfo(
+            string name,
+            int index,
+            uint virtualAddress,
+            uint virtualSize,
+            uint rawPointer,
+            uint rawSize,
+            uint characteristics,
+            string[] flags,
+            bool isReadable,
+            bool isWritable,
+            bool isExecutable,
+            bool isCode,
+            bool isInitializedData,
+            bool isUninitializedData,
+            bool isDiscardable,
+            bool isShared,
+            bool rawPointerAligned,
+            bool rawSizeAligned,
+            bool virtualAddressAligned,
+            bool rawDataInFileBounds,
+            bool hasRawData,
+            bool hasVirtualData,
+            uint virtualPadding,
+            uint rawPadding,
+            bool hasSizeMismatch,
+            bool hasSuspiciousPermissions,
+            bool hasMismatch,
+            int relocationCount,
+            int lineNumberCount)
+        {
+            Name = name ?? string.Empty;
+            Index = index;
+            VirtualAddress = virtualAddress;
+            VirtualSize = virtualSize;
+            RawPointer = rawPointer;
+            RawSize = rawSize;
+            Characteristics = characteristics;
+            Flags = Array.AsReadOnly(flags ?? Array.Empty<string>());
+            IsReadable = isReadable;
+            IsWritable = isWritable;
+            IsExecutable = isExecutable;
+            IsCode = isCode;
+            IsInitializedData = isInitializedData;
+            IsUninitializedData = isUninitializedData;
+            IsDiscardable = isDiscardable;
+            IsShared = isShared;
+            RawPointerAligned = rawPointerAligned;
+            RawSizeAligned = rawSizeAligned;
+            VirtualAddressAligned = virtualAddressAligned;
+            RawDataInFileBounds = rawDataInFileBounds;
+            HasRawData = hasRawData;
+            HasVirtualData = hasVirtualData;
+            VirtualPadding = virtualPadding;
+            RawPadding = rawPadding;
+            HasSizeMismatch = hasSizeMismatch;
+            HasSuspiciousPermissions = hasSuspiciousPermissions;
+            HasMismatch = hasMismatch;
+            RelocationCount = relocationCount;
+            LineNumberCount = lineNumberCount;
+        }
+    }
+
+    public sealed class SectionDirectoryInfo
+    {
+        public string SectionName { get; }
+        public IReadOnlyList<string> Directories { get; }
+
+        public SectionDirectoryInfo(string sectionName, string[] directories)
+        {
+            SectionName = sectionName ?? string.Empty;
+            Directories = Array.AsReadOnly(directories ?? Array.Empty<string>());
+        }
+    }
+
     public sealed class ApiSetResolutionInfo
     {
         public bool IsApiSet { get; }
@@ -4088,7 +4195,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 26;
+        public const int CurrentSchemaVersion = 27;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -4128,6 +4235,9 @@ namespace PECoff
         public IReadOnlyList<SectionSlackInfo> SectionSlacks { get; }
         public IReadOnlyList<SectionGapInfo> SectionGaps { get; }
         public IReadOnlyList<SectionPermissionInfo> SectionPermissions { get; }
+        public IReadOnlyList<SectionHeaderInfo> SectionHeaders { get; }
+        public IReadOnlyList<SectionDirectoryInfo> SectionDirectoryCoverage { get; }
+        public IReadOnlyList<string> UnmappedDataDirectories { get; }
         public uint OptionalHeaderChecksum { get; }
         public uint ComputedChecksum { get; }
         public bool IsChecksumValid { get; }
@@ -4242,6 +4352,9 @@ namespace PECoff
             SectionSlackInfo[] sectionSlacks,
             SectionGapInfo[] sectionGaps,
             SectionPermissionInfo[] sectionPermissions,
+            SectionHeaderInfo[] sectionHeaders,
+            SectionDirectoryInfo[] sectionDirectoryCoverage,
+            string[] unmappedDataDirectories,
             uint optionalHeaderChecksum,
             uint computedChecksum,
             bool isChecksumValid,
@@ -4356,6 +4469,9 @@ namespace PECoff
             SectionSlacks = Array.AsReadOnly(sectionSlacks ?? Array.Empty<SectionSlackInfo>());
             SectionGaps = Array.AsReadOnly(sectionGaps ?? Array.Empty<SectionGapInfo>());
             SectionPermissions = Array.AsReadOnly(sectionPermissions ?? Array.Empty<SectionPermissionInfo>());
+            SectionHeaders = Array.AsReadOnly(sectionHeaders ?? Array.Empty<SectionHeaderInfo>());
+            SectionDirectoryCoverage = Array.AsReadOnly(sectionDirectoryCoverage ?? Array.Empty<SectionDirectoryInfo>());
+            UnmappedDataDirectories = Array.AsReadOnly(unmappedDataDirectories ?? Array.Empty<string>());
             OptionalHeaderChecksum = optionalHeaderChecksum;
             ComputedChecksum = computedChecksum;
             IsChecksumValid = isChecksumValid;
@@ -4503,6 +4619,15 @@ namespace PECoff
             SectionPermissionInfo[] permissions = stableOrdering
                 ? SectionPermissions.OrderBy(info => info.Name, StringComparer.OrdinalIgnoreCase).ToArray()
                 : SectionPermissions.ToArray();
+            SectionHeaderInfo[] sectionHeaders = stableOrdering
+                ? SectionHeaders.OrderBy(info => info.Index).ToArray()
+                : SectionHeaders.ToArray();
+            SectionDirectoryInfo[] sectionDirectories = stableOrdering
+                ? SectionDirectoryCoverage.OrderBy(info => info.SectionName, StringComparer.OrdinalIgnoreCase).ToArray()
+                : SectionDirectoryCoverage.ToArray();
+            string[] unmappedDirectories = stableOrdering
+                ? UnmappedDataDirectories.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray()
+                : UnmappedDataDirectories.ToArray();
             ResourceStringCoverageInfo[] stringCoverage = stableOrdering
                 ? ResourceStringCoverage.OrderBy(info => info.LanguageId).ToArray()
                 : ResourceStringCoverage.ToArray();
@@ -4548,6 +4673,9 @@ namespace PECoff
                 SectionSlacks = slacks,
                 SectionGaps = gaps,
                 SectionPermissions = permissions,
+                SectionHeaders = sectionHeaders,
+                SectionDirectoryCoverage = sectionDirectories,
+                UnmappedDataDirectories = unmappedDirectories,
                 OptionalHeaderChecksum,
                 ComputedChecksum,
                 IsChecksumValid,

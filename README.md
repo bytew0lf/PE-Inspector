@@ -147,6 +147,7 @@ Defaults:
 - v24: Load-config version info + trailing field capture, resource group variants, and RT_VERSION extensions.
 - v25: TE header depth + relocations, COFF symbol scope details, COMDAT selection metadata, and raw icon/cursor resources.
 - v26: PDB DBI/TPI/GSI stream parsing + publics extraction, and cross-platform trust-store status summaries.
+- v27: Section header detail coverage (alignment/size checks + directory containment summary).
 
 ## Current Coverage Map (auto-generated)
 
@@ -162,7 +163,7 @@ Status legend:
 | DOS header + stub | `full` | Header + relocation table summary. |
 | COFF file header | `full` | Machine/characteristics, bigobj header support. |
 | Optional header (PE32/PE32+) | `full` | Standard fields + checksum/timestamp decoding. |
-| Sections | `partial` | Entropy, permissions, padding, overlaps/align checks. |
+| Sections | `full` | Header decoding (sizes/flags/align), entropy, permissions, padding, overlaps/align checks, directory containment summaries. |
 | Data directories | `partial` | Name/section mapping + Architecture/GlobalPtr/IAT deep decode. |
 | Imports/Exports | `partial` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints. |
 | Relocations | `partial` | Summaries + anomaly counts, machine-aware type mapping. |

@@ -23,4 +23,19 @@ public class SectionPermissionTests
         Assert.False(info.HasMismatch);
         Assert.Contains(info.Flags, name => string.Equals(name, "MEM_EXECUTE", StringComparison.OrdinalIgnoreCase));
     }
+
+    [Fact]
+    public void SectionPermission_Decode_Flags_Includes_Alignment_And_Comdat()
+    {
+        const uint Align16 = 0x00500000;
+        const uint LnkComdat = 0x00001000;
+        const uint MemRead = 0x40000000;
+
+        uint flags = Align16 | LnkComdat | MemRead;
+        SectionPermissionInfo info = PECOFF.DecodeSectionPermissionsForTest(flags);
+
+        Assert.Contains(info.Flags, name => string.Equals(name, "ALIGN_16", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(info.Flags, name => string.Equals(name, "LNK_COMDAT", StringComparison.OrdinalIgnoreCase));
+        Assert.True(info.IsReadable);
+    }
 }

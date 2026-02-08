@@ -479,6 +479,27 @@ namespace PE_FileInspector
                     }
                 }
 
+                if (filter.ShouldInclude("section-directories"))
+                {
+                    sb.AppendLine("Section Directory Coverage:");
+                    if (pe.SectionDirectoryCoverage.Length == 0)
+                    {
+                        sb.AppendLine("  (none)");
+                    }
+                    else
+                    {
+                        foreach (SectionDirectoryInfo entry in pe.SectionDirectoryCoverage.OrderBy(s => s.SectionName, StringComparer.OrdinalIgnoreCase))
+                        {
+                            string dirs = entry.Directories.Count > 0 ? string.Join(", ", entry.Directories) : "(none)";
+                            sb.AppendLine("  - " + Safe(entry.SectionName) + " | Directories: " + dirs);
+                        }
+                    }
+                    if (pe.UnmappedDataDirectories.Length > 0)
+                    {
+                        sb.AppendLine("  Unmapped Directories: " + string.Join(", ", pe.UnmappedDataDirectories));
+                    }
+                }
+
                 if (pe.ArchitectureDirectory != null ||
                     pe.GlobalPtrDirectory != null ||
                     pe.IatDirectory != null)
@@ -581,6 +602,54 @@ namespace PE_FileInspector
                         sb.AppendLine("  - " + entry.Name +
                                       " | Size: " + entry.RawSize.ToString(CultureInfo.InvariantCulture) +
                                       " | Entropy: " + entry.Entropy.ToString("F3", CultureInfo.InvariantCulture));
+                    }
+                }
+                sb.AppendLine();
+            }
+
+            if (filter.ShouldInclude("section-details"))
+            {
+                sb.AppendLine("Section Details:");
+                if (pe.SectionHeaders.Length == 0)
+                {
+                    sb.AppendLine("  (none)");
+                }
+                else
+                {
+                    foreach (SectionHeaderInfo info in pe.SectionHeaders.OrderBy(s => s.Index))
+                    {
+                        string flags = info.Flags.Count > 0 ? string.Join(",", info.Flags) : "(none)";
+                        sb.AppendLine("  - [" + info.Index.ToString(CultureInfo.InvariantCulture) + "] " + Safe(info.Name) +
+                                      " | RVA: 0x" + info.VirtualAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | VSZ: " + info.VirtualSize.ToString(CultureInfo.InvariantCulture) +
+                                      " | Raw: 0x" + info.RawPointer.ToString("X", CultureInfo.InvariantCulture) +
+                                      " (" + info.RawSize.ToString(CultureInfo.InvariantCulture) + ")");
+                        sb.AppendLine("      Flags: " + flags +
+                                      " | R:" + info.IsReadable +
+                                      " W:" + info.IsWritable +
+                                      " X:" + info.IsExecutable +
+                                      " | Discardable: " + info.IsDiscardable +
+                                      " | Shared: " + info.IsShared);
+                        sb.AppendLine("      Align: VA=" + info.VirtualAddressAligned +
+                                      " RawPtr=" + info.RawPointerAligned +
+                                      " RawSize=" + info.RawSizeAligned +
+                                      " | RawInBounds=" + info.RawDataInFileBounds);
+                        if (info.VirtualPadding > 0 || info.RawPadding > 0)
+                        {
+                            sb.AppendLine("      Padding: Virtual=" + info.VirtualPadding.ToString(CultureInfo.InvariantCulture) +
+                                          " | Raw=" + info.RawPadding.ToString(CultureInfo.InvariantCulture));
+                        }
+                        if (info.RelocationCount > 0 || info.LineNumberCount > 0)
+                        {
+                            sb.AppendLine("      COFF: Relocs=" + info.RelocationCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Lines=" + info.LineNumberCount.ToString(CultureInfo.InvariantCulture));
+                        }
+                        if (info.HasSuspiciousPermissions || info.HasMismatch)
+                        {
+                            sb.AppendLine("      Warnings: RWX=" + info.HasSuspiciousPermissions +
+                                          " | Mismatch=" + info.HasMismatch +
+                                          " | SizeMismatch=" + info.HasSizeMismatch);
+                        }
                     }
                 }
                 sb.AppendLine();

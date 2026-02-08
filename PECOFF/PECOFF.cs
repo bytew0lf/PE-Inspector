@@ -1778,6 +1778,24 @@ namespace PECoff
             get { return _sectionPermissions.ToArray(); }
         }
 
+        private readonly List<SectionHeaderInfo> _sectionHeaders = new List<SectionHeaderInfo>();
+        public SectionHeaderInfo[] SectionHeaders
+        {
+            get { return _sectionHeaders.ToArray(); }
+        }
+
+        private readonly List<SectionDirectoryInfo> _sectionDirectoryCoverage = new List<SectionDirectoryInfo>();
+        public SectionDirectoryInfo[] SectionDirectoryCoverage
+        {
+            get { return _sectionDirectoryCoverage.ToArray(); }
+        }
+
+        private readonly List<string> _unmappedDataDirectories = new List<string>();
+        public string[] UnmappedDataDirectories
+        {
+            get { return _unmappedDataDirectories.ToArray(); }
+        }
+
         private SubsystemInfo _subsystemInfo;
         public SubsystemInfo SubsystemInfo
         {
@@ -5303,6 +5321,9 @@ namespace PECoff
                 _sectionSlacks.ToArray(),
                 _sectionGaps.ToArray(),
                 _sectionPermissions.ToArray(),
+                _sectionHeaders.ToArray(),
+                _sectionDirectoryCoverage.ToArray(),
+                _unmappedDataDirectories.ToArray(),
                 _optionalHeaderChecksum,
                 _computedChecksum,
                 IsChecksumValid,
@@ -13198,9 +13219,10 @@ namespace PECoff
         private void BuildSectionPermissionInfos(List<IMAGE_SECTION_HEADER> sections)
         {
             _sectionPermissions.Clear();
+            Dictionary<uint, string> coffStringTable = BuildCoffStringTableMap();
             foreach (IMAGE_SECTION_HEADER section in sections)
             {
-                string name = NormalizeSectionName(section.Section);
+                string name = ResolveSectionName(section, coffStringTable);
                 uint characteristics = (uint)section.Characteristics;
                 bool isReadable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_READ) != 0;
                 bool isWritable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_WRITE) != 0;
@@ -13231,9 +13253,191 @@ namespace PECoff
             }
         }
 
+        private void BuildSectionHeaderInfos(List<IMAGE_SECTION_HEADER> sections)
+        {
+            _sectionHeaders.Clear();
+            if (sections == null)
+            {
+                return;
+            }
+
+            long fileLength = PEFileStream?.Length ?? 0;
+            Dictionary<uint, string> coffStringTable = BuildCoffStringTableMap();
+            for (int i = 0; i < sections.Count; i++)
+            {
+                IMAGE_SECTION_HEADER section = sections[i];
+                string name = ResolveSectionName(section, coffStringTable);
+                uint characteristics = (uint)section.Characteristics;
+                bool isReadable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_READ) != 0;
+                bool isWritable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_WRITE) != 0;
+                bool isExecutable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_EXECUTE) != 0;
+                bool isCode = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0;
+                bool isInitData = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) != 0;
+                bool isUninitData = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0;
+                bool isDiscardable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_DISCARDABLE) != 0;
+                bool isShared = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_SHARED) != 0;
+                bool hasSuspicious = isExecutable && isWritable;
+                bool hasMismatch = (isCode && !isExecutable) || (isInitData && isExecutable);
+                uint virtualPadding = section.VirtualSize > section.SizeOfRawData ? section.VirtualSize - section.SizeOfRawData : 0;
+                uint rawPadding = section.SizeOfRawData > section.VirtualSize ? section.SizeOfRawData - section.VirtualSize : 0;
+                bool sizeMismatch = virtualPadding > 0 || rawPadding > 0;
+                bool hasRawData = section.SizeOfRawData > 0;
+                bool hasVirtualData = section.VirtualSize > 0;
+                bool rawPointerAligned = _fileAlignment == 0 || (section.PointerToRawData % _fileAlignment) == 0;
+                bool rawSizeAligned = _fileAlignment == 0 || (section.SizeOfRawData % _fileAlignment) == 0;
+                bool virtualAligned = _sectionAlignment == 0 || (section.VirtualAddress % _sectionAlignment) == 0;
+                bool rawInBounds = fileLength <= 0 ||
+                                   (section.PointerToRawData == 0 && section.SizeOfRawData == 0) ||
+                                   (section.PointerToRawData + section.SizeOfRawData <= fileLength);
+                string[] flags = DecodeSectionFlags(characteristics);
+                _sectionHeaders.Add(new SectionHeaderInfo(
+                    name,
+                    i,
+                    section.VirtualAddress,
+                    section.VirtualSize,
+                    section.PointerToRawData,
+                    section.SizeOfRawData,
+                    characteristics,
+                    flags,
+                    isReadable,
+                    isWritable,
+                    isExecutable,
+                    isCode,
+                    isInitData,
+                    isUninitData,
+                    isDiscardable,
+                    isShared,
+                    rawPointerAligned,
+                    rawSizeAligned,
+                    virtualAligned,
+                    rawInBounds,
+                    hasRawData,
+                    hasVirtualData,
+                    virtualPadding,
+                    rawPadding,
+                    sizeMismatch,
+                    hasSuspicious,
+                    hasMismatch,
+                    section.NumberOfRelocations,
+                    section.NumberOfLinenumbers));
+            }
+        }
+
+        private void BuildSectionDirectoryCoverage(DataDirectoryInfo[] directories, List<IMAGE_SECTION_HEADER> sections)
+        {
+            _sectionDirectoryCoverage.Clear();
+            _unmappedDataDirectories.Clear();
+            if (directories == null)
+            {
+                return;
+            }
+
+            Dictionary<string, List<string>> map = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            List<string> sectionNames = new List<string>();
+            if (sections != null)
+            {
+                Dictionary<uint, string> coffStringTable = BuildCoffStringTableMap();
+                foreach (IMAGE_SECTION_HEADER section in sections)
+                {
+                    string sectionName = ResolveSectionName(section, coffStringTable);
+                    sectionNames.Add(sectionName);
+                    if (!map.ContainsKey(sectionName))
+                    {
+                        map[sectionName] = new List<string>();
+                        sectionNames.Add(sectionName);
+                    }
+                }
+            }
+
+            foreach (DataDirectoryInfo directory in directories)
+            {
+                if (directory == null || !directory.IsPresent)
+                {
+                    continue;
+                }
+
+                if (!directory.IsMapped || string.IsNullOrWhiteSpace(directory.SectionName))
+                {
+                    _unmappedDataDirectories.Add(directory.Name);
+                    continue;
+                }
+
+                if (!map.TryGetValue(directory.SectionName, out List<string> list))
+                {
+                    list = new List<string>();
+                    map[directory.SectionName] = list;
+                    sectionNames.Add(directory.SectionName);
+                }
+
+                if (!list.Any(name => string.Equals(name, directory.Name, StringComparison.OrdinalIgnoreCase)))
+                {
+                    list.Add(directory.Name);
+                }
+            }
+
+            foreach (string sectionName in sectionNames.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                if (!map.TryGetValue(sectionName, out List<string> dirs))
+                {
+                    _sectionDirectoryCoverage.Add(new SectionDirectoryInfo(sectionName, Array.Empty<string>()));
+                    continue;
+                }
+
+                dirs.Sort(StringComparer.OrdinalIgnoreCase);
+                _sectionDirectoryCoverage.Add(new SectionDirectoryInfo(sectionName, dirs.ToArray()));
+            }
+        }
+
+        private string ResolveSectionName(IMAGE_SECTION_HEADER section)
+        {
+            return ResolveSectionName(section, BuildCoffStringTableMap());
+        }
+
+        private string ResolveSectionName(IMAGE_SECTION_HEADER section, Dictionary<uint, string> coffStringTable)
+        {
+            string name = NormalizeSectionName(section.Section);
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return string.Empty;
+            }
+
+            if (name.Length > 1 && name[0] == '/' && int.TryParse(name.Substring(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out int offset))
+            {
+                if (offset > 0 && coffStringTable != null && coffStringTable.TryGetValue((uint)offset, out string resolved))
+                {
+                    return resolved;
+                }
+            }
+
+            return name;
+        }
+
+        private Dictionary<uint, string> BuildCoffStringTableMap()
+        {
+            if (_coffStringTable.Count == 0)
+            {
+                return new Dictionary<uint, string>();
+            }
+
+            Dictionary<uint, string> map = new Dictionary<uint, string>();
+            foreach (CoffStringTableEntry entry in _coffStringTable)
+            {
+                if (entry != null && !map.ContainsKey(entry.Offset))
+                {
+                    map[entry.Offset] = entry.Value ?? string.Empty;
+                }
+            }
+
+            return map;
+        }
+
         private static string[] DecodeSectionFlags(uint characteristics)
         {
             List<string> flags = new List<string>();
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_TYPE_NO_PAD) != 0)
+            {
+                flags.Add("TYPE_NO_PAD");
+            }
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0)
             {
                 flags.Add("CNT_CODE");
@@ -13245,6 +13449,35 @@ namespace PECoff
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0)
             {
                 flags.Add("CNT_UNINITIALIZED_DATA");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_OTHER) != 0)
+            {
+                flags.Add("LNK_OTHER");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_INFO) != 0)
+            {
+                flags.Add("LNK_INFO");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_REMOVE) != 0)
+            {
+                flags.Add("LNK_REMOVE");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_COMDAT) != 0)
+            {
+                flags.Add("LNK_COMDAT");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_GPREL) != 0)
+            {
+                flags.Add("GPREL");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_NRELOC_OVFL) != 0)
+            {
+                flags.Add("LNK_NRELOC_OVFL");
+            }
+            string alignment = DecodeSectionAlignment(characteristics);
+            if (!string.IsNullOrEmpty(alignment))
+            {
+                flags.Add(alignment);
             }
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_READ) != 0)
             {
@@ -13262,12 +13495,55 @@ namespace PECoff
             {
                 flags.Add("MEM_DISCARDABLE");
             }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_NOT_CACHED) != 0)
+            {
+                flags.Add("MEM_NOT_CACHED");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_NOT_PAGED) != 0)
+            {
+                flags.Add("MEM_NOT_PAGED");
+            }
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_SHARED) != 0)
             {
                 flags.Add("MEM_SHARED");
             }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_LOCKED) != 0)
+            {
+                flags.Add("MEM_LOCKED");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_PRELOAD) != 0)
+            {
+                flags.Add("MEM_PRELOAD");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_PURGEABLE) != 0)
+            {
+                flags.Add("MEM_PURGEABLE");
+            }
 
             return flags.ToArray();
+        }
+
+        private static string DecodeSectionAlignment(uint characteristics)
+        {
+            uint alignBits = characteristics & 0x00F00000;
+            switch (alignBits)
+            {
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_1BYTES: return "ALIGN_1";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_2BYTES: return "ALIGN_2";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_4BYTES: return "ALIGN_4";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_8BYTES: return "ALIGN_8";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_16BYTES: return "ALIGN_16";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_32BYTES: return "ALIGN_32";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_64BYTES: return "ALIGN_64";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_128BYTES: return "ALIGN_128";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_256BYTES: return "ALIGN_256";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_512BYTES: return "ALIGN_512";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_1024BYTES: return "ALIGN_1024";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_2048BYTES: return "ALIGN_2048";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_4096BYTES: return "ALIGN_4096";
+                case (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_8192BYTES: return "ALIGN_8192";
+                default: return string.Empty;
+            }
         }
 
         internal static SectionPermissionInfo DecodeSectionPermissionsForTest(uint characteristics)
@@ -13298,6 +13574,138 @@ namespace PECoff
                 isShared,
                 hasSuspicious,
                 hasMismatch);
+        }
+
+        internal static SectionHeaderInfo BuildSectionHeaderInfoForTest(
+            string name,
+            int index,
+            uint virtualAddress,
+            uint virtualSize,
+            uint rawPointer,
+            uint rawSize,
+            uint characteristics,
+            uint fileAlignment,
+            uint sectionAlignment,
+            long fileLength)
+        {
+            bool isReadable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_READ) != 0;
+            bool isWritable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_WRITE) != 0;
+            bool isExecutable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_EXECUTE) != 0;
+            bool isCode = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0;
+            bool isInitData = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) != 0;
+            bool isUninitData = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0;
+            bool isDiscardable = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_DISCARDABLE) != 0;
+            bool isShared = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_SHARED) != 0;
+            bool hasSuspicious = isExecutable && isWritable;
+            bool hasMismatch = (isCode && !isExecutable) || (isInitData && isExecutable);
+            uint virtualPadding = virtualSize > rawSize ? virtualSize - rawSize : 0;
+            uint rawPadding = rawSize > virtualSize ? rawSize - virtualSize : 0;
+            bool sizeMismatch = virtualPadding > 0 || rawPadding > 0;
+            bool hasRawData = rawSize > 0;
+            bool hasVirtualData = virtualSize > 0;
+            bool rawPointerAligned = fileAlignment == 0 || (rawPointer % fileAlignment) == 0;
+            bool rawSizeAligned = fileAlignment == 0 || (rawSize % fileAlignment) == 0;
+            bool virtualAligned = sectionAlignment == 0 || (virtualAddress % sectionAlignment) == 0;
+            bool rawInBounds = fileLength <= 0 ||
+                               (rawPointer == 0 && rawSize == 0) ||
+                               (rawPointer + rawSize <= fileLength);
+            string[] flags = DecodeSectionFlags(characteristics);
+            return new SectionHeaderInfo(
+                name,
+                index,
+                virtualAddress,
+                virtualSize,
+                rawPointer,
+                rawSize,
+                characteristics,
+                flags,
+                isReadable,
+                isWritable,
+                isExecutable,
+                isCode,
+                isInitData,
+                isUninitData,
+                isDiscardable,
+                isShared,
+                rawPointerAligned,
+                rawSizeAligned,
+                virtualAligned,
+                rawInBounds,
+                hasRawData,
+                hasVirtualData,
+                virtualPadding,
+                rawPadding,
+                sizeMismatch,
+                hasSuspicious,
+                hasMismatch,
+                0,
+                0);
+        }
+
+        internal static SectionDirectoryInfo[] BuildSectionDirectoryCoverageForTest(
+            DataDirectoryInfo[] directories,
+            string[] sectionNames,
+            out string[] unmapped)
+        {
+            List<SectionDirectoryInfo> coverage = new List<SectionDirectoryInfo>();
+            List<string> unmappedList = new List<string>();
+            Dictionary<string, List<string>> map = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            List<string> sectionOrder = new List<string>();
+
+            if (sectionNames != null)
+            {
+                foreach (string sectionName in sectionNames)
+                {
+                    if (string.IsNullOrWhiteSpace(sectionName))
+                    {
+                        continue;
+                    }
+                    if (!map.ContainsKey(sectionName))
+                    {
+                        map[sectionName] = new List<string>();
+                        sectionOrder.Add(sectionName);
+                    }
+                }
+            }
+
+            if (directories != null)
+            {
+                foreach (DataDirectoryInfo directory in directories)
+                {
+                    if (directory == null || !directory.IsPresent)
+                    {
+                        continue;
+                    }
+
+                    if (!directory.IsMapped || string.IsNullOrWhiteSpace(directory.SectionName))
+                    {
+                        unmappedList.Add(directory.Name);
+                        continue;
+                    }
+
+                    if (!map.TryGetValue(directory.SectionName, out List<string> list))
+                    {
+                        list = new List<string>();
+                        map[directory.SectionName] = list;
+                        sectionOrder.Add(directory.SectionName);
+                    }
+
+                    if (!list.Any(name => string.Equals(name, directory.Name, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        list.Add(directory.Name);
+                    }
+                }
+            }
+
+            foreach (string sectionName in sectionOrder.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                map.TryGetValue(sectionName, out List<string> list);
+                string[] dirs = list == null ? Array.Empty<string>() : list.OrderBy(v => v, StringComparer.OrdinalIgnoreCase).ToArray();
+                coverage.Add(new SectionDirectoryInfo(sectionName, dirs));
+            }
+
+            unmapped = unmappedList.OrderBy(v => v, StringComparer.OrdinalIgnoreCase).ToArray();
+            return coverage.ToArray();
         }
 
         private static SectionRange[] BuildSectionRanges(List<IMAGE_SECTION_HEADER> sections)
@@ -21294,10 +21702,12 @@ namespace PECoff
             }
 
             _sections = sections;
-            BuildSectionPermissionInfos(sections);
             ParseCoffSymbolTable(pointerToSymbolTable, numberOfSymbols, sections);
+            BuildSectionPermissionInfos(sections);
             ParseCoffLineNumbers(sections);
             ParseCoffRelocations(sections);
+            BuildSectionHeaderInfos(sections);
+            BuildSectionDirectoryCoverage(_dataDirectoryInfos, sections);
             ComputeOverlayInfo(sections);
             ComputeSectionEntropies(sections);
             ComputePackingHints(sections);
@@ -21367,6 +21777,9 @@ namespace PECoff
                 _sectionSlacks.Clear();
                 _sectionGaps.Clear();
                 _sectionPermissions.Clear();
+                _sectionHeaders.Clear();
+                _sectionDirectoryCoverage.Clear();
+                _unmappedDataDirectories.Clear();
                 _overlayInfo = new OverlayInfo(0, 0);
                 _overlayContainers.Clear();
                 _securityFeaturesInfo = null;
@@ -21609,6 +22022,8 @@ namespace PECoff
                     ParseCoffSymbolTable(peHeader.FileHeader.PointerToSymbolTable, peHeader.FileHeader.NumberOfSymbols, sections);
                     ParseCoffLineNumbers(sections);
                     ParseCoffRelocations(sections);
+                    BuildSectionHeaderInfos(sections);
+                    BuildSectionDirectoryCoverage(_dataDirectoryInfos, sections);
 
                     for (int i = 0; i < dataDirectory.Length; i++)
                     {
