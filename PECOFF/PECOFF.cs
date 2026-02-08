@@ -2826,6 +2826,11 @@ namespace PECoff
             Guid pdbGuid = Guid.Empty;
             uint pdbAge = 0;
             string notes = string.Empty;
+            PdbDbiInfo dbiInfo = null;
+            PdbTpiInfo tpiInfo = null;
+            PdbTpiInfo ipiInfo = null;
+            PdbGsiInfo publicsInfo = null;
+            PdbGsiInfo globalsInfo = null;
 
             if (streamCount > 1 && streamSizes[1] != 0xFFFFFFFF && streamSizes[1] > 0)
             {
@@ -2843,18 +2848,101 @@ namespace PECoff
             }
 
             List<string> publics = new List<string>();
-            for (int i = 2; i < streamCount; i++)
+            if (streamCount > 2 && streamSizes[2] != 0xFFFFFFFF && streamSizes[2] > 0)
             {
-                if (streamSizes[i] == 0 || streamSizes[i] == 0xFFFFFFFF)
+                if (TryReadMsfStreamPartial(stream, pageSize, streamSizes[2], streamPages[2], 256, out byte[] tpiStream) &&
+                    TryParseTpiStream(tpiStream, false, out PdbTpiInfo parsedTpi, out string tpiNote))
                 {
-                    continue;
+                    tpiInfo = parsedTpi;
+                    notes = AppendNote(notes, tpiNote);
+                }
+            }
+
+            if (streamCount > 4 && streamSizes[4] != 0xFFFFFFFF && streamSizes[4] > 0)
+            {
+                if (TryReadMsfStreamPartial(stream, pageSize, streamSizes[4], streamPages[4], 256, out byte[] ipiStream) &&
+                    TryParseTpiStream(ipiStream, true, out PdbTpiInfo parsedIpi, out string ipiNote))
+                {
+                    ipiInfo = parsedIpi;
+                    notes = AppendNote(notes, ipiNote);
+                }
+            }
+
+            int dbiStreamIndex = -1;
+            if (streamCount > 3 && streamSizes[3] != 0xFFFFFFFF && streamSizes[3] > 0)
+            {
+                if (TryReadMsfStreamPartial(stream, pageSize, streamSizes[3], streamPages[3], 128, out byte[] dbiStream) &&
+                    TryParseDbiStream(dbiStream, out dbiInfo, out string dbiNote))
+                {
+                    dbiStreamIndex = 3;
+                    notes = AppendNote(notes, dbiNote);
+                }
+            }
+
+            if (dbiInfo == null)
+            {
+                for (int i = 0; i < streamCount; i++)
+                {
+                    if (streamSizes[i] == 0 || streamSizes[i] == 0xFFFFFFFF)
+                    {
+                        continue;
+                    }
+                    if (!TryReadMsfStreamPartial(stream, pageSize, streamSizes[i], streamPages[i], 128, out byte[] dbiCandidate))
+                    {
+                        continue;
+                    }
+
+                    if (TryParseDbiStream(dbiCandidate, out dbiInfo, out string dbiNote))
+                    {
+                        dbiStreamIndex = i;
+                        notes = AppendNote(notes, dbiNote);
+                        break;
+                    }
+                }
+            }
+
+            if (dbiInfo != null)
+            {
+                int publicStreamIndex = dbiInfo.PublicStreamIndex;
+                if (publicStreamIndex >= 0 && publicStreamIndex < streamCount)
+                {
+                    if (TryReadMsfStreamPartial(stream, pageSize, streamSizes[publicStreamIndex], streamPages[publicStreamIndex], 65536, out byte[] publicStream))
+                    {
+                        publicsInfo = TryParseGsiStream(publicStream, "Publics", publicStreamIndex, streamSizes[publicStreamIndex], out string gsiNote, publics);
+                        notes = AppendNote(notes, gsiNote);
+                    }
                 }
 
-                if (TryReadMsfStreamPartial(stream, pageSize, streamSizes[i], streamPages[i], 8192, out byte[] candidate))
+                int globalStreamIndex = dbiInfo.GlobalStreamIndex;
+                if (globalStreamIndex >= 0 && globalStreamIndex < streamCount)
                 {
-                    if (TryParsePublicsStream(candidate, publics))
+                    if (TryReadMsfStreamPartial(stream, pageSize, streamSizes[globalStreamIndex], streamPages[globalStreamIndex], 32768, out byte[] globalStream))
                     {
-                        break;
+                        globalsInfo = TryParseGsiStream(globalStream, "Globals", globalStreamIndex, streamSizes[globalStreamIndex], out string gsiNote, null);
+                        notes = AppendNote(notes, gsiNote);
+                    }
+                }
+            }
+
+            if (publics.Count == 0)
+            {
+                for (int i = 2; i < streamCount; i++)
+                {
+                    if (streamSizes[i] == 0 || streamSizes[i] == 0xFFFFFFFF)
+                    {
+                        continue;
+                    }
+
+                    if (TryReadMsfStreamPartial(stream, pageSize, streamSizes[i], streamPages[i], 8192, out byte[] candidate))
+                    {
+                        if (TryParsePublicsStream(candidate, publics))
+                        {
+                            if (publicsInfo == null)
+                            {
+                                publicsInfo = new PdbGsiInfo("Publics", i, streamSizes[i], ReadUInt32(candidate, 0), ReadUInt32(candidate, 4), publics.ToArray(), string.Empty);
+                            }
+                            break;
+                        }
                     }
                 }
             }
@@ -2870,6 +2958,11 @@ namespace PECoff
                 pdbAge,
                 publics.Count,
                 publics.ToArray(),
+                dbiInfo,
+                tpiInfo,
+                ipiInfo,
+                publicsInfo,
+                globalsInfo,
                 notes);
             return true;
         }
@@ -3028,6 +3121,221 @@ namespace PECoff
             signature = ReadUInt32(data, 0);
             age = ReadUInt32(data, 4);
             return true;
+        }
+
+        private static bool TryParseDbiStream(ReadOnlySpan<byte> data, out PdbDbiInfo info, out string note)
+        {
+            info = null;
+            note = string.Empty;
+            if (data.Length < 64)
+            {
+                note = "DBI stream too small.";
+                return false;
+            }
+
+            int signature = ReadInt32(data, 0);
+            int version = ReadInt32(data, 4);
+            int age = ReadInt32(data, 8);
+            ushort globalStreamIndex = ReadUInt16(data, 12);
+            ushort buildNumber = ReadUInt16(data, 14);
+            ushort publicStreamIndex = ReadUInt16(data, 16);
+            ushort pdbDllVersion = ReadUInt16(data, 18);
+            ushort symRecordStreamIndex = ReadUInt16(data, 20);
+            ushort pdbDllRbld = ReadUInt16(data, 22);
+            int moduleInfoSize = ReadInt32(data, 24);
+            int sectionContribSize = ReadInt32(data, 28);
+            int sectionMapSize = ReadInt32(data, 32);
+            int sourceInfoSize = ReadInt32(data, 36);
+            int typeServerSize = ReadInt32(data, 40);
+            int mfcTypeServerIndex = ReadInt32(data, 44);
+            int optionalDbgHeaderSize = ReadInt32(data, 48);
+            int ecSubstreamSize = ReadInt32(data, 52);
+            ushort flags = ReadUInt16(data, 56);
+            ushort machine = ReadUInt16(data, 58);
+            int reserved = ReadInt32(data, 60);
+
+            if (moduleInfoSize < 0 || sectionContribSize < 0 || sectionMapSize < 0 || sourceInfoSize < 0 ||
+                typeServerSize < 0 || optionalDbgHeaderSize < 0 || ecSubstreamSize < 0)
+            {
+                note = "DBI stream contains negative sizes.";
+            }
+            if (signature == 0 && version == 0)
+            {
+                note = AppendNote(note, "DBI signature/version are zero.");
+            }
+
+            info = new PdbDbiInfo(
+                signature,
+                version,
+                age,
+                globalStreamIndex,
+                publicStreamIndex,
+                symRecordStreamIndex,
+                machine,
+                flags,
+                moduleInfoSize,
+                sectionContribSize,
+                sectionMapSize,
+                sourceInfoSize,
+                optionalDbgHeaderSize,
+                typeServerSize,
+                ecSubstreamSize,
+                AppendNote(note, $"Build={buildNumber}, PdbDll={pdbDllVersion}, Rbld={pdbDllRbld}, MfcIdx={mfcTypeServerIndex}, Reserved={reserved}"));
+            return true;
+        }
+
+        private static bool TryParseTpiStream(ReadOnlySpan<byte> data, bool isIpi, out PdbTpiInfo info, out string note)
+        {
+            info = null;
+            note = string.Empty;
+            if (data.Length < 56)
+            {
+                note = (isIpi ? "IPI" : "TPI") + " stream too small.";
+                return false;
+            }
+
+            uint version = ReadUInt32(data, 0);
+            uint headerSize = ReadUInt32(data, 4);
+            uint typeIndexBegin = ReadUInt32(data, 8);
+            uint typeIndexEnd = ReadUInt32(data, 12);
+            uint typeRecordBytes = ReadUInt32(data, 16);
+            ushort hashStreamIndex = ReadUInt16(data, 20);
+            ushort hashAuxStreamIndex = ReadUInt16(data, 22);
+            uint hashKeySize = ReadUInt32(data, 24);
+            uint hashBucketCount = ReadUInt32(data, 28);
+            uint hashValueBufferOffset = ReadUInt32(data, 32);
+            uint hashValueBufferLength = ReadUInt32(data, 36);
+            uint indexOffsetBufferOffset = ReadUInt32(data, 40);
+            uint indexOffsetBufferLength = ReadUInt32(data, 44);
+            uint hashAdjBufferOffset = ReadUInt32(data, 48);
+            uint hashAdjBufferLength = ReadUInt32(data, 52);
+
+            if (headerSize < 56)
+            {
+                note = AppendNote(note, (isIpi ? "IPI" : "TPI") + " header size is smaller than expected.");
+            }
+            if (typeIndexEnd < typeIndexBegin)
+            {
+                note = AppendNote(note, (isIpi ? "IPI" : "TPI") + " type index range is invalid.");
+            }
+
+            info = new PdbTpiInfo(
+                version,
+                headerSize,
+                typeIndexBegin,
+                typeIndexEnd,
+                typeRecordBytes,
+                hashStreamIndex,
+                hashAuxStreamIndex,
+                hashKeySize,
+                hashBucketCount,
+                hashValueBufferLength,
+                indexOffsetBufferLength,
+                hashAdjBufferLength,
+                AppendNote(note, $"HashValueOffset={hashValueBufferOffset}, IndexOffset={indexOffsetBufferOffset}, HashAdjOffset={hashAdjBufferOffset}"));
+            return true;
+        }
+
+        private static PdbGsiInfo TryParseGsiStream(
+            ReadOnlySpan<byte> data,
+            string kind,
+            int streamIndex,
+            uint streamSize,
+            out string note,
+            List<string> names)
+        {
+            note = string.Empty;
+            if (data.Length == 0)
+            {
+                return null;
+            }
+
+            List<string> localNames = names ?? new List<string>();
+            if (localNames.Count == 0)
+            {
+                TryParsePublicsStream(data, localNames);
+            }
+            if (localNames.Count == 0)
+            {
+                ExtractSymbolNames(data, localNames, 50);
+            }
+
+            uint signature = ReadUInt32(data, 0);
+            uint version = data.Length >= 8 ? ReadUInt32(data, 4) : 0;
+            if (localNames.Count == 0 && signature == 0 && version == 0)
+            {
+                note = AppendNote(note, kind + " stream did not yield symbols.");
+            }
+
+            return new PdbGsiInfo(
+                kind,
+                streamIndex,
+                streamSize,
+                signature,
+                version,
+                localNames.ToArray(),
+                note);
+        }
+
+        private static void ExtractSymbolNames(ReadOnlySpan<byte> data, List<string> names, int maxNames)
+        {
+            if (data.Length == 0 || names == null || maxNames <= 0)
+            {
+                return;
+            }
+
+            int cursor = 0;
+            while (cursor < data.Length && names.Count < maxNames)
+            {
+                while (cursor < data.Length && (data[cursor] < 0x20 || data[cursor] > 0x7E))
+                {
+                    cursor++;
+                }
+
+                int start = cursor;
+                while (cursor < data.Length && data[cursor] >= 0x20 && data[cursor] <= 0x7E)
+                {
+                    cursor++;
+                }
+
+                int length = cursor - start;
+                if (length >= 2 && length <= 256)
+                {
+                    ReadOnlySpan<byte> slice = data.Slice(start, length);
+                    if (IsLikelySymbolName(slice))
+                    {
+                        names.Add(Encoding.ASCII.GetString(slice));
+                    }
+                }
+            }
+        }
+
+        private static bool IsLikelySymbolName(ReadOnlySpan<byte> data)
+        {
+            if (data.Length == 0)
+            {
+                return false;
+            }
+
+            bool hasAlpha = false;
+            for (int i = 0; i < data.Length; i++)
+            {
+                byte b = data[i];
+                bool isAlpha = (b >= (byte)'A' && b <= (byte)'Z') ||
+                               (b >= (byte)'a' && b <= (byte)'z');
+                bool isDigit = b >= (byte)'0' && b <= (byte)'9';
+                if (isAlpha)
+                {
+                    hasAlpha = true;
+                }
+                if (!isAlpha && !isDigit && b != (byte)'_' && b != (byte)'@' && b != (byte)'?' &&
+                    b != (byte)'$' && b != (byte)'.' && b != (byte)':' && b != (byte)'~')
+                {
+                    return false;
+                }
+            }
+
+            return hasAlpha;
         }
 
         private static bool TryParsePublicsStream(ReadOnlySpan<byte> data, List<string> publics)
@@ -7894,6 +8202,11 @@ namespace PECoff
                           (buffer[offset + 3] << 24));
         }
 
+        private static int ReadInt32(ReadOnlySpan<byte> buffer, int offset)
+        {
+            return unchecked((int)ReadUInt32(buffer, offset));
+        }
+
         private static bool TryParseArchitectureHeader(
             ReadOnlySpan<byte> data,
             out uint magic,
@@ -11193,6 +11506,41 @@ namespace PECoff
             {
                 return false;
             }
+        }
+
+        internal static bool TryParsePdbDbiStreamForTest(byte[] data, out PdbDbiInfo info)
+        {
+            info = null;
+            if (data == null)
+            {
+                return false;
+            }
+
+            return TryParseDbiStream(data, out info, out _);
+        }
+
+        internal static bool TryParsePdbTpiStreamForTest(byte[] data, bool isIpi, out PdbTpiInfo info)
+        {
+            info = null;
+            if (data == null)
+            {
+                return false;
+            }
+
+            return TryParseTpiStream(data, isIpi, out info, out _);
+        }
+
+        internal static bool TryParsePdbGsiStreamForTest(byte[] data, out PdbGsiInfo info)
+        {
+            info = null;
+            if (data == null)
+            {
+                return false;
+            }
+
+            List<string> names = new List<string>();
+            info = TryParseGsiStream(data, "Publics", 0, (uint)data.Length, out _, names);
+            return info != null;
         }
 
         internal static bool TryReadCodeIntegrityForTest(byte[] data, out LoadConfigCodeIntegrityInfo info)

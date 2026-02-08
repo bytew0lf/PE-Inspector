@@ -22,6 +22,12 @@ public class PdbParsingTests
         Assert.Equal((uint)3, info.Age);
         Assert.Equal(new Guid("00112233-4455-6677-8899-AABBCCDDEEFF"), info.Guid);
         Assert.Equal(2, info.PublicSymbolCount);
+        Assert.Null(info.Dbi);
+        Assert.Null(info.Tpi);
+        Assert.Null(info.Ipi);
+        Assert.NotNull(info.Publics);
+        Assert.Equal(2, info.Publics.NameCount);
+        Assert.Null(info.Globals);
         Assert.Contains("foo", info.PublicSymbols, StringComparer.Ordinal);
         Assert.Contains("bar", info.PublicSymbols, StringComparer.Ordinal);
     }

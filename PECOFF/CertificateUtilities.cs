@@ -152,6 +152,7 @@ namespace PECoff
                     Array.Empty<string>(),
                     Array.Empty<string>(),
                     BuildWinTrustResult(policy, filePath),
+                    BuildTrustStoreResult(policy, false, false, Array.Empty<string>()),
                     !policy.RequireCertificateTransparency,
                     isPolicyCompliant,
                     isPolicyCompliant ? Array.Empty<string>() : new[] { "Missing signature." },
@@ -318,11 +319,51 @@ namespace PECoff
                 timestampStatus.ToArray(),
                 ctLogs.Count == 0 ? Array.Empty<string>() : ctLogs.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
                 BuildWinTrustResult(policy, filePath),
+                BuildTrustStoreResult(policy, hasSignature, allChainValid, chainStatus),
                 ctRequiredMet,
                 policyCompliant,
                 policyFailures.ToArray(),
                 signerStatuses.ToArray(),
                 policy);
+        }
+
+        private static AuthenticodeTrustStoreInfo BuildTrustStoreResult(
+            AuthenticodePolicy policy,
+            bool hasSignature,
+            bool allChainValid,
+            IReadOnlyList<string> chainStatus)
+        {
+            policy ??= new AuthenticodePolicy();
+            bool performed = policy.EnableTrustStoreCheck || policy.RevocationMode != X509RevocationMode.NoCheck || policy.OfflineChainCheck;
+            bool verified = hasSignature && allChainValid;
+            string platform = GetPlatformName();
+            string[] status = chainStatus == null ? Array.Empty<string>() : chainStatus.ToArray();
+            return new AuthenticodeTrustStoreInfo(
+                performed,
+                verified,
+                platform,
+                policy.EnableTrustStoreCheck,
+                policy.OfflineChainCheck,
+                policy.RevocationMode,
+                policy.RevocationFlag,
+                status);
+        }
+
+        private static string GetPlatformName()
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                return "Windows";
+            }
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            {
+                return "macOS";
+            }
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                return "Linux";
+            }
+            return RuntimeInformation.OSDescription ?? "Unknown";
         }
 
         private static List<AuthenticodeSignerStatusInfo> BuildSignerStatuses(Pkcs7SignerInfo[] signers)

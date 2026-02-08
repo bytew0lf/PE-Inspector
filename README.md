@@ -27,11 +27,11 @@ Use `--sections` to emit only selected report sections, or `--exclude-sections` 
 The report also includes CLR/.NET metadata when present (runtime version, metadata version, stream list, module references, managed resource names/sizes/hashes).
 It now also includes assembly metadata (assembly name/version, MVID, target framework, debuggable attribute, assembly/module attribute lists) and metadata-based assembly references (with public key tokens and resolution hints), plus a runtime hint (IL/Mixed/ReadyToRun).
 Resource string tables and manifests are decoded and included in the report when available, along with string coverage summaries and strong-name signature validation details for .NET files.
-The report also includes debug directory entries (CodeView/PDB IDs + identity checks, MSF directory parsing with PDB signature/age, plus POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO/Borland/reserved summaries), data directory mapping and content hints (name/RVA/size/section + Architecture/GlobalPtr/IAT summaries), COFF symbol/line/string tables when present (type decoding + aux detail), base relocation summaries (top types + sample RVAs, anomaly counts), TLS/load-config data (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, dynamic value relocation table details, GuardRF/HotPatch/Enclave/Volatile metadata pointers, callback resolution + section mapping, TLS raw data hash/preview + template sizing, guard feature matrix, SEH handler table parsing), version-info details (string tables + translations + file flags), icon-group reconstruction (PNG detection), bitmap/cursor resource metadata, font/fontdir/rcdata/dlginit/animated cursor/icon parsing (JSON schema/XML manifest hints, protobuf/flatbuffers/unity bundle detection), Authenticode digest checks and signer status/policy summaries (RFC3161 timestamps, nested signatures, certificate transparency hints + CT log IDs, WinTrust on Windows, optional catalog lookup on Windows), message tables (entry ranges, flags/length), dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI, requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/entropy summaries and packing hints plus overlay container parsing (ZIP/RAR4/5/7z NextHeader + EncodedHeader with LZMA/LZMA2), import descriptor consistency/bind hints with API-set resolution confidence and canonical targets plus null-thunk/termination stats, export forwarder resolution hints plus export anomaly counts, section padding and permission analysis, exception directory summaries (unwind counts/details/range validity), resource locale coverage, rich-header toolchain summaries, and subsystem/security flags when present.
+The report also includes debug directory entries (CodeView/PDB IDs + identity checks, MSF directory parsing with PDB signature/age and DBI/TPI/GSI/publics stream summaries, plus POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO/Borland/reserved summaries), data directory mapping and content hints (name/RVA/size/section + Architecture/GlobalPtr/IAT summaries), COFF symbol/line/string tables when present (type decoding + aux detail), base relocation summaries (top types + sample RVAs, anomaly counts), TLS/load-config data (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, dynamic value relocation table details, GuardRF/HotPatch/Enclave/Volatile metadata pointers, callback resolution + section mapping, TLS raw data hash/preview + template sizing, guard feature matrix, SEH handler table parsing), version-info details (string tables + translations + file flags), icon-group reconstruction (PNG detection), bitmap/cursor resource metadata, font/fontdir/rcdata/dlginit/animated cursor/icon parsing (JSON schema/XML manifest hints, protobuf/flatbuffers/unity bundle detection), Authenticode digest checks and signer status/policy summaries (RFC3161 timestamps, nested signatures, certificate transparency hints + CT log IDs, WinTrust on Windows, cross-platform trust store/revocation summaries, optional catalog lookup on Windows), message tables (entry ranges, flags/length), dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI, requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/entropy summaries and packing hints plus overlay container parsing (ZIP/RAR4/5/7z NextHeader + EncodedHeader with LZMA/LZMA2), import descriptor consistency/bind hints with API-set resolution confidence and canonical targets plus null-thunk/termination stats, export forwarder resolution hints plus export anomaly counts, section padding and permission analysis, exception directory summaries (unwind counts/details/range validity), resource locale coverage, rich-header toolchain summaries, and subsystem/security flags when present.
 
 ## Additional functionality
 The PECOFF Library has also the ability to get all imports and exports of the PE-file as well as the certificate.
-It now exposes debug directory entries (CodeView/PDB IDs + identity checks, MSF directory parsing with PDB signature/age, plus POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO/Borland/reserved summaries), data directory mapping and content hints (name/RVA/size/section + Architecture/GlobalPtr/IAT summaries), COFF symbol/line/string tables when present (type decoding + aux detail), base relocation details + section summaries (with anomaly counts), TLS/load-config metadata (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, dynamic value reloc table/GuardRF/HotPatch/Enclave/Volatile metadata pointers, callback resolution + section mapping, TLS raw data hash/preview + template sizing, guard feature matrix, SEH handler table parsing), icon groups (PNG detection), version-info details (string tables + translations + file flags), bitmap/cursor metadata, font/fontdir/rcdata/dlginit/animated cursor/icon parsing (JSON schema/XML manifest hints, protobuf/flatbuffers/unity bundle detection), message tables (entry ranges, flags/length), dialog/menu/toolbar/accelerator parsing, manifest schema details (requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/section entropy and packing hints plus overlay container parsing (ZIP/RAR4/5/7z NextHeader + EncodedHeader with LZMA/LZMA2), import descriptor consistency/bind status with API-set resolution confidence and canonical targets plus null-thunk/termination stats, export forwarder resolution hints plus export anomaly counts, section padding/permission analysis, exception directory summaries (including unwind details + directory placement), resource locale and string coverage, strong-name signature validation, subsystem/DllCharacteristics summaries, Authenticode digest verification results, signer status/policy summaries (RFC3161 timestamps, nested signatures, certificate transparency hints + CT log IDs, WinTrust on Windows), plus CLR module references, token cross-refs, method body IL sizes, and managed resource summaries.
+It now exposes debug directory entries (CodeView/PDB IDs + identity checks, MSF directory parsing with PDB signature/age and DBI/TPI/GSI/publics stream summaries, plus POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO/Borland/reserved summaries), data directory mapping and content hints (name/RVA/size/section + Architecture/GlobalPtr/IAT summaries), COFF symbol/line/string tables when present (type decoding + aux detail), base relocation details + section summaries (with anomaly counts), TLS/load-config metadata (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, dynamic value reloc table/GuardRF/HotPatch/Enclave/Volatile metadata pointers, callback resolution + section mapping, TLS raw data hash/preview + template sizing, guard feature matrix, SEH handler table parsing), icon groups (PNG detection), version-info details (string tables + translations + file flags), bitmap/cursor metadata, font/fontdir/rcdata/dlginit/animated cursor/icon parsing (JSON schema/XML manifest hints, protobuf/flatbuffers/unity bundle detection), message tables (entry ranges, flags/length), dialog/menu/toolbar/accelerator parsing, manifest schema details (requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/section entropy and packing hints plus overlay container parsing (ZIP/RAR4/5/7z NextHeader + EncodedHeader with LZMA/LZMA2), import descriptor consistency/bind status with API-set resolution confidence and canonical targets plus null-thunk/termination stats, export forwarder resolution hints plus export anomaly counts, section padding/permission analysis, exception directory summaries (including unwind details + directory placement), resource locale and string coverage, strong-name signature validation, subsystem/DllCharacteristics summaries, Authenticode digest verification results, signer status/policy summaries (RFC3161 timestamps, nested signatures, certificate transparency hints + CT log IDs, WinTrust on Windows, cross-platform trust store/revocation summaries), plus CLR module references, token cross-refs, method body IL sizes, and managed resource summaries.
 
 ### Library API options
 The PECOFF parser supports options and an immutable result snapshot:
@@ -45,7 +45,7 @@ The PECOFF parser supports options and an immutable result snapshot:
 - `PECOFFOptions.ParseCertificateSigners`: extract PKCS7 signer info.
 - `PECOFFOptions.UseMemoryMappedFile`: enable memory-mapped parsing.
 - `PECOFFOptions.LazyParseDataDirectories`: defer parsing resources/debug/relocations/exception/load-config/CLR until accessed.
-- `PECOFFOptions.AuthenticodePolicy`: configure chain/timestamp/EKU policy checks in signer status (including optional trust-store checks and revocation settings).
+- `PECOFFOptions.AuthenticodePolicy`: configure chain/timestamp/EKU policy checks in signer status (including optional trust-store checks and revocation settings on all platforms).
 - `AuthenticodePolicy.RequireCertificateTransparency`: optionally require SCT data for code-signing certificates.
 - `AuthenticodePolicy.OfflineChainCheck`: disable certificate downloads and force offline chain evaluation.
 - `AuthenticodePolicy.EnableCatalogSignatureCheck`: enable WinTrust catalog signature lookup (Windows only).
@@ -146,24 +146,40 @@ Defaults:
 - v23: Architecture/GlobalPtr/IAT deep decode, ARM32/IA64 unwind details, and machine-aware base relocation types (RISC-V/LoongArch).
 - v24: Load-config version info + trailing field capture, resource group variants, and RT_VERSION extensions.
 - v25: TE header depth + relocations, COFF symbol scope details, COMDAT selection metadata, and raw icon/cursor resources.
+- v26: PDB DBI/TPI/GSI stream parsing + publics extraction, and cross-platform trust-store status summaries.
 
-### Coverage map
-High-level PE/COFF structures and current coverage:
+## Current Coverage Map (auto-generated)
 
-- DOS header + stub: implemented (including relocation table summary)
-- COFF file header: implemented
-- Optional header (PE32/PE32+): implemented
-- Data directories: implemented (name/section mapping + Architecture/GlobalPtr/IAT deep decode)
-- Sections: implemented (entropy, permissions, padding)
-- Imports/Exports: implemented (INT/IAT, delay/bound, forwarders, anomalies)
-- Overlay: implemented (size + ZIP/RAR/7z container parsing)
-- Resources: implemented (strings, manifests/MUI, dialogs/menus/toolbars/accelerators, icons/cursors/bitmaps + group variants and raw icon/cursor entries, message tables, HTML/DLGINCLUDE/PLUGPLAY/VXD raw summaries, RT_VERSION extensions)
-- Resources (extended): implemented (fonts/fontdir, rcdata with format detection including protobuf/flatbuffers/unity bundles, dlginit, animated cursor/icon)
-- Debug directory: implemented (CodeView/PDB, MSF stream directory + PDB signature/age, COFF, POGO, VC_FEATURE, EX_DLLCHARACTERISTICS, FPO, MISC, OMAP, REPRO, ILTCG, MPX, CLSID, FIXUP, Borland, reserved, embedded portable PDB, SPGO, PDB hash)
-- Relocations: implemented (summaries + anomalies, machine-aware base relocation mapping incl. RISC-V/LoongArch)
-- Exception directory: implemented (unwind + validation, AMD64/ARM64 full decode, ARM32 opcode decode + length checks, IA64 descriptor summaries, x86 SEH handler table)
-- TLS: implemented (callbacks + raw data mapping/alignment, hash/preview, template sizing/zero-fill notes)
-- Load config: implemented (guard flags, guard tables, code integrity, enclave config + imports, CHPE, dynamic reloc tables, SEH handler metadata + entries, versioned layout + trailing fields)
+Status legend:
+* `full`: Implemented and covered by unit/matrix tests
+* `partial`: Implemented, but only partially covered by tests
+* `open`: Not implemented yet
+
+### Parser/Report Coverage
+
+| Area | Status | Current coverage |
+| --- | --- | --- |
+| DOS header + stub | `full` | Header + relocation table summary. |
+| COFF file header | `full` | Machine/characteristics, bigobj header support. |
+| Optional header (PE32/PE32+) | `full` | Standard fields + checksum/timestamp decoding. |
+| Sections | `partial` | Entropy, permissions, padding, overlaps/align checks. |
+| Data directories | `partial` | Name/section mapping + Architecture/GlobalPtr/IAT deep decode. |
+| Imports/Exports | `partial` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints. |
+| Relocations | `partial` | Summaries + anomaly counts, machine-aware type mapping. |
+| TLS | `partial` | Callbacks + raw data mapping, hash/preview, template sizing notes. |
+| Load config | `partial` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout. |
+| Exception directory | `partial` | AMD64/ARM64 full decode, ARM32/IA64 summaries, x86 SEH. |
+| Resources | `partial` | Strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, message tables, RT_VERSION extensions. |
+| Resources (extended) | `partial` | Fonts/fontdir, rcdata format detection, dlginit, animated cursor/icon. |
+| Debug directory | `partial` | CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, embedded PDB, SPGO, PDB hash. |
+| PDB/MSF streams | `partial` | MSF directory + PDB signature/age, DBI/TPI/GSI/publics summaries. |
+| CLR/.NET | `partial` | Metadata tables, token cross-refs, method body IL sizes, R2R header. |
+| Certificates/Authenticode | `partial` | PKCS7 signers/timestamps, CT hints/logs, WinTrust (Windows), trust-store status. |
+| COFF objects | `partial` | Symbols/aux/relocs/line numbers, COMDAT selection hints. |
+| COFF archives/import libs | `partial` | Archive headers, longnames, import object details. |
+| UEFI TE images | `partial` | Header/sections + base relocation parsing. |
+| Overlay containers | `partial` | ZIP/RAR4/5/7z container parsing. |
+| Rich header | `partial` | Toolchain signature summaries. |
 
 ### Load-Config matrix (Win8→Win11)
 The parser records a version hint based on which field groups are present and preserves any trailing bytes beyond the known layout.
@@ -174,12 +190,6 @@ The parser records a version hint based on which field groups are present and pr
 - Win10+: Enclave/Volatile metadata or EHContinuation
 - Win10+ (XFG): XFG fields present
 - Win11+: trailing fields beyond known layout (captured as hash/preview)
-- CLR/.NET: implemented (metadata, references, token cross-refs, method body IL sizes, ReadyToRun)
-- Certificates/Authenticode: implemented (PKCS7/signers/timestamps, certificate transparency hints + log IDs, WinTrust status on Windows, catalog lookup on Windows)
-- COFF objects: header/sections (incl. bigobj) + symbols/line numbers/relocations (scope + COMDAT selection metadata)
-- COFF archives/import libraries: archive headers, symbol table summary, longnames, import objects
-- UEFI TE images: header + sections + base relocations
-- COFF symbols/line numbers/string table: implemented when present (aux symbol decoding incl. file/section/function/weak extern/CLR token + weak extern defaults)
 
 ## Contents of the output file
 The CSV-Output currently contains the following values for each analyzed file.

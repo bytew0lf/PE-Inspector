@@ -34,6 +34,9 @@ public class CertificateUtilitiesTests
         Assert.Equal(2, status.SignerStatuses.Count);
         Assert.Contains(status.SignerStatuses, s => s.Role == "Primary");
         Assert.Contains(status.SignerStatuses, s => s.Role == "Timestamp");
+        Assert.NotNull(status.TrustStore);
+        Assert.True(status.TrustStore.Performed);
+        Assert.True(status.TrustStore.Verified);
     }
 
     [Fact]
@@ -52,6 +55,8 @@ public class CertificateUtilitiesTests
         Assert.False(status.PolicyCompliant);
         Assert.Contains(status.PolicyFailures, f => f.Contains("chain", StringComparison.OrdinalIgnoreCase));
         Assert.Contains(status.PolicyFailures, f => f.Contains("code signing", StringComparison.OrdinalIgnoreCase));
+        Assert.NotNull(status.TrustStore);
+        Assert.False(status.TrustStore.Verified);
     }
 
     [Fact]

@@ -715,6 +715,20 @@ namespace PE_FileInspector
                                     sb.AppendLine("      " + Safe(entry.AuthenticodeStatus.WinTrust.Message));
                                 }
                             }
+                            if (entry.AuthenticodeStatus.TrustStore != null)
+                            {
+                                sb.AppendLine("    TrustStore: " + entry.AuthenticodeStatus.TrustStore.Platform +
+                                              " | Performed=" + entry.AuthenticodeStatus.TrustStore.Performed +
+                                              " | Verified=" + entry.AuthenticodeStatus.TrustStore.Verified);
+                                if (entry.AuthenticodeStatus.TrustStore.Status.Count > 0)
+                                {
+                                    sb.AppendLine("      Chain: " + string.Join("; ", entry.AuthenticodeStatus.TrustStore.Status.Take(3)));
+                                    if (entry.AuthenticodeStatus.TrustStore.Status.Count > 3)
+                                    {
+                                        sb.AppendLine("      (truncated)");
+                                    }
+                                }
+                            }
                             if (entry.AuthenticodeStatus.Policy != null)
                             {
                                 sb.AppendLine("    Policy: RevocationMode=" + entry.AuthenticodeStatus.Policy.RevocationMode +
@@ -1653,6 +1667,34 @@ namespace PE_FileInspector
                         if (entry.Pdb.Guid != Guid.Empty)
                         {
                             sb.AppendLine("    PDB GUID: " + entry.Pdb.Guid.ToString());
+                        }
+                        if (entry.Pdb.Dbi != null)
+                        {
+                            sb.AppendLine("    DBI: Version=" + entry.Pdb.Dbi.Version.ToString(CultureInfo.InvariantCulture) +
+                                          " | Age=" + entry.Pdb.Dbi.Age.ToString(CultureInfo.InvariantCulture) +
+                                          " | Globals=" + entry.Pdb.Dbi.GlobalStreamIndex.ToString(CultureInfo.InvariantCulture) +
+                                          " | Publics=" + entry.Pdb.Dbi.PublicStreamIndex.ToString(CultureInfo.InvariantCulture) +
+                                          " | SymRec=" + entry.Pdb.Dbi.SymRecordStreamIndex.ToString(CultureInfo.InvariantCulture) +
+                                          " | Machine=0x" + entry.Pdb.Dbi.Machine.ToString("X4", CultureInfo.InvariantCulture));
+                        }
+                        if (entry.Pdb.Tpi != null)
+                        {
+                            sb.AppendLine("    TPI: Types=" + entry.Pdb.Tpi.TypeCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Version=0x" + entry.Pdb.Tpi.Version.ToString("X8", CultureInfo.InvariantCulture) +
+                                          " | HashBuckets=" + entry.Pdb.Tpi.HashBucketCount.ToString(CultureInfo.InvariantCulture));
+                        }
+                        if (entry.Pdb.Ipi != null)
+                        {
+                            sb.AppendLine("    IPI: Types=" + entry.Pdb.Ipi.TypeCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Version=0x" + entry.Pdb.Ipi.Version.ToString("X8", CultureInfo.InvariantCulture));
+                        }
+                        if (entry.Pdb.Publics != null && entry.Pdb.Publics.NameCount > 0)
+                        {
+                            sb.AppendLine("    GSI/Publics: " + entry.Pdb.Publics.NameCount.ToString(CultureInfo.InvariantCulture));
+                        }
+                        if (entry.Pdb.Globals != null && entry.Pdb.Globals.NameCount > 0)
+                        {
+                            sb.AppendLine("    GSI/Globals: " + entry.Pdb.Globals.NameCount.ToString(CultureInfo.InvariantCulture));
                         }
                         if (entry.Pdb.PublicSymbols.Count > 0)
                         {

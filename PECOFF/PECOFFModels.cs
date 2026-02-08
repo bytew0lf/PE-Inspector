@@ -548,6 +548,141 @@ namespace PECoff
         }
     }
 
+    public sealed class PdbDbiInfo
+    {
+        public int Signature { get; }
+        public int Version { get; }
+        public int Age { get; }
+        public ushort GlobalStreamIndex { get; }
+        public ushort PublicStreamIndex { get; }
+        public ushort SymRecordStreamIndex { get; }
+        public ushort Machine { get; }
+        public ushort Flags { get; }
+        public int ModuleInfoSize { get; }
+        public int SectionContribSize { get; }
+        public int SectionMapSize { get; }
+        public int SourceInfoSize { get; }
+        public int OptionalDbgHeaderSize { get; }
+        public int TypeServerSize { get; }
+        public int EcSubstreamSize { get; }
+        public string Notes { get; }
+
+        public PdbDbiInfo(
+            int signature,
+            int version,
+            int age,
+            ushort globalStreamIndex,
+            ushort publicStreamIndex,
+            ushort symRecordStreamIndex,
+            ushort machine,
+            ushort flags,
+            int moduleInfoSize,
+            int sectionContribSize,
+            int sectionMapSize,
+            int sourceInfoSize,
+            int optionalDbgHeaderSize,
+            int typeServerSize,
+            int ecSubstreamSize,
+            string notes)
+        {
+            Signature = signature;
+            Version = version;
+            Age = age;
+            GlobalStreamIndex = globalStreamIndex;
+            PublicStreamIndex = publicStreamIndex;
+            SymRecordStreamIndex = symRecordStreamIndex;
+            Machine = machine;
+            Flags = flags;
+            ModuleInfoSize = moduleInfoSize;
+            SectionContribSize = sectionContribSize;
+            SectionMapSize = sectionMapSize;
+            SourceInfoSize = sourceInfoSize;
+            OptionalDbgHeaderSize = optionalDbgHeaderSize;
+            TypeServerSize = typeServerSize;
+            EcSubstreamSize = ecSubstreamSize;
+            Notes = notes ?? string.Empty;
+        }
+    }
+
+    public sealed class PdbTpiInfo
+    {
+        public uint Version { get; }
+        public uint HeaderSize { get; }
+        public uint TypeIndexBegin { get; }
+        public uint TypeIndexEnd { get; }
+        public uint TypeRecordBytes { get; }
+        public ushort HashStreamIndex { get; }
+        public ushort HashAuxStreamIndex { get; }
+        public uint HashKeySize { get; }
+        public uint HashBucketCount { get; }
+        public uint HashValueBufferLength { get; }
+        public uint IndexOffsetBufferLength { get; }
+        public uint HashAdjBufferLength { get; }
+        public int TypeCount => TypeIndexEnd > TypeIndexBegin ? (int)(TypeIndexEnd - TypeIndexBegin) : 0;
+        public string Notes { get; }
+
+        public PdbTpiInfo(
+            uint version,
+            uint headerSize,
+            uint typeIndexBegin,
+            uint typeIndexEnd,
+            uint typeRecordBytes,
+            ushort hashStreamIndex,
+            ushort hashAuxStreamIndex,
+            uint hashKeySize,
+            uint hashBucketCount,
+            uint hashValueBufferLength,
+            uint indexOffsetBufferLength,
+            uint hashAdjBufferLength,
+            string notes)
+        {
+            Version = version;
+            HeaderSize = headerSize;
+            TypeIndexBegin = typeIndexBegin;
+            TypeIndexEnd = typeIndexEnd;
+            TypeRecordBytes = typeRecordBytes;
+            HashStreamIndex = hashStreamIndex;
+            HashAuxStreamIndex = hashAuxStreamIndex;
+            HashKeySize = hashKeySize;
+            HashBucketCount = hashBucketCount;
+            HashValueBufferLength = hashValueBufferLength;
+            IndexOffsetBufferLength = indexOffsetBufferLength;
+            HashAdjBufferLength = hashAdjBufferLength;
+            Notes = notes ?? string.Empty;
+        }
+    }
+
+    public sealed class PdbGsiInfo
+    {
+        public string Kind { get; }
+        public int StreamIndex { get; }
+        public uint StreamSize { get; }
+        public uint Signature { get; }
+        public uint Version { get; }
+        public int NameCount { get; }
+        public IReadOnlyList<string> Names { get; }
+        public string Notes { get; }
+
+        public PdbGsiInfo(
+            string kind,
+            int streamIndex,
+            uint streamSize,
+            uint signature,
+            uint version,
+            string[] names,
+            string notes)
+        {
+            Kind = kind ?? string.Empty;
+            StreamIndex = streamIndex;
+            StreamSize = streamSize;
+            Signature = signature;
+            Version = version;
+            Names = Array.AsReadOnly(names ?? Array.Empty<string>());
+            NameCount = Names.Count;
+            Notes = notes ?? string.Empty;
+        }
+    }
+
     public sealed class PdbInfo
     {
         public string Path { get; }
@@ -560,6 +695,11 @@ namespace PECoff
         public uint Age { get; }
         public int PublicSymbolCount { get; }
         public IReadOnlyList<string> PublicSymbols { get; }
+        public PdbDbiInfo Dbi { get; }
+        public PdbTpiInfo Tpi { get; }
+        public PdbTpiInfo Ipi { get; }
+        public PdbGsiInfo Publics { get; }
+        public PdbGsiInfo Globals { get; }
         public string Notes { get; }
 
         public PdbInfo(
@@ -573,6 +713,11 @@ namespace PECoff
             uint age,
             int publicSymbolCount,
             string[] publicSymbols,
+            PdbDbiInfo dbi,
+            PdbTpiInfo tpi,
+            PdbTpiInfo ipi,
+            PdbGsiInfo publics,
+            PdbGsiInfo globals,
             string notes)
         {
             Path = path ?? string.Empty;
@@ -585,6 +730,11 @@ namespace PECoff
             Age = age;
             PublicSymbolCount = publicSymbolCount;
             PublicSymbols = Array.AsReadOnly(publicSymbols ?? Array.Empty<string>());
+            Dbi = dbi;
+            Tpi = tpi;
+            Ipi = ipi;
+            Publics = publics;
+            Globals = globals;
             Notes = notes ?? string.Empty;
         }
     }
@@ -2938,6 +3088,38 @@ namespace PECoff
         }
     }
 
+    public sealed class AuthenticodeTrustStoreInfo
+    {
+        public bool Performed { get; }
+        public bool Verified { get; }
+        public string Platform { get; }
+        public bool TrustStoreEnabled { get; }
+        public bool Offline { get; }
+        public X509RevocationMode RevocationMode { get; }
+        public X509RevocationFlag RevocationFlag { get; }
+        public IReadOnlyList<string> Status { get; }
+
+        public AuthenticodeTrustStoreInfo(
+            bool performed,
+            bool verified,
+            string platform,
+            bool trustStoreEnabled,
+            bool offline,
+            X509RevocationMode revocationMode,
+            X509RevocationFlag revocationFlag,
+            string[] status)
+        {
+            Performed = performed;
+            Verified = verified;
+            Platform = platform ?? string.Empty;
+            TrustStoreEnabled = trustStoreEnabled;
+            Offline = offline;
+            RevocationMode = revocationMode;
+            RevocationFlag = revocationFlag;
+            Status = Array.AsReadOnly(status ?? Array.Empty<string>());
+        }
+    }
+
     public sealed class AuthenticodeStatusInfo
     {
         public int SignerCount { get; }
@@ -2953,6 +3135,7 @@ namespace PECoff
         public IReadOnlyList<string> TimestampChainStatus { get; }
         public IReadOnlyList<string> CertificateTransparencyLogIds { get; }
         public WinTrustResultInfo WinTrust { get; }
+        public AuthenticodeTrustStoreInfo TrustStore { get; }
         public bool CertificateTransparencyRequiredMet { get; }
         public bool PolicyCompliant { get; }
         public IReadOnlyList<string> PolicyFailures { get; }
@@ -2973,6 +3156,7 @@ namespace PECoff
             string[] timestampChainStatus,
             string[] certificateTransparencyLogIds,
             WinTrustResultInfo winTrust,
+            AuthenticodeTrustStoreInfo trustStore,
             bool certificateTransparencyRequiredMet,
             bool policyCompliant,
             string[] policyFailures,
@@ -2992,6 +3176,7 @@ namespace PECoff
             TimestampChainStatus = Array.AsReadOnly(timestampChainStatus ?? Array.Empty<string>());
             CertificateTransparencyLogIds = Array.AsReadOnly(certificateTransparencyLogIds ?? Array.Empty<string>());
             WinTrust = winTrust;
+            TrustStore = trustStore;
             CertificateTransparencyRequiredMet = certificateTransparencyRequiredMet;
             PolicyCompliant = policyCompliant;
             PolicyFailures = Array.AsReadOnly(policyFailures ?? Array.Empty<string>());
@@ -3903,7 +4088,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 25;
+        public const int CurrentSchemaVersion = 26;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
