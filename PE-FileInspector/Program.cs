@@ -299,22 +299,37 @@ namespace PE_FileInspector
                 if (pe.CoffArchive != null)
                 {
                     sb.AppendLine("  COFF Archive:");
+                    sb.AppendLine("    Thin: " + pe.CoffArchive.IsThinArchive.ToString(CultureInfo.InvariantCulture));
                     sb.AppendLine("    Members: " + pe.CoffArchive.MemberCount.ToString(CultureInfo.InvariantCulture));
+                    if (pe.CoffArchive.HasLongNameTable)
+                    {
+                        sb.AppendLine("    LongNames: " + pe.CoffArchive.LongNameTableSize.ToString(CultureInfo.InvariantCulture));
+                    }
                     if (pe.CoffArchive.SymbolTable != null)
                     {
                         sb.AppendLine("    Symbols: " + pe.CoffArchive.SymbolTable.SymbolCount.ToString(CultureInfo.InvariantCulture) +
-                                      " | NameTable: " + pe.CoffArchive.SymbolTable.NameTableSize.ToString(CultureInfo.InvariantCulture));
+                                      " | NameTable: " + pe.CoffArchive.SymbolTable.NameTableSize.ToString(CultureInfo.InvariantCulture) +
+                                      " | Format: " + (pe.CoffArchive.SymbolTable.Is64Bit ? "SYM64" : "SYM32"));
                     }
                     foreach (CoffArchiveMemberInfo member in pe.CoffArchive.Members.Take(5))
                     {
                         sb.AppendLine("    - " + Safe(member.Name) +
                                       " | Size: " + member.Size.ToString(CultureInfo.InvariantCulture) +
-                                      " | Import: " + member.IsImportObject);
+                                      " | Import: " + member.IsImportObject +
+                                      " | Stored: " + member.DataInArchive);
                         if (member.ImportObject != null)
                         {
                             sb.AppendLine("      Import: " + Safe(member.ImportObject.SymbolName) +
                                           " from " + Safe(member.ImportObject.DllName) +
                                           " (" + Safe(member.ImportObject.MachineName) + ")");
+                            if (member.ImportObject.IsImportByOrdinal && member.ImportObject.Ordinal.HasValue)
+                            {
+                                sb.AppendLine("      Ordinal: " + member.ImportObject.Ordinal.Value.ToString(CultureInfo.InvariantCulture));
+                            }
+                            else if (member.ImportObject.Hint.HasValue)
+                            {
+                                sb.AppendLine("      Hint: " + member.ImportObject.Hint.Value.ToString(CultureInfo.InvariantCulture));
+                            }
                         }
                     }
                     if (pe.CoffArchive.Members.Count > 5)
@@ -335,6 +350,22 @@ namespace PE_FileInspector
                     sb.AppendLine("    ImageBase: 0x" + pe.TeImage.ImageBase.ToString("X", CultureInfo.InvariantCulture));
                     sb.AppendLine("    EntryPoint: 0x" + pe.TeImage.AddressOfEntryPoint.ToString("X", CultureInfo.InvariantCulture));
                     sb.AppendLine("    BaseOfCode: 0x" + pe.TeImage.BaseOfCode.ToString("X", CultureInfo.InvariantCulture));
+                    if (pe.TeImage.EntryPointFileOffsetValid)
+                    {
+                        sb.AppendLine("    EntryPointFileOffset: 0x" + pe.TeImage.EntryPointFileOffset.ToString("X", CultureInfo.InvariantCulture));
+                    }
+                    if (pe.TeImage.EntryPointMapped)
+                    {
+                        sb.AppendLine("    EntryPointSection: " + Safe(pe.TeImage.EntryPointSectionName));
+                    }
+                    if (pe.TeImage.BaseOfCodeFileOffsetValid)
+                    {
+                        sb.AppendLine("    BaseOfCodeFileOffset: 0x" + pe.TeImage.BaseOfCodeFileOffset.ToString("X", CultureInfo.InvariantCulture));
+                    }
+                    if (pe.TeImage.BaseOfCodeMapped)
+                    {
+                        sb.AppendLine("    BaseOfCodeSection: " + Safe(pe.TeImage.BaseOfCodeSectionName));
+                    }
                     if (pe.TeImage.DataDirectories.Count > 0)
                     {
                         sb.AppendLine("    Directories:");
@@ -2330,7 +2361,8 @@ namespace PE_FileInspector
                     {
                         sb.AppendLine("  Layout: " + Safe(pe.LoadConfig.VersionInfo.VersionHint) +
                                       " | Parsed: " + pe.LoadConfig.VersionInfo.ParsedBytes.ToString(CultureInfo.InvariantCulture) +
-                                      " | Trailing: " + pe.LoadConfig.VersionInfo.TrailingBytes.ToString(CultureInfo.InvariantCulture));
+                                      " | Trailing: " + pe.LoadConfig.VersionInfo.TrailingBytes.ToString(CultureInfo.InvariantCulture) +
+                                      " | Truncated: " + pe.LoadConfig.VersionInfo.IsTruncated.ToString(CultureInfo.InvariantCulture));
                         if (pe.LoadConfig.VersionInfo.FieldGroups.Count > 0)
                         {
                             sb.AppendLine("  Field Groups: " + string.Join(", ", pe.LoadConfig.VersionInfo.FieldGroups));

@@ -159,6 +159,7 @@ Defaults:
 - v28: Data directory validation (size/alignment/mapping checks).
 - v29: Relocation anomaly totals, TLS index mapping, and debug raw fallback entries.
 - v30: Authenticode policy evaluation summary, CLR signature decoding + EH clause summary, and PDB symbol record parsing.
+- v31: COFF archive thin/SYM64 handling + import object variants, TE entrypoint file offsets + mapping, and load-config truncation tracking.
 
 ## Current Coverage Map (auto-generated)
 
@@ -179,7 +180,7 @@ Status legend:
 | Imports/Exports | `full` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints. |
 | Relocations | `full` | Summaries + anomaly totals, machine-aware type mapping. |
 | TLS | `full` | Callbacks + raw data mapping, hash/preview, template sizing + index mapping. |
-| Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout. |
+| Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation. |
 | Exception directory | `full` | AMD64/ARM64/ARM32/IA64 decode + range validation, x86 SEH. |
 | Resources | `full` | Strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, message tables, RT_VERSION extensions. |
 | Resources (extended) | `full` | Fonts/fontdir, rcdata format detection, dlginit, animated cursor/icon. |
@@ -188,8 +189,8 @@ Status legend:
 | CLR/.NET | `full` | Metadata tables, token cross-refs, signature decode, method body IL sizes + EH clauses, R2R header. |
 | Certificates/Authenticode | `full` | PKCS7 signers/timestamps, CT hints/logs, WinTrust (Windows), trust-store status + policy evaluation. |
 | COFF objects | `full` | Symbols/aux/relocs/line numbers, COMDAT selection hints. |
-| COFF archives/import libs | `full` | Archive headers, longnames, import object details. |
-| UEFI TE images | `full` | Header/sections + base relocation parsing. |
+| COFF archives/import libs | `full` | Archive headers, longnames, thin/SYM64 support, import object variants. |
+| UEFI TE images | `full` | Header/sections, base relocations, entrypoint/base-of-code file offsets + mapping checks. |
 | Overlay containers | `full` | ZIP/RAR4/5/7z container parsing. |
 | Rich header | `full` | Toolchain signature summaries. |
 
@@ -201,7 +202,7 @@ The parser records a version hint based on which field groups are present and pr
 - Win8.1+: GuardRF + HotPatch
 - Win10+: Enclave/Volatile metadata or EHContinuation
 - Win10+ (XFG): XFG fields present
-- Win11+: trailing fields beyond known layout (captured as hash/preview)
+- Win11+: trailing fields beyond known layout (captured as hash/preview; truncated layouts flagged)
 
 ## Contents of the output file
 The CSV-Output currently contains the following values for each analyzed file.

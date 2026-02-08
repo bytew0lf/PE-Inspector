@@ -21,6 +21,14 @@ public class TeImageParsingTests
             Assert.Equal((ushort)0x8664, pe.TeImage.Machine);
             Assert.Equal(1, pe.TeImage.SectionCount);
             Assert.Equal("IMAGE_SUBSYSTEM_EFI_APPLICATION", pe.TeImage.SubsystemName);
+            Assert.True(pe.TeImage.EntryPointFileOffsetValid);
+            Assert.True(pe.TeImage.BaseOfCodeFileOffsetValid);
+            Assert.Equal(0xFE0u, pe.TeImage.EntryPointFileOffset);
+            Assert.Equal(0xFE0u, pe.TeImage.BaseOfCodeFileOffset);
+            Assert.True(pe.TeImage.EntryPointMapped);
+            Assert.True(pe.TeImage.BaseOfCodeMapped);
+            Assert.Equal(".text", pe.TeImage.EntryPointSectionName);
+            Assert.Equal(".text", pe.TeImage.BaseOfCodeSectionName);
         }
         finally
         {

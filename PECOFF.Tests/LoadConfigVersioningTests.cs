@@ -15,6 +15,7 @@ public class LoadConfigVersioningTests
         Assert.Equal(0u, info.TrailingBytes);
         Assert.Contains("Base", info.FieldGroups);
         Assert.Equal("pre-Win8", info.VersionHint);
+        Assert.False(info.IsTruncated);
     }
 
     [Fact]
@@ -30,6 +31,21 @@ public class LoadConfigVersioningTests
         Assert.True(info.TrailingBytes > 0);
         Assert.Contains("Win11", info.VersionHint);
         Assert.False(string.IsNullOrWhiteSpace(info.TrailingPreview));
+        Assert.False(info.IsTruncated);
+    }
+
+    [Fact]
+    public void LoadConfigVersionInfo_Detects_Truncation()
+    {
+        byte[] data = BuildLoadConfigBuffer(200);
+        BitConverter.GetBytes(320u).CopyTo(data, 0);
+
+        bool parsed = PECOFF.TryParseLoadConfigVersionInfoForTest(data, isPe32Plus: true, out LoadConfigVersionInfo info);
+
+        Assert.True(parsed);
+        Assert.NotNull(info);
+        Assert.True(info.IsTruncated);
+        Assert.Contains("truncated", info.VersionHint);
     }
 
     private static byte[] BuildLoadConfigBuffer(int size)

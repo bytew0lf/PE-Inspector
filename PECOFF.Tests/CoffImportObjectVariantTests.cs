@@ -1,44 +1,34 @@
 using System;
 using System.Globalization;
 using System.IO;
-using System.Linq;
 using System.Text;
 using PECoff;
 using Xunit;
 
-public class CoffArchiveParsingTests
+public class CoffImportObjectVariantTests
 {
     [Fact]
-    public void CoffArchive_Parses_ImportObject_And_LongName()
+    public void CoffArchive_Parses_Ordinal_Import_Object()
     {
-        string path = Path.Combine(Path.GetTempPath(), "pecoff-archive-" + Guid.NewGuid().ToString("N") + ".lib");
-        File.WriteAllBytes(path, BuildArchiveBytes());
+        byte[] data = BuildArchiveBytes();
+        string path = Path.GetTempFileName();
         try
         {
+            File.WriteAllBytes(path, data);
             PECOFF parser = new PECOFF(path);
-            Assert.NotNull(parser.CoffArchive);
-            Assert.Equal("COFF-Archive", parser.ImageKind);
-            Assert.Equal(3, parser.CoffArchive.MemberCount);
-            Assert.False(parser.CoffArchive.IsThinArchive);
-            Assert.True(parser.CoffArchive.HasLongNameTable);
-            Assert.NotNull(parser.CoffArchive.SymbolTable);
 
-            CoffArchiveMemberInfo? member = parser.CoffArchive.Members.FirstOrDefault(m => m.IsImportObject);
-            Assert.NotNull(member);
-            Assert.Equal("longmember.obj", member.Name);
-            Assert.True(member.DataInArchive);
+            Assert.NotNull(parser.CoffArchive);
+            CoffArchiveMemberInfo member = Assert.Single(parser.CoffArchive.Members);
+            Assert.True(member.IsImportObject);
             Assert.NotNull(member.ImportObject);
-            Assert.Equal("MySymbol", member.ImportObject.SymbolName);
-            Assert.Equal("MyDll.dll", member.ImportObject.DllName);
-            Assert.False(member.ImportObject.IsImportByOrdinal);
-            Assert.Equal((ushort)1, member.ImportObject.Hint);
+            Assert.True(member.ImportObject.IsImportByOrdinal);
+            Assert.Equal((ushort)7, member.ImportObject.Ordinal);
+            Assert.Null(member.ImportObject.Hint);
+            Assert.Equal("#7", member.ImportObject.ImportName);
         }
         finally
         {
-            if (File.Exists(path))
-            {
-                File.Delete(path);
-            }
+            File.Delete(path);
         }
     }
 
@@ -47,33 +37,27 @@ public class CoffArchiveParsingTests
         using MemoryStream ms = new MemoryStream();
         WriteAscii(ms, "!<arch>\n");
 
-        byte[] symbolTable = new byte[4];
-        WriteMember(ms, "/", symbolTable);
-
-        byte[] longNames = Encoding.ASCII.GetBytes("longmember.obj/\n");
-        WriteMember(ms, "//", longNames);
-
         byte[] importObject = BuildImportObject();
-        WriteMember(ms, "/0", importObject);
+        WriteMember(ms, "imp.obj", importObject);
 
         return ms.ToArray();
     }
 
     private static byte[] BuildImportObject()
     {
-        byte[] data = new byte[20 + 1 + 8 + 1 + 9 + 1];
+        byte[] data = new byte[20 + 1 + 7 + 1 + 7 + 1];
         WriteUInt16(data, 0, 0);
         WriteUInt16(data, 2, 0xFFFF);
         WriteUInt16(data, 4, 0);
-        WriteUInt16(data, 6, 0x8664); // AMD64
-        WriteUInt32(data, 8, 0x12345678);
+        WriteUInt16(data, 6, 0x14C); // x86
+        WriteUInt32(data, 8, 0);
         WriteUInt32(data, 12, 0);
-        WriteUInt16(data, 16, 1);
-        WriteUInt16(data, 18, (ushort)((1 << 2) | 0));
+        WriteUInt16(data, 16, 7);
+        WriteUInt16(data, 18, 0); // type=0, nameType=ordinal
 
         int offset = 20;
-        offset += WriteAsciiZ(data, offset, "MySymbol");
-        offset += WriteAsciiZ(data, offset, "MyDll.dll");
+        offset += WriteAsciiZ(data, offset, "ORDSYM");
+        offset += WriteAsciiZ(data, offset, "ORDDLL");
         return data;
     }
 

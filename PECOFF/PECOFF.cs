@@ -12385,6 +12385,18 @@ namespace PECoff
                    data[offset + 3];
         }
 
+        private static ulong ReadUInt64BigEndian(ReadOnlySpan<byte> data, int offset)
+        {
+            return ((ulong)data[offset] << 56) |
+                   ((ulong)data[offset + 1] << 48) |
+                   ((ulong)data[offset + 2] << 40) |
+                   ((ulong)data[offset + 3] << 32) |
+                   ((ulong)data[offset + 4] << 24) |
+                   ((ulong)data[offset + 5] << 16) |
+                   ((ulong)data[offset + 6] << 8) |
+                   data[offset + 7];
+        }
+
         private static void WriteUInt16(byte[] buffer, int offset, ushort value)
         {
             if (buffer == null || offset + 1 >= buffer.Length)
@@ -18974,6 +18986,7 @@ namespace PECoff
             bool hasXfg,
             ReadOnlySpan<byte> span)
         {
+            bool isTruncated = declaredSize > limitBytes;
             if (parsedBytes > limitBytes)
             {
                 parsedBytes = limitBytes;
@@ -19044,9 +19057,15 @@ namespace PECoff
             {
                 versionHint = "Win10+ (XFG)";
             }
-            if (trailingBytes > 0 && (hasXfg || hasEnclave || hasVolatileMetadata))
+            if (trailingBytes > 0)
             {
-                versionHint = "Win11+ (extra fields)";
+                versionHint = hasXfg || hasEnclave || hasVolatileMetadata
+                    ? "Win11+ (extra fields)"
+                    : "Win11/Preview (trailing bytes)";
+            }
+            if (isTruncated)
+            {
+                versionHint = versionHint + " (truncated)";
             }
 
             return new LoadConfigVersionInfo(
@@ -19054,6 +19073,7 @@ namespace PECoff
                 limitBytes,
                 parsedBytes,
                 trailingBytes,
+                isTruncated,
                 versionHint,
                 groups.ToArray(),
                 trailingHash,
@@ -22412,6 +22432,11 @@ namespace PECoff
                 return;
             }
 
+            if (teHeader.StrippedSize < headerSize)
+            {
+                Warn(ParseIssueCategory.Header, "TE stripped size is smaller than the TE header size.");
+            }
+
             _machineType = (MachineTypes)teHeader.Machine;
             _timeDateStamp = 0;
             _fileAlignment = 0;
@@ -22478,6 +22503,44 @@ namespace PECoff
                 }
                 _sizeOfImage = maxEnd;
             }
+
+            bool entryPointFileOffsetValid = teHeader.AddressOfEntryPoint >= teHeader.StrippedSize;
+            uint entryPointFileOffset = entryPointFileOffsetValid ? teHeader.AddressOfEntryPoint - teHeader.StrippedSize : 0;
+            bool baseOfCodeFileOffsetValid = teHeader.BaseOfCode >= teHeader.StrippedSize;
+            uint baseOfCodeFileOffset = baseOfCodeFileOffsetValid ? teHeader.BaseOfCode - teHeader.StrippedSize : 0;
+
+            if (!entryPointFileOffsetValid && teHeader.AddressOfEntryPoint > 0)
+            {
+                Warn(ParseIssueCategory.Header, "TE entry point is before the stripped header.");
+            }
+            if (!baseOfCodeFileOffsetValid && teHeader.BaseOfCode > 0)
+            {
+                Warn(ParseIssueCategory.Header, "TE base of code is before the stripped header.");
+            }
+
+            bool entryPointMapped = false;
+            string entryPointSectionName = string.Empty;
+            if (teHeader.AddressOfEntryPoint != 0 && TryGetSectionByRva(sections, teHeader.AddressOfEntryPoint, out IMAGE_SECTION_HEADER entrySection))
+            {
+                entryPointMapped = true;
+                entryPointSectionName = NormalizeSectionName(entrySection.Section);
+            }
+            else if (teHeader.AddressOfEntryPoint != 0 && sections.Count > 0)
+            {
+                Warn(ParseIssueCategory.Sections, "TE entry point RVA is not mapped to a section.");
+            }
+
+            bool baseOfCodeMapped = false;
+            string baseOfCodeSectionName = string.Empty;
+            if (teHeader.BaseOfCode != 0 && TryGetSectionByRva(sections, teHeader.BaseOfCode, out IMAGE_SECTION_HEADER baseSection))
+            {
+                baseOfCodeMapped = true;
+                baseOfCodeSectionName = NormalizeSectionName(baseSection.Section);
+            }
+            else if (teHeader.BaseOfCode != 0 && sections.Count > 0)
+            {
+                Warn(ParseIssueCategory.Sections, "TE base of code RVA is not mapped to a section.");
+            }
             BuildSectionPermissionInfos(sections);
             ComputeOverlayInfo(sections);
             ComputeSectionEntropies(sections);
@@ -22522,6 +22585,14 @@ namespace PECoff
                 teHeader.AddressOfEntryPoint,
                 teHeader.BaseOfCode,
                 teHeader.ImageBase,
+                entryPointFileOffset,
+                baseOfCodeFileOffset,
+                entryPointFileOffsetValid,
+                baseOfCodeFileOffsetValid,
+                entryPointMapped,
+                baseOfCodeMapped,
+                entryPointSectionName,
+                baseOfCodeSectionName,
                 directories);
         }
 
@@ -22540,7 +22611,8 @@ namespace PECoff
             byte[] signatureBytes = new byte[8];
             ReadExactly(PEFileStream, signatureBytes, 0, signatureBytes.Length);
             string signature = Encoding.ASCII.GetString(signatureBytes);
-            if (!string.Equals(signature, "!<arch>\n", StringComparison.Ordinal))
+            bool isThinArchive = string.Equals(signature, "!<thin>\n", StringComparison.Ordinal);
+            if (!isThinArchive && !string.Equals(signature, "!<arch>\n", StringComparison.Ordinal))
             {
                 return false;
             }
@@ -22555,10 +22627,12 @@ namespace PECoff
             List<CoffArchiveMemberInfo> members = new List<CoffArchiveMemberInfo>();
             CoffArchiveSymbolTableInfo symbolTableInfo = null;
             string longNameTable = null;
+            int longNameTableSize = 0;
 
             long cursor = 8;
             int maxMembers = 4096;
-            while (cursor + 60 <= PEFileStream.Length && members.Count < maxMembers)
+            long fileLength = PEFileStream.Length;
+            while (cursor + 60 <= fileLength && members.Count < maxMembers)
             {
                 if (!TrySetPosition(cursor, 60))
                 {
@@ -22594,7 +22668,7 @@ namespace PECoff
                 }
 
                 long dataOffset = cursor + 60;
-                if (dataOffset < 0 || dataOffset + size > PEFileStream.Length)
+                if (dataOffset < 0 || dataOffset > fileLength)
                 {
                     Warn(ParseIssueCategory.Header, "COFF archive member data exceeds file bounds.");
                     break;
@@ -22620,7 +22694,7 @@ namespace PECoff
                         Warn(ParseIssueCategory.Header, "COFF archive extended name length exceeds member size.");
                         extendedNameLength = 0;
                     }
-                    else if (dataOffset + extendedNameLength > PEFileStream.Length)
+                    else if (dataOffset + extendedNameLength > fileLength)
                     {
                         Warn(ParseIssueCategory.Header, "COFF archive extended name exceeds file bounds.");
                         extendedNameLength = 0;
@@ -22650,33 +22724,54 @@ namespace PECoff
 
                 CoffImportObjectInfo importObject = null;
                 bool isImportObject = false;
+                bool dataInArchive = true;
+                long storedSize = size;
+
+                if (!isThinArchive && dataOffset + size > fileLength)
+                {
+                    Warn(ParseIssueCategory.Header, "COFF archive member data exceeds file bounds.");
+                    break;
+                }
+
+                if (isThinArchive && !isSymbolTable && !isLongNameTable)
+                {
+                    storedSize = 0;
+                    dataInArchive = false;
+                }
+
+                if (storedSize > 0 && dataOffset + storedSize > fileLength)
+                {
+                    Warn(ParseIssueCategory.Header, "COFF archive member data exceeds file bounds.");
+                    break;
+                }
 
                 if (isLongNameTable)
                 {
-                    if (size > 0 && size <= int.MaxValue)
+                    if (storedSize > 0 && storedSize <= int.MaxValue)
                     {
-                        byte[] data = new byte[size];
+                        byte[] data = new byte[storedSize];
                         PEFileStream.Position = dataOffset;
                         ReadExactly(PEFileStream, data, 0, data.Length);
                         longNameTable = Encoding.ASCII.GetString(data).TrimEnd('\0');
+                        longNameTableSize = data.Length;
                     }
                 }
                 else if (isSymbolTable)
                 {
-                    if (size > 0 && size <= int.MaxValue)
+                    if (storedSize > 0 && storedSize <= int.MaxValue)
                     {
-                        byte[] data = new byte[size];
+                        byte[] data = new byte[storedSize];
                         PEFileStream.Position = dataOffset;
                         ReadExactly(PEFileStream, data, 0, data.Length);
-                        if (TryParseArchiveSymbolTable(data, out CoffArchiveSymbolTableInfo parsed))
+                        if (TryParseArchiveSymbolTable(data, string.Equals(name, "/SYM64", StringComparison.Ordinal), out CoffArchiveSymbolTableInfo parsed))
                         {
                             symbolTableInfo = parsed;
                         }
                     }
                 }
-                else if (size > 0)
+                else if (storedSize > 0)
                 {
-                    int previewSize = (int)Math.Min(size, 512);
+                    int previewSize = (int)Math.Min(storedSize, 512);
                     byte[] data = new byte[previewSize];
                     PEFileStream.Position = dataOffset;
                     ReadExactly(PEFileStream, data, 0, data.Length);
@@ -22698,16 +22793,17 @@ namespace PECoff
                     isSymbolTable,
                     isLongNameTable,
                     isImportObject,
-                    importObject));
+                    importObject,
+                    dataInArchive));
 
-                cursor = dataOffset + size;
+                cursor = dataOffset + storedSize;
                 if ((cursor & 1) == 1)
                 {
                     cursor++;
                 }
             }
 
-            _coffArchiveInfo = new CoffArchiveInfo(signature.TrimEnd('\0', ' '), members.Count, symbolTableInfo, members.ToArray());
+            _coffArchiveInfo = new CoffArchiveInfo(signature.TrimEnd('\0', ' '), members.Count, symbolTableInfo, members.ToArray(), isThinArchive, !string.IsNullOrWhiteSpace(longNameTable), longNameTableSize);
             return true;
         }
 
@@ -22792,28 +22888,53 @@ namespace PECoff
             return name.Trim();
         }
 
-        private static bool TryParseArchiveSymbolTable(byte[] data, out CoffArchiveSymbolTableInfo info)
+        private static bool TryParseArchiveSymbolTable(byte[] data, bool isSym64, out CoffArchiveSymbolTableInfo info)
         {
             info = null;
-            if (data == null || data.Length < 4)
+            if (data == null || data.Length < (isSym64 ? 8 : 4))
             {
                 return false;
             }
 
-            int symbolCount = (int)ReadUInt32BigEndian(data, 0);
-            if (symbolCount < 0)
+            bool truncated = false;
+            int symbolCount;
+            long offsetsSize;
+            int headerSize;
+            if (isSym64)
+            {
+                ulong symbolCountRaw = ReadUInt64BigEndian(data, 0);
+                if (symbolCountRaw > int.MaxValue)
+                {
+                    truncated = true;
+                    symbolCount = int.MaxValue;
+                }
+                else
+                {
+                    symbolCount = (int)symbolCountRaw;
+                }
+
+                offsetsSize = (long)symbolCountRaw * 8;
+                headerSize = 8;
+            }
+            else
+            {
+                symbolCount = (int)ReadUInt32BigEndian(data, 0);
+                if (symbolCount < 0)
+                {
+                    return false;
+                }
+
+                offsetsSize = (long)symbolCount * 4;
+                headerSize = 4;
+            }
+
+            if (offsetsSize + headerSize > data.Length)
             {
                 return false;
             }
 
-            long offsetsSize = (long)symbolCount * 4;
-            if (offsetsSize + 4 > data.Length)
-            {
-                return false;
-            }
-
-            int nameTableSize = data.Length - (int)(offsetsSize + 4);
-            info = new CoffArchiveSymbolTableInfo(symbolCount, nameTableSize);
+            int nameTableSize = data.Length - (int)(offsetsSize + headerSize);
+            info = new CoffArchiveSymbolTableInfo(symbolCount, nameTableSize, isSym64, truncated);
             return true;
         }
 
@@ -22844,6 +22965,10 @@ namespace PECoff
             int offset = 20;
             string symbolName = ReadAsciiZ(data, ref offset);
             string dllName = ReadAsciiZ(data, ref offset);
+            bool isImportByOrdinal = nameType == 0;
+            ushort? ordinal = isImportByOrdinal ? ordinalOrHint : null;
+            ushort? hint = isImportByOrdinal ? null : ordinalOrHint;
+            string importName = isImportByOrdinal ? "#" + ordinalOrHint.ToString(CultureInfo.InvariantCulture) : symbolName;
 
             info = new CoffImportObjectInfo(
                 version,
@@ -22857,7 +22982,11 @@ namespace PECoff
                 nameType,
                 GetImportObjectNameTypeName(nameType),
                 symbolName,
-                dllName);
+                dllName,
+                isImportByOrdinal,
+                ordinal,
+                hint,
+                importName);
             return true;
         }
 

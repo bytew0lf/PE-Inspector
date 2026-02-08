@@ -1675,6 +1675,7 @@ namespace PECoff
         public uint LimitBytes { get; }
         public uint ParsedBytes { get; }
         public uint TrailingBytes { get; }
+        public bool IsTruncated { get; }
         public string VersionHint { get; }
         public IReadOnlyList<string> FieldGroups { get; }
         public string TrailingHash { get; }
@@ -1685,6 +1686,7 @@ namespace PECoff
             uint limitBytes,
             uint parsedBytes,
             uint trailingBytes,
+            bool isTruncated,
             string versionHint,
             string[] fieldGroups,
             string trailingHash,
@@ -1694,6 +1696,7 @@ namespace PECoff
             LimitBytes = limitBytes;
             ParsedBytes = parsedBytes;
             TrailingBytes = trailingBytes;
+            IsTruncated = isTruncated;
             VersionHint = versionHint ?? string.Empty;
             FieldGroups = Array.AsReadOnly(fieldGroups ?? Array.Empty<string>());
             TrailingHash = trailingHash ?? string.Empty;
@@ -2544,11 +2547,15 @@ namespace PECoff
     {
         public int SymbolCount { get; }
         public int NameTableSize { get; }
+        public bool Is64Bit { get; }
+        public bool IsTruncated { get; }
 
-        public CoffArchiveSymbolTableInfo(int symbolCount, int nameTableSize)
+        public CoffArchiveSymbolTableInfo(int symbolCount, int nameTableSize, bool is64Bit, bool isTruncated)
         {
             SymbolCount = symbolCount;
             NameTableSize = nameTableSize;
+            Is64Bit = is64Bit;
+            IsTruncated = isTruncated;
         }
     }
 
@@ -2566,6 +2573,10 @@ namespace PECoff
         public string NameTypeName { get; }
         public string SymbolName { get; }
         public string DllName { get; }
+        public bool IsImportByOrdinal { get; }
+        public ushort? Ordinal { get; }
+        public ushort? Hint { get; }
+        public string ImportName { get; }
 
         public CoffImportObjectInfo(
             ushort version,
@@ -2579,7 +2590,11 @@ namespace PECoff
             ushort nameType,
             string nameTypeName,
             string symbolName,
-            string dllName)
+            string dllName,
+            bool isImportByOrdinal,
+            ushort? ordinal,
+            ushort? hint,
+            string importName)
         {
             Version = version;
             Machine = machine;
@@ -2593,6 +2608,10 @@ namespace PECoff
             NameTypeName = nameTypeName ?? string.Empty;
             SymbolName = symbolName ?? string.Empty;
             DllName = dllName ?? string.Empty;
+            IsImportByOrdinal = isImportByOrdinal;
+            Ordinal = ordinal;
+            Hint = hint;
+            ImportName = importName ?? string.Empty;
         }
     }
 
@@ -2609,6 +2628,7 @@ namespace PECoff
         public bool IsLongNameTable { get; }
         public bool IsImportObject { get; }
         public CoffImportObjectInfo ImportObject { get; }
+        public bool DataInArchive { get; }
 
         public CoffArchiveMemberInfo(
             string name,
@@ -2621,7 +2641,8 @@ namespace PECoff
             bool isSymbolTable,
             bool isLongNameTable,
             bool isImportObject,
-            CoffImportObjectInfo importObject)
+            CoffImportObjectInfo importObject,
+            bool dataInArchive)
         {
             Name = name ?? string.Empty;
             DataOffset = dataOffset;
@@ -2634,6 +2655,7 @@ namespace PECoff
             IsLongNameTable = isLongNameTable;
             IsImportObject = isImportObject;
             ImportObject = importObject;
+            DataInArchive = dataInArchive;
         }
     }
 
@@ -2643,17 +2665,26 @@ namespace PECoff
         public int MemberCount { get; }
         public CoffArchiveSymbolTableInfo SymbolTable { get; }
         public IReadOnlyList<CoffArchiveMemberInfo> Members { get; }
+        public bool IsThinArchive { get; }
+        public bool HasLongNameTable { get; }
+        public int LongNameTableSize { get; }
 
         public CoffArchiveInfo(
             string signature,
             int memberCount,
             CoffArchiveSymbolTableInfo symbolTable,
-            CoffArchiveMemberInfo[] members)
+            CoffArchiveMemberInfo[] members,
+            bool isThinArchive,
+            bool hasLongNameTable,
+            int longNameTableSize)
         {
             Signature = signature ?? string.Empty;
             MemberCount = memberCount;
             SymbolTable = symbolTable;
             Members = Array.AsReadOnly(members ?? Array.Empty<CoffArchiveMemberInfo>());
+            IsThinArchive = isThinArchive;
+            HasLongNameTable = hasLongNameTable;
+            LongNameTableSize = longNameTableSize;
         }
     }
 
@@ -2687,6 +2718,14 @@ namespace PECoff
         public uint AddressOfEntryPoint { get; }
         public uint BaseOfCode { get; }
         public ulong ImageBase { get; }
+        public uint EntryPointFileOffset { get; }
+        public uint BaseOfCodeFileOffset { get; }
+        public bool EntryPointFileOffsetValid { get; }
+        public bool BaseOfCodeFileOffsetValid { get; }
+        public bool EntryPointMapped { get; }
+        public bool BaseOfCodeMapped { get; }
+        public string EntryPointSectionName { get; }
+        public string BaseOfCodeSectionName { get; }
         public IReadOnlyList<TeDataDirectoryInfo> DataDirectories { get; }
 
         public TeImageInfo(
@@ -2702,6 +2741,14 @@ namespace PECoff
             uint addressOfEntryPoint,
             uint baseOfCode,
             ulong imageBase,
+            uint entryPointFileOffset,
+            uint baseOfCodeFileOffset,
+            bool entryPointFileOffsetValid,
+            bool baseOfCodeFileOffsetValid,
+            bool entryPointMapped,
+            bool baseOfCodeMapped,
+            string entryPointSectionName,
+            string baseOfCodeSectionName,
             TeDataDirectoryInfo[] dataDirectories)
         {
             Machine = machine;
@@ -2716,6 +2763,14 @@ namespace PECoff
             AddressOfEntryPoint = addressOfEntryPoint;
             BaseOfCode = baseOfCode;
             ImageBase = imageBase;
+            EntryPointFileOffset = entryPointFileOffset;
+            BaseOfCodeFileOffset = baseOfCodeFileOffset;
+            EntryPointFileOffsetValid = entryPointFileOffsetValid;
+            BaseOfCodeFileOffsetValid = baseOfCodeFileOffsetValid;
+            EntryPointMapped = entryPointMapped;
+            BaseOfCodeMapped = baseOfCodeMapped;
+            EntryPointSectionName = entryPointSectionName ?? string.Empty;
+            BaseOfCodeSectionName = baseOfCodeSectionName ?? string.Empty;
             DataDirectories = Array.AsReadOnly(dataDirectories ?? Array.Empty<TeDataDirectoryInfo>());
         }
     }
@@ -4458,7 +4513,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 30;
+        public const int CurrentSchemaVersion = 31;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
