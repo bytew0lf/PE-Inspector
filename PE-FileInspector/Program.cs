@@ -479,6 +479,34 @@ namespace PE_FileInspector
                     }
                 }
 
+                if (pe.DataDirectoryValidations.Count > 0)
+                {
+                    sb.AppendLine("Data Directory Validations:");
+                    foreach (DataDirectoryValidationInfo validation in pe.DataDirectoryValidations.OrderBy(info => info.Index))
+                    {
+                        string sectionInfo = string.IsNullOrWhiteSpace(validation.SectionName)
+                            ? string.Empty
+                            : " | Section: " + Safe(validation.SectionName) + " (RVA: 0x" + validation.SectionRva.ToString("X8", CultureInfo.InvariantCulture) +
+                              " | Size: " + validation.SectionSize.ToString(CultureInfo.InvariantCulture) + ")";
+                        string notes = string.IsNullOrWhiteSpace(validation.Notes)
+                            ? string.Empty
+                            : " | Notes: " + Safe(validation.Notes);
+                        sb.AppendLine("  - [" + validation.Index.ToString(CultureInfo.InvariantCulture) + "] " + Safe(validation.Name) +
+                                      " | RVA: 0x" + validation.VirtualAddress.ToString("X8", CultureInfo.InvariantCulture) +
+                                      " | Size: " + validation.Size.ToString(CultureInfo.InvariantCulture) +
+                                      " | Present: " + validation.IsPresent +
+                                      " | Mapped: " + validation.IsMapped +
+                                      " | FullyMapped: " + validation.IsFullyMapped +
+                                      " | MinSize: " + validation.MinimumSize.ToString(CultureInfo.InvariantCulture) +
+                                      " | EntrySize: " + validation.EntrySize.ToString(CultureInfo.InvariantCulture) +
+                                      " | Aligned: " + validation.SizeAligned +
+                                      " | Plausible: " + validation.SizePlausible +
+                                      " | UsesFileOffset: " + validation.UsesFileOffset +
+                                      sectionInfo +
+                                      notes);
+                    }
+                }
+
                 if (filter.ShouldInclude("section-directories"))
                 {
                     sb.AppendLine("Section Directory Coverage:");

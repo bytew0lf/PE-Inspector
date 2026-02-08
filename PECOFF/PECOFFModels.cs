@@ -2660,6 +2660,67 @@ namespace PECoff
         }
     }
 
+    public sealed class DataDirectoryValidationInfo
+    {
+        public int Index { get; }
+        public string Name { get; }
+        public uint VirtualAddress { get; }
+        public uint Size { get; }
+        public bool IsPresent { get; }
+        public bool IsMapped { get; }
+        public bool IsFullyMapped { get; }
+        public string SectionName { get; }
+        public uint SectionRva { get; }
+        public uint SectionSize { get; }
+        public uint DirectoryEndRva { get; }
+        public uint SectionEndRva { get; }
+        public uint MinimumSize { get; }
+        public uint EntrySize { get; }
+        public bool SizeAligned { get; }
+        public bool SizePlausible { get; }
+        public bool UsesFileOffset { get; }
+        public string Notes { get; }
+
+        public DataDirectoryValidationInfo(
+            int index,
+            string name,
+            uint virtualAddress,
+            uint size,
+            bool isMapped,
+            bool isFullyMapped,
+            string sectionName,
+            uint sectionRva,
+            uint sectionSize,
+            uint directoryEndRva,
+            uint sectionEndRva,
+            uint minimumSize,
+            uint entrySize,
+            bool sizeAligned,
+            bool sizePlausible,
+            bool usesFileOffset,
+            string notes)
+        {
+            Index = index;
+            Name = name ?? string.Empty;
+            VirtualAddress = virtualAddress;
+            Size = size;
+            IsPresent = size > 0;
+            IsMapped = isMapped;
+            IsFullyMapped = isFullyMapped;
+            SectionName = sectionName ?? string.Empty;
+            SectionRva = sectionRva;
+            SectionSize = sectionSize;
+            DirectoryEndRva = directoryEndRva;
+            SectionEndRva = sectionEndRva;
+            MinimumSize = minimumSize;
+            EntrySize = entrySize;
+            SizeAligned = sizeAligned;
+            SizePlausible = sizePlausible;
+            UsesFileOffset = usesFileOffset;
+            Notes = notes ?? string.Empty;
+        }
+    }
+
     public sealed class ArchitectureDirectoryInfo
     {
         public uint VirtualAddress { get; }
@@ -4195,7 +4256,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 27;
+        public const int CurrentSchemaVersion = 28;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
@@ -4247,6 +4308,7 @@ namespace PECoff
         public DllCharacteristicsInfo DllCharacteristics { get; }
         public SecurityFeaturesInfo SecurityFeatures { get; }
         public IReadOnlyList<DataDirectoryInfo> DataDirectories { get; }
+        public IReadOnlyList<DataDirectoryValidationInfo> DataDirectoryValidations { get; }
         public ArchitectureDirectoryInfo ArchitectureDirectory { get; }
         public GlobalPtrDirectoryInfo GlobalPtrDirectory { get; }
         public IatDirectoryInfo IatDirectory { get; }
@@ -4364,6 +4426,7 @@ namespace PECoff
             DllCharacteristicsInfo dllCharacteristics,
             SecurityFeaturesInfo securityFeatures,
             DataDirectoryInfo[] dataDirectories,
+            DataDirectoryValidationInfo[] dataDirectoryValidations,
             ArchitectureDirectoryInfo architectureDirectory,
             GlobalPtrDirectoryInfo globalPtrDirectory,
             IatDirectoryInfo iatDirectory,
@@ -4481,6 +4544,7 @@ namespace PECoff
             DllCharacteristics = dllCharacteristics;
             SecurityFeatures = securityFeatures;
             DataDirectories = Array.AsReadOnly(dataDirectories ?? Array.Empty<DataDirectoryInfo>());
+            DataDirectoryValidations = Array.AsReadOnly(dataDirectoryValidations ?? Array.Empty<DataDirectoryValidationInfo>());
             ArchitectureDirectory = architectureDirectory;
             GlobalPtrDirectory = globalPtrDirectory;
             IatDirectory = iatDirectory;
@@ -4628,6 +4692,9 @@ namespace PECoff
             string[] unmappedDirectories = stableOrdering
                 ? UnmappedDataDirectories.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray()
                 : UnmappedDataDirectories.ToArray();
+            DataDirectoryValidationInfo[] directoryValidations = stableOrdering
+                ? DataDirectoryValidations.OrderBy(info => info.Index).ToArray()
+                : DataDirectoryValidations.ToArray();
             ResourceStringCoverageInfo[] stringCoverage = stableOrdering
                 ? ResourceStringCoverage.OrderBy(info => info.LanguageId).ToArray()
                 : ResourceStringCoverage.ToArray();
@@ -4685,6 +4752,7 @@ namespace PECoff
                 DllCharacteristics,
                 SecurityFeatures,
                 DataDirectories,
+                DataDirectoryValidations = directoryValidations,
                 ArchitectureDirectory,
                 GlobalPtrDirectory,
                 IatDirectory,

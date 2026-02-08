@@ -15,6 +15,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{07C2787E
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SnapshotGenerator", "tools\SnapshotGenerator\SnapshotGenerator.csproj", "{A8B30392-58BE-4CFD-B161-B5CC387A8A79}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JsonSnapshotGenerator", "tools\JsonSnapshotGenerator\JsonSnapshotGenerator.csproj", "{1B62637C-09A1-41E7-9D25-73E549A65A99}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -85,11 +87,24 @@ Global
 		{A8B30392-58BE-4CFD-B161-B5CC387A8A79}.Release|x64.Build.0 = Release|Any CPU
 		{A8B30392-58BE-4CFD-B161-B5CC387A8A79}.Release|x86.ActiveCfg = Release|Any CPU
 		{A8B30392-58BE-4CFD-B161-B5CC387A8A79}.Release|x86.Build.0 = Release|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Debug|x64.Build.0 = Debug|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Debug|x86.Build.0 = Debug|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Release|x64.ActiveCfg = Release|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Release|x64.Build.0 = Release|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Release|x86.ActiveCfg = Release|Any CPU
+		{1B62637C-09A1-41E7-9D25-73E549A65A99}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{A8B30392-58BE-4CFD-B161-B5CC387A8A79} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
+		{1B62637C-09A1-41E7-9D25-73E549A65A99} = {07C2787E-EAC7-C090-1BA3-A61EC2A24D84}
 	EndGlobalSection
 EndGlobal

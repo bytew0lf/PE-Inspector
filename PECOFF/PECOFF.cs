@@ -1796,6 +1796,12 @@ namespace PECoff
             get { return _unmappedDataDirectories.ToArray(); }
         }
 
+        private readonly List<DataDirectoryValidationInfo> _dataDirectoryValidations = new List<DataDirectoryValidationInfo>();
+        public DataDirectoryValidationInfo[] DataDirectoryValidations
+        {
+            get { return _dataDirectoryValidations.ToArray(); }
+        }
+
         private SubsystemInfo _subsystemInfo;
         public SubsystemInfo SubsystemInfo
         {
@@ -3611,6 +3617,188 @@ namespace PECoff
             _architectureDirectory = BuildArchitectureDirectoryInfo(directories, sections);
             _globalPtrDirectory = BuildGlobalPtrDirectoryInfo(directories, sections, isPe32Plus);
             _iatDirectory = BuildIatDirectoryInfo(directories, sections, isPe32Plus);
+            BuildDataDirectoryValidations(directories, sections, isPe32Plus);
+        }
+
+        private void BuildDataDirectoryValidations(IMAGE_DATA_DIRECTORY[] directories, List<IMAGE_SECTION_HEADER> sections, bool isPe32Plus)
+        {
+            _dataDirectoryValidations.Clear();
+            if (directories == null || directories.Length == 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < directories.Length; i++)
+            {
+                IMAGE_DATA_DIRECTORY directory = directories[i];
+                DataDirectoryInfo info = i < _dataDirectoryInfos.Length ? _dataDirectoryInfos[i] : null;
+                string name = info?.Name ?? GetDataDirectoryName(i);
+                bool usesFileOffset = i == 4; // Security directory uses file offset, not RVA
+
+                IMAGE_SECTION_HEADER startSection = default;
+                bool startMapped = false;
+                uint sectionRva = info?.SectionRva ?? 0;
+                uint sectionSize = info?.SectionSize ?? 0;
+                string sectionName = info?.SectionName ?? string.Empty;
+                if (directory.Size > 0 && TryGetSectionByRva(sections, directory.VirtualAddress, out startSection))
+                {
+                    startMapped = true;
+                    sectionRva = startSection.VirtualAddress;
+                    sectionSize = GetSectionSpan(startSection);
+                    if (string.IsNullOrWhiteSpace(sectionName))
+                    {
+                        sectionName = NormalizeSectionName(startSection.Section);
+                    }
+                }
+
+                _dataDirectoryValidations.Add(BuildDataDirectoryValidationCore(
+                    i,
+                    name,
+                    directory.VirtualAddress,
+                    directory.Size,
+                    isPe32Plus,
+                    startMapped && directory.Size > 0,
+                    sectionRva,
+                    sectionSize,
+                    sectionName,
+                    usesFileOffset));
+            }
+        }
+
+        internal static DataDirectoryValidationInfo BuildDataDirectoryValidationForTest(
+            int index,
+            uint virtualAddress,
+            uint size,
+            bool isPe32Plus,
+            bool startMapped,
+            uint sectionRva,
+            uint sectionSize,
+            string sectionName)
+        {
+            string name = GetDataDirectoryName(index);
+            bool usesFileOffset = index == 4;
+
+            return BuildDataDirectoryValidationCore(
+                index,
+                name,
+                virtualAddress,
+                size,
+                isPe32Plus,
+                startMapped && size > 0,
+                sectionRva,
+                sectionSize,
+                sectionName,
+                usesFileOffset);
+        }
+
+        private static DataDirectoryValidationInfo BuildDataDirectoryValidationCore(
+            int index,
+            string name,
+            uint virtualAddress,
+            uint size,
+            bool isPe32Plus,
+            bool startMapped,
+            uint sectionRva,
+            uint sectionSize,
+            string sectionName,
+            bool usesFileOffset)
+        {
+            string notes = string.Empty;
+            if (usesFileOffset && size > 0)
+            {
+                notes = AppendNote(notes, "uses file offset (WIN_CERTIFICATE)");
+            }
+
+            bool fullyMapped = false;
+            if (startMapped && size > 0)
+            {
+                ulong endRva = (ulong)virtualAddress + size;
+                ulong sectionEnd = (ulong)sectionRva + sectionSize;
+                fullyMapped = endRva <= sectionEnd;
+                if (!fullyMapped && !usesFileOffset)
+                {
+                    notes = AppendNote(notes, "directory spans beyond section");
+                }
+            }
+
+            if (size > 0 && !startMapped && !usesFileOffset)
+            {
+                notes = AppendNote(notes, "RVA not mapped to a section");
+            }
+
+            (uint minSize, uint entrySize) = GetDataDirectorySizeExpectations(index, isPe32Plus);
+            bool sizePlausible = size == 0 || size >= minSize;
+            if (!sizePlausible)
+            {
+                notes = AppendNote(notes, "size below minimum header size");
+            }
+
+            bool sizeAligned = entrySize == 0 || size == 0 || (size % entrySize) == 0;
+            if (!sizeAligned && entrySize > 0)
+            {
+                notes = AppendNote(notes, "size not aligned to entry size");
+            }
+
+            uint directoryEndRva = size == 0 ? virtualAddress : virtualAddress + size;
+            uint sectionEndRva = sectionSize == 0 ? sectionRva : sectionRva + sectionSize;
+
+            return new DataDirectoryValidationInfo(
+                index,
+                name,
+                virtualAddress,
+                size,
+                startMapped,
+                fullyMapped,
+                sectionName,
+                sectionRva,
+                sectionSize,
+                directoryEndRva,
+                sectionEndRva,
+                minSize,
+                entrySize,
+                sizeAligned,
+                sizePlausible,
+                usesFileOffset,
+                notes);
+        }
+
+        private static (uint MinSize, uint EntrySize) GetDataDirectorySizeExpectations(int index, bool isPe32Plus)
+        {
+            switch (index)
+            {
+                case 0: // Export
+                    return (40, 0);
+                case 1: // Import
+                    return (20, 20);
+                case 2: // Resource
+                    return (16, 0);
+                case 3: // Exception
+                    return (12, 12);
+                case 4: // Security
+                    return (8, 8);
+                case 5: // Base Reloc
+                    return (8, 4);
+                case 6: // Debug
+                    return (28, 28);
+                case 7: // Architecture
+                    return (24, 0);
+                case 8: // GlobalPtr
+                    return (isPe32Plus ? 8u : 4u, isPe32Plus ? 8u : 4u);
+                case 9: // TLS
+                    return (isPe32Plus ? 40u : 24u, 0);
+                case 10: // Load config
+                    return (isPe32Plus ? 0x40u : 0x40u, 0);
+                case 11: // Bound import
+                    return (8, 8);
+                case 12: // IAT
+                    return (isPe32Plus ? 8u : 4u, isPe32Plus ? 8u : 4u);
+                case 13: // Delay import
+                    return (32, 32);
+                case 14: // CLR
+                    return (72, 0);
+                default:
+                    return (0, 0);
+            }
         }
 
         private ArchitectureDirectoryInfo BuildArchitectureDirectoryInfo(
@@ -5333,6 +5521,7 @@ namespace PECoff
                 _dllCharacteristicsInfo,
                 _securityFeaturesInfo,
                 _dataDirectoryInfos,
+                _dataDirectoryValidations.ToArray(),
                 _architectureDirectory,
                 _globalPtrDirectory,
                 _iatDirectory,
@@ -21780,6 +21969,7 @@ namespace PECoff
                 _sectionHeaders.Clear();
                 _sectionDirectoryCoverage.Clear();
                 _unmappedDataDirectories.Clear();
+                _dataDirectoryValidations.Clear();
                 _overlayInfo = new OverlayInfo(0, 0);
                 _overlayContainers.Clear();
                 _securityFeaturesInfo = null;
