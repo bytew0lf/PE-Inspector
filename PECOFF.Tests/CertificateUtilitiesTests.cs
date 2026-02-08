@@ -1,4 +1,5 @@
 using System;
+using System.Security.Cryptography.X509Certificates;
 using PECoff;
 using Xunit;
 
@@ -72,6 +73,35 @@ public class CertificateUtilitiesTests
         Assert.True(status.HasTimestamp);
     }
 
+    [Fact]
+    public void BuildAuthenticodeStatus_Builds_Policy_Evaluation()
+    {
+        Pkcs7SignerInfo signer = CreateSigner(
+            isTimestamp: false,
+            hasCodeSigningEku: true,
+            certificateTransparencyCount: 2,
+            certificateTransparencyLogIds: new[] { "b", "a" });
+
+        AuthenticodePolicy policy = new AuthenticodePolicy
+        {
+            RequireCodeSigningEku = true,
+            RequireCertificateTransparency = true,
+            RevocationMode = X509RevocationMode.Online,
+            OfflineChainCheck = true,
+            EnableCertificateTransparencyLogCheck = true
+        };
+
+        AuthenticodeStatusInfo status = CertificateUtilities.BuildAuthenticodeStatus(new[] { signer }, policy);
+
+        Assert.NotNull(status.PolicyEvaluation);
+        Assert.True(status.PolicyEvaluation.RevocationCheckRequested);
+        Assert.False(status.PolicyEvaluation.RevocationCheckPerformed);
+        Assert.True(status.PolicyEvaluation.CodeSigningEkuSatisfied);
+        Assert.True(status.PolicyEvaluation.CertificateTransparencySatisfied);
+        Assert.Equal(2, status.PolicyEvaluation.CertificateTransparencyLogCount);
+        Assert.Contains("a", status.PolicyEvaluation.CertificateTransparencyLogIds, StringComparer.OrdinalIgnoreCase);
+    }
+
     private static Pkcs7SignerInfo CreateSigner(
         bool isTimestamp,
         bool chainValid = true,
@@ -80,7 +110,9 @@ public class CertificateUtilitiesTests
         int nestingLevel = 0,
         Pkcs7SignerInfo[]? counterSigners = null,
         Pkcs7SignerInfo[]? nestedSigners = null,
-        string[]? chainStatus = null)
+        string[]? chainStatus = null,
+        int certificateTransparencyCount = 0,
+        string[]? certificateTransparencyLogIds = null)
     {
         string[] status = chainStatus ?? (chainValid ? Array.Empty<string>() : new[] { "UntrustedRoot" });
         return new Pkcs7SignerInfo(
@@ -101,8 +133,8 @@ public class CertificateUtilitiesTests
             hasCodeSigningEku: hasCodeSigningEku,
             hasTimestampEku: hasTimestampEku,
             isWithinValidityPeriod: true,
-            certificateTransparencyCount: 0,
-            certificateTransparencyLogIds: Array.Empty<string>(),
+            certificateTransparencyCount: certificateTransparencyCount,
+            certificateTransparencyLogIds: certificateTransparencyLogIds ?? Array.Empty<string>(),
             nestingLevel: nestingLevel,
             counterSigners: counterSigners ?? Array.Empty<Pkcs7SignerInfo>(),
             nestedSigners: nestedSigners ?? Array.Empty<Pkcs7SignerInfo>(),

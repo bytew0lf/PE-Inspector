@@ -683,6 +683,38 @@ namespace PECoff
         }
     }
 
+    public sealed class PdbSymbolRecordInfo
+    {
+        public string Kind { get; }
+        public ushort RecordType { get; }
+        public string RecordTypeName { get; }
+        public string Name { get; }
+        public ushort Segment { get; }
+        public uint Offset { get; }
+        public uint TypeIndex { get; }
+        public string Notes { get; }
+
+        public PdbSymbolRecordInfo(
+            string kind,
+            ushort recordType,
+            string recordTypeName,
+            string name,
+            ushort segment,
+            uint offset,
+            uint typeIndex,
+            string notes)
+        {
+            Kind = kind ?? string.Empty;
+            RecordType = recordType;
+            RecordTypeName = recordTypeName ?? string.Empty;
+            Name = name ?? string.Empty;
+            Segment = segment;
+            Offset = offset;
+            TypeIndex = typeIndex;
+            Notes = notes ?? string.Empty;
+        }
+    }
+
     public sealed class PdbInfo
     {
         public string Path { get; }
@@ -695,6 +727,9 @@ namespace PECoff
         public uint Age { get; }
         public int PublicSymbolCount { get; }
         public IReadOnlyList<string> PublicSymbols { get; }
+        public int SymbolRecordCount { get; }
+        public IReadOnlyList<PdbSymbolRecordInfo> SymbolRecords { get; }
+        public string SymbolRecordNotes { get; }
         public PdbDbiInfo Dbi { get; }
         public PdbTpiInfo Tpi { get; }
         public PdbTpiInfo Ipi { get; }
@@ -713,6 +748,9 @@ namespace PECoff
             uint age,
             int publicSymbolCount,
             string[] publicSymbols,
+            int symbolRecordCount,
+            PdbSymbolRecordInfo[] symbolRecords,
+            string symbolRecordNotes,
             PdbDbiInfo dbi,
             PdbTpiInfo tpi,
             PdbTpiInfo ipi,
@@ -730,6 +768,9 @@ namespace PECoff
             Age = age;
             PublicSymbolCount = publicSymbolCount;
             PublicSymbols = Array.AsReadOnly(publicSymbols ?? Array.Empty<string>());
+            SymbolRecordCount = symbolRecordCount;
+            SymbolRecords = Array.AsReadOnly(symbolRecords ?? Array.Empty<PdbSymbolRecordInfo>());
+            SymbolRecordNotes = symbolRecordNotes ?? string.Empty;
             Dbi = dbi;
             Tpi = tpi;
             Ipi = ipi;
@@ -3234,6 +3275,47 @@ namespace PECoff
         }
     }
 
+    public sealed class AuthenticodePolicyEvaluationInfo
+    {
+        public bool RevocationCheckRequested { get; }
+        public bool RevocationCheckPerformed { get; }
+        public X509RevocationMode RevocationMode { get; }
+        public X509RevocationFlag RevocationFlag { get; }
+        public bool Offline { get; }
+        public bool CodeSigningEkuRequired { get; }
+        public bool CodeSigningEkuSatisfied { get; }
+        public bool CertificateTransparencyRequired { get; }
+        public bool CertificateTransparencySatisfied { get; }
+        public int CertificateTransparencyLogCount { get; }
+        public IReadOnlyList<string> CertificateTransparencyLogIds { get; }
+
+        public AuthenticodePolicyEvaluationInfo(
+            bool revocationCheckRequested,
+            bool revocationCheckPerformed,
+            X509RevocationMode revocationMode,
+            X509RevocationFlag revocationFlag,
+            bool offline,
+            bool codeSigningEkuRequired,
+            bool codeSigningEkuSatisfied,
+            bool certificateTransparencyRequired,
+            bool certificateTransparencySatisfied,
+            int certificateTransparencyLogCount,
+            string[] certificateTransparencyLogIds)
+        {
+            RevocationCheckRequested = revocationCheckRequested;
+            RevocationCheckPerformed = revocationCheckPerformed;
+            RevocationMode = revocationMode;
+            RevocationFlag = revocationFlag;
+            Offline = offline;
+            CodeSigningEkuRequired = codeSigningEkuRequired;
+            CodeSigningEkuSatisfied = codeSigningEkuSatisfied;
+            CertificateTransparencyRequired = certificateTransparencyRequired;
+            CertificateTransparencySatisfied = certificateTransparencySatisfied;
+            CertificateTransparencyLogCount = certificateTransparencyLogCount;
+            CertificateTransparencyLogIds = Array.AsReadOnly(certificateTransparencyLogIds ?? Array.Empty<string>());
+        }
+    }
+
     public sealed class AuthenticodeStatusInfo
     {
         public int SignerCount { get; }
@@ -3250,6 +3332,7 @@ namespace PECoff
         public IReadOnlyList<string> CertificateTransparencyLogIds { get; }
         public WinTrustResultInfo WinTrust { get; }
         public AuthenticodeTrustStoreInfo TrustStore { get; }
+        public AuthenticodePolicyEvaluationInfo PolicyEvaluation { get; }
         public bool CertificateTransparencyRequiredMet { get; }
         public bool PolicyCompliant { get; }
         public IReadOnlyList<string> PolicyFailures { get; }
@@ -3271,6 +3354,7 @@ namespace PECoff
             string[] certificateTransparencyLogIds,
             WinTrustResultInfo winTrust,
             AuthenticodeTrustStoreInfo trustStore,
+            AuthenticodePolicyEvaluationInfo policyEvaluation,
             bool certificateTransparencyRequiredMet,
             bool policyCompliant,
             string[] policyFailures,
@@ -3291,6 +3375,7 @@ namespace PECoff
             CertificateTransparencyLogIds = Array.AsReadOnly(certificateTransparencyLogIds ?? Array.Empty<string>());
             WinTrust = winTrust;
             TrustStore = trustStore;
+            PolicyEvaluation = policyEvaluation;
             CertificateTransparencyRequiredMet = certificateTransparencyRequiredMet;
             PolicyCompliant = policyCompliant;
             PolicyFailures = Array.AsReadOnly(policyFailures ?? Array.Empty<string>());
@@ -3836,6 +3921,12 @@ namespace PECoff
         public int TotalIlBytes { get; }
         public int MaxIlBytes { get; }
         public int AverageIlBytes { get; }
+        public int ExceptionClauseCount { get; }
+        public int ExceptionClauseCatchCount { get; }
+        public int ExceptionClauseFinallyCount { get; }
+        public int ExceptionClauseFaultCount { get; }
+        public int ExceptionClauseFilterCount { get; }
+        public int ExceptionClauseInvalidCount { get; }
 
         public ClrMethodBodySummaryInfo(
             int methodCount,
@@ -3845,7 +3936,13 @@ namespace PECoff
             int invalidHeaderCount,
             int totalIlBytes,
             int maxIlBytes,
-            int averageIlBytes)
+            int averageIlBytes,
+            int exceptionClauseCount,
+            int exceptionClauseCatchCount,
+            int exceptionClauseFinallyCount,
+            int exceptionClauseFaultCount,
+            int exceptionClauseFilterCount,
+            int exceptionClauseInvalidCount)
         {
             MethodCount = methodCount;
             MethodBodyCount = methodBodyCount;
@@ -3855,6 +3952,58 @@ namespace PECoff
             TotalIlBytes = totalIlBytes;
             MaxIlBytes = maxIlBytes;
             AverageIlBytes = averageIlBytes;
+            ExceptionClauseCount = exceptionClauseCount;
+            ExceptionClauseCatchCount = exceptionClauseCatchCount;
+            ExceptionClauseFinallyCount = exceptionClauseFinallyCount;
+            ExceptionClauseFaultCount = exceptionClauseFaultCount;
+            ExceptionClauseFilterCount = exceptionClauseFilterCount;
+            ExceptionClauseInvalidCount = exceptionClauseInvalidCount;
+        }
+    }
+
+    public sealed class ClrSignatureSampleInfo
+    {
+        public string Kind { get; }
+        public string Name { get; }
+        public string Signature { get; }
+
+        public ClrSignatureSampleInfo(string kind, string name, string signature)
+        {
+            Kind = kind ?? string.Empty;
+            Name = name ?? string.Empty;
+            Signature = signature ?? string.Empty;
+        }
+    }
+
+    public sealed class ClrSignatureDecodeSummaryInfo
+    {
+        public int MethodSignatureCount { get; }
+        public int FieldSignatureCount { get; }
+        public int MemberReferenceSignatureCount { get; }
+        public int StandaloneSignatureCount { get; }
+        public int DecodedSignatureCount { get; }
+        public int FailedSignatureCount { get; }
+        public IReadOnlyList<ClrSignatureSampleInfo> Samples { get; }
+        public IReadOnlyList<string> FailureMessages { get; }
+
+        public ClrSignatureDecodeSummaryInfo(
+            int methodSignatureCount,
+            int fieldSignatureCount,
+            int memberReferenceSignatureCount,
+            int standaloneSignatureCount,
+            int decodedSignatureCount,
+            int failedSignatureCount,
+            ClrSignatureSampleInfo[] samples,
+            string[] failureMessages)
+        {
+            MethodSignatureCount = methodSignatureCount;
+            FieldSignatureCount = fieldSignatureCount;
+            MemberReferenceSignatureCount = memberReferenceSignatureCount;
+            StandaloneSignatureCount = standaloneSignatureCount;
+            DecodedSignatureCount = decodedSignatureCount;
+            FailedSignatureCount = failedSignatureCount;
+            Samples = Array.AsReadOnly(samples ?? Array.Empty<ClrSignatureSampleInfo>());
+            FailureMessages = Array.AsReadOnly(failureMessages ?? Array.Empty<string>());
         }
     }
 
@@ -4309,7 +4458,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 29;
+        public const int CurrentSchemaVersion = 30;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }

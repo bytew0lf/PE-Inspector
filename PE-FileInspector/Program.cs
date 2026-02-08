@@ -835,6 +835,19 @@ namespace PE_FileInspector
                                               " | RequireCT=" + entry.AuthenticodeStatus.Policy.RequireCertificateTransparency +
                                               " | WinTrust=" + entry.AuthenticodeStatus.Policy.EnableWinTrustCheck);
                             }
+                            if (entry.AuthenticodeStatus.PolicyEvaluation != null)
+                            {
+                                sb.AppendLine("    Policy Eval: RevocationRequested=" + entry.AuthenticodeStatus.PolicyEvaluation.RevocationCheckRequested +
+                                              " | RevocationPerformed=" + entry.AuthenticodeStatus.PolicyEvaluation.RevocationCheckPerformed +
+                                              " | CodeSigningEkuRequired=" + entry.AuthenticodeStatus.PolicyEvaluation.CodeSigningEkuRequired +
+                                              " | CodeSigningEkuOk=" + entry.AuthenticodeStatus.PolicyEvaluation.CodeSigningEkuSatisfied +
+                                              " | CTRequired=" + entry.AuthenticodeStatus.PolicyEvaluation.CertificateTransparencyRequired +
+                                              " | CTOk=" + entry.AuthenticodeStatus.PolicyEvaluation.CertificateTransparencySatisfied);
+                                if (entry.AuthenticodeStatus.PolicyEvaluation.CertificateTransparencyLogIds.Count > 0)
+                                {
+                                    sb.AppendLine("      CT Logs: " + entry.AuthenticodeStatus.PolicyEvaluation.CertificateTransparencyLogCount.ToString(CultureInfo.InvariantCulture));
+                                }
+                            }
                             sb.AppendLine("    Policy Compliant: " + entry.AuthenticodeStatus.PolicyCompliant);
                             if (entry.AuthenticodeStatus.PolicyFailures.Count > 0)
                             {
@@ -1038,6 +1051,33 @@ namespace PE_FileInspector
                     sb.AppendLine("  IL Bytes: Total=" + pe.ClrMetadata.MethodBodySummary.TotalIlBytes.ToString(CultureInfo.InvariantCulture) +
                                   " | Max=" + pe.ClrMetadata.MethodBodySummary.MaxIlBytes.ToString(CultureInfo.InvariantCulture) +
                                   " | Avg=" + pe.ClrMetadata.MethodBodySummary.AverageIlBytes.ToString(CultureInfo.InvariantCulture));
+                    sb.AppendLine("  EH Clauses: Total=" + pe.ClrMetadata.MethodBodySummary.ExceptionClauseCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Catch=" + pe.ClrMetadata.MethodBodySummary.ExceptionClauseCatchCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Finally=" + pe.ClrMetadata.MethodBodySummary.ExceptionClauseFinallyCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Fault=" + pe.ClrMetadata.MethodBodySummary.ExceptionClauseFaultCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Filter=" + pe.ClrMetadata.MethodBodySummary.ExceptionClauseFilterCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Invalid=" + pe.ClrMetadata.MethodBodySummary.ExceptionClauseInvalidCount.ToString(CultureInfo.InvariantCulture));
+                }
+                if (pe.ClrMetadata.SignatureSummary != null)
+                {
+                    sb.AppendLine("  Signature Decode: Methods=" + pe.ClrMetadata.SignatureSummary.MethodSignatureCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Fields=" + pe.ClrMetadata.SignatureSummary.FieldSignatureCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | MemberRefs=" + pe.ClrMetadata.SignatureSummary.MemberReferenceSignatureCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Standalone=" + pe.ClrMetadata.SignatureSummary.StandaloneSignatureCount.ToString(CultureInfo.InvariantCulture) +
+                                  " | Failed=" + pe.ClrMetadata.SignatureSummary.FailedSignatureCount.ToString(CultureInfo.InvariantCulture));
+                    if (pe.ClrMetadata.SignatureSummary.Samples.Count > 0)
+                    {
+                        sb.AppendLine("  Signature Samples:");
+                        foreach (ClrSignatureSampleInfo sample in pe.ClrMetadata.SignatureSummary.Samples.Take(5))
+                        {
+                            string prefix = string.IsNullOrWhiteSpace(sample.Name) ? sample.Kind : sample.Kind + " " + sample.Name;
+                            sb.AppendLine("    - " + prefix + ": " + Safe(sample.Signature));
+                        }
+                        if (pe.ClrMetadata.SignatureSummary.Samples.Count > 5)
+                        {
+                            sb.AppendLine("    (truncated)");
+                        }
+                    }
                 }
                 if (pe.ClrMetadata.HasDebuggableAttribute || !string.IsNullOrWhiteSpace(pe.ClrMetadata.DebuggableModes))
                 {
@@ -1804,6 +1844,31 @@ namespace PE_FileInspector
                             {
                                 sb.AppendLine("      (truncated)");
                             }
+                        }
+                        if (entry.Pdb.SymbolRecordCount > 0)
+                        {
+                            int publicCount = entry.Pdb.SymbolRecords.Count(r => r.Kind == "Public");
+                            int globalCount = entry.Pdb.SymbolRecords.Count(r => r.Kind == "Global");
+                            int procCount = entry.Pdb.SymbolRecords.Count(r => r.Kind == "Proc");
+                            int localCount = entry.Pdb.SymbolRecords.Count(r => r.Kind == "Local");
+                            sb.AppendLine("    Symbol Records: " + entry.Pdb.SymbolRecordCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Public=" + publicCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Global=" + globalCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Proc=" + procCount.ToString(CultureInfo.InvariantCulture) +
+                                          " | Local=" + localCount.ToString(CultureInfo.InvariantCulture));
+                            foreach (PdbSymbolRecordInfo record in entry.Pdb.SymbolRecords.Take(10))
+                            {
+                                string name = string.IsNullOrWhiteSpace(record.Name) ? record.RecordTypeName : record.Name;
+                                sb.AppendLine("      - [" + record.Kind + "] " + Safe(name));
+                            }
+                            if (entry.Pdb.SymbolRecords.Count > 10)
+                            {
+                                sb.AppendLine("      (truncated)");
+                            }
+                        }
+                        if (!string.IsNullOrWhiteSpace(entry.Pdb.SymbolRecordNotes))
+                        {
+                            sb.AppendLine("    Symbol Notes: " + Safe(entry.Pdb.SymbolRecordNotes));
                         }
                         if (!string.IsNullOrWhiteSpace(entry.Pdb.Notes))
                         {

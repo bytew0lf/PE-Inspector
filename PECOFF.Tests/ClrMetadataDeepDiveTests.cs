@@ -19,6 +19,9 @@ public class ClrMetadataDeepDiveTests
         Assert.NotNull(parser.ClrMetadata.MethodBodySummary);
         Assert.True(parser.ClrMetadata.MethodBodySummary.MethodBodyCount > 0);
         Assert.NotEmpty(parser.ClrMetadata.TokenReferences);
+        Assert.NotNull(parser.ClrMetadata.SignatureSummary);
+        Assert.True(parser.ClrMetadata.SignatureSummary.MethodSignatureCount > 0);
+        Assert.True(parser.ClrMetadata.SignatureSummary.Samples.Count > 0);
     }
 
     private static string? FindTestFilesDirectory()

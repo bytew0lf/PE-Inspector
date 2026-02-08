@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -390,6 +391,7 @@ namespace PECoff
         public MetadataTableCountInfo[] MetadataTableCounts { get; }
         public ClrTokenReferenceInfo[] TokenReferences { get; }
         public ClrMethodBodySummaryInfo MethodBodySummary { get; }
+        public ClrSignatureDecodeSummaryInfo SignatureSummary { get; }
         public bool IlOnly { get; }
         public bool Requires32Bit { get; }
         public bool Prefers32Bit { get; }
@@ -425,6 +427,7 @@ namespace PECoff
             MetadataTableCountInfo[] metadataTableCounts,
             ClrTokenReferenceInfo[] tokenReferences,
             ClrMethodBodySummaryInfo methodBodySummary,
+            ClrSignatureDecodeSummaryInfo signatureSummary,
             bool ilOnly,
             bool requires32Bit,
             bool prefers32Bit,
@@ -459,6 +462,7 @@ namespace PECoff
             MetadataTableCounts = metadataTableCounts ?? Array.Empty<MetadataTableCountInfo>();
             TokenReferences = tokenReferences ?? Array.Empty<ClrTokenReferenceInfo>();
             MethodBodySummary = methodBodySummary;
+            SignatureSummary = signatureSummary;
             IlOnly = ilOnly;
             Requires32Bit = requires32Bit;
             Prefers32Bit = prefers32Bit;
@@ -2855,6 +2859,9 @@ namespace PECoff
             PdbTpiInfo ipiInfo = null;
             PdbGsiInfo publicsInfo = null;
             PdbGsiInfo globalsInfo = null;
+            int symbolRecordCount = 0;
+            PdbSymbolRecordInfo[] symbolRecords = Array.Empty<PdbSymbolRecordInfo>();
+            string symbolRecordNotes = string.Empty;
 
             if (streamCount > 1 && streamSizes[1] != 0xFFFFFFFF && streamSizes[1] > 0)
             {
@@ -2946,6 +2953,29 @@ namespace PECoff
                         notes = AppendNote(notes, gsiNote);
                     }
                 }
+
+                int symStreamIndex = dbiInfo.SymRecordStreamIndex;
+                if (symStreamIndex >= 0 && symStreamIndex < streamCount &&
+                    streamSizes[symStreamIndex] != 0xFFFFFFFF && streamSizes[symStreamIndex] > 0)
+                {
+                    int maxBytes = 512 * 1024;
+                    if (TryReadMsfStreamPartial(stream, pageSize, streamSizes[symStreamIndex], streamPages[symStreamIndex], maxBytes, out byte[] symStream))
+                    {
+                        string symNote = string.Empty;
+                        if (TryParsePdbSymbolRecords(symStream, out int totalSymbols, out PdbSymbolRecordInfo[] parsedRecords, out symNote))
+                        {
+                            symbolRecordCount = totalSymbols;
+                            symbolRecords = parsedRecords ?? Array.Empty<PdbSymbolRecordInfo>();
+                            symbolRecordNotes = symNote ?? string.Empty;
+                            notes = AppendNote(notes, symNote);
+                        }
+                        else if (!string.IsNullOrWhiteSpace(symNote))
+                        {
+                            symbolRecordNotes = symNote;
+                            notes = AppendNote(notes, symNote);
+                        }
+                    }
+                }
             }
 
             if (publics.Count == 0)
@@ -2982,6 +3012,9 @@ namespace PECoff
                 pdbAge,
                 publics.Count,
                 publics.ToArray(),
+                symbolRecordCount,
+                symbolRecords,
+                symbolRecordNotes,
                 dbiInfo,
                 tpiInfo,
                 ipiInfo,
@@ -3405,6 +3438,259 @@ namespace PECoff
             }
 
             return publics.Count > 0;
+        }
+
+        private const int MaxPdbSymbolRecords = 200;
+
+        private static bool TryParsePdbSymbolRecords(
+            ReadOnlySpan<byte> data,
+            out int totalCount,
+            out PdbSymbolRecordInfo[] records,
+            out string note)
+        {
+            totalCount = 0;
+            records = Array.Empty<PdbSymbolRecordInfo>();
+            note = string.Empty;
+
+            if (data.Length < 4)
+            {
+                note = "Symbol record stream too small.";
+                return false;
+            }
+
+            List<PdbSymbolRecordInfo> entries = new List<PdbSymbolRecordInfo>();
+            int cursor = 0;
+            int guard = 0;
+            while (cursor + 4 <= data.Length && guard++ < 200000)
+            {
+                ushort length = ReadUInt16(data, cursor);
+                if (length == 0)
+                {
+                    cursor += 2;
+                    if ((cursor & 1) != 0)
+                    {
+                        cursor++;
+                    }
+                    continue;
+                }
+
+                int recordEnd = cursor + 2 + length;
+                if (recordEnd > data.Length)
+                {
+                    note = AppendNote(note, "Symbol record truncated.");
+                    break;
+                }
+
+                ushort recordType = ReadUInt16(data, cursor + 2);
+                ReadOnlySpan<byte> recordData = data.Slice(cursor + 4, length - 2);
+                string recordTypeName = GetPdbSymbolRecordTypeName(recordType);
+                string kind = GetPdbSymbolRecordKind(recordType);
+                ushort segment = 0;
+                uint offset = 0;
+                uint typeIndex = 0;
+                string name = string.Empty;
+                string recordNote = string.Empty;
+
+                if (TryDecodePdbSymbolRecord(recordType, recordData, out segment, out offset, out typeIndex, out int nameOffset))
+                {
+                    name = ReadPdbSymbolName(recordData, nameOffset);
+                }
+                else
+                {
+                    name = ReadPdbSymbolName(recordData, 0);
+                }
+
+                if (string.IsNullOrWhiteSpace(name) && nameOffset >= 0 && recordData.Length >= nameOffset + 4)
+                {
+                    uint stringOffset = ReadUInt32(recordData, nameOffset);
+                    if (stringOffset != 0)
+                    {
+                        recordNote = "string-table:0x" + stringOffset.ToString("X8", CultureInfo.InvariantCulture);
+                    }
+                }
+
+                totalCount++;
+                if (entries.Count < MaxPdbSymbolRecords)
+                {
+                    entries.Add(new PdbSymbolRecordInfo(
+                        kind,
+                        recordType,
+                        recordTypeName,
+                        name,
+                        segment,
+                        offset,
+                        typeIndex,
+                        recordNote));
+                }
+
+                cursor = recordEnd;
+                if ((cursor & 1) != 0)
+                {
+                    cursor++;
+                }
+            }
+
+            records = entries.ToArray();
+            if (totalCount > records.Length)
+            {
+                note = AppendNote(note, $"Symbol records truncated to {records.Length} entries.");
+            }
+
+            return totalCount > 0;
+        }
+
+        private static bool TryDecodePdbSymbolRecord(
+            ushort recordType,
+            ReadOnlySpan<byte> data,
+            out ushort segment,
+            out uint offset,
+            out uint typeIndex,
+            out int nameOffset)
+        {
+            segment = 0;
+            offset = 0;
+            typeIndex = 0;
+            nameOffset = -1;
+
+            switch (recordType)
+            {
+                case 0x110E: // S_PUB32
+                case 0x100E: // S_PUB32_ST
+                    if (data.Length < 10)
+                    {
+                        return false;
+                    }
+                    offset = ReadUInt32(data, 4);
+                    segment = ReadUInt16(data, 8);
+                    nameOffset = 10;
+                    return true;
+                case 0x110D: // S_GDATA32
+                case 0x100D: // S_GDATA32_ST
+                case 0x110C: // S_LDATA32
+                case 0x100C: // S_LDATA32_ST
+                    if (data.Length < 10)
+                    {
+                        return false;
+                    }
+                    typeIndex = ReadUInt32(data, 0);
+                    offset = ReadUInt32(data, 4);
+                    segment = ReadUInt16(data, 8);
+                    nameOffset = 10;
+                    return true;
+                case 0x110F: // S_GPROC32
+                case 0x1110: // S_LPROC32
+                case 0x1147: // S_GPROC32_ID
+                case 0x1148: // S_LPROC32_ID
+                case 0x1112: // S_GPROC32_32? (compat)
+                    if (data.Length < 35)
+                    {
+                        return false;
+                    }
+                    typeIndex = ReadUInt32(data, 24);
+                    offset = ReadUInt32(data, 28);
+                    segment = ReadUInt16(data, 32);
+                    nameOffset = 35;
+                    return true;
+                case 0x113E: // S_LOCAL
+                    if (data.Length < 8)
+                    {
+                        return false;
+                    }
+                    typeIndex = ReadUInt32(data, 0);
+                    nameOffset = 8;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static string ReadPdbSymbolName(ReadOnlySpan<byte> data, int offset)
+        {
+            if (offset < 0 || offset >= data.Length)
+            {
+                return string.Empty;
+            }
+
+            ReadOnlySpan<byte> slice = data.Slice(offset);
+            int nullIndex = slice.IndexOf((byte)0);
+            if (nullIndex > 0)
+            {
+                return ReadAsciiSymbol(slice.Slice(0, nullIndex));
+            }
+
+            if (slice.Length > 1 && slice[0] > 0 && slice[0] < slice.Length)
+            {
+                int len = slice[0];
+                return ReadAsciiSymbol(slice.Slice(1, len));
+            }
+
+            return ReadAsciiSymbol(slice);
+        }
+
+        private static string ReadAsciiSymbol(ReadOnlySpan<byte> data)
+        {
+            if (data.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            int length = Math.Min(data.Length, 256);
+            ReadOnlySpan<byte> slice = data.Slice(0, length);
+            for (int i = 0; i < slice.Length; i++)
+            {
+                byte b = slice[i];
+                if (b < 0x20 || b > 0x7E)
+                {
+                    return string.Empty;
+                }
+            }
+
+            return Encoding.ASCII.GetString(slice);
+        }
+
+        private static string GetPdbSymbolRecordKind(ushort recordType)
+        {
+            switch (recordType)
+            {
+                case 0x110E:
+                case 0x100E:
+                    return "Public";
+                case 0x110D:
+                case 0x100D:
+                    return "Global";
+                case 0x110C:
+                case 0x100C:
+                case 0x113E:
+                    return "Local";
+                case 0x110F:
+                case 0x1110:
+                case 0x1147:
+                case 0x1148:
+                case 0x1112:
+                    return "Proc";
+                default:
+                    return "Other";
+            }
+        }
+
+        private static string GetPdbSymbolRecordTypeName(ushort recordType)
+        {
+            switch (recordType)
+            {
+                case 0x110E: return "S_PUB32";
+                case 0x100E: return "S_PUB32_ST";
+                case 0x110D: return "S_GDATA32";
+                case 0x100D: return "S_GDATA32_ST";
+                case 0x110C: return "S_LDATA32";
+                case 0x100C: return "S_LDATA32_ST";
+                case 0x110F: return "S_GPROC32";
+                case 0x1110: return "S_LPROC32";
+                case 0x1147: return "S_GPROC32_ID";
+                case 0x1148: return "S_LPROC32_ID";
+                case 0x1112: return "S_GPROC32_32";
+                case 0x113E: return "S_LOCAL";
+                default: return "0x" + recordType.ToString("X4", CultureInfo.InvariantCulture);
+            }
         }
 
         private bool TryGetFileOffset(List<IMAGE_SECTION_HEADER> sections, uint rva, uint size, out long fileOffset)
@@ -11813,6 +12099,52 @@ namespace PECoff
             return info != null;
         }
 
+        internal static bool TryParsePdbSymbolRecordsForTest(byte[] data, out int totalCount, out PdbSymbolRecordInfo[] records, out string note)
+        {
+            totalCount = 0;
+            records = Array.Empty<PdbSymbolRecordInfo>();
+            note = string.Empty;
+            if (data == null)
+            {
+                return false;
+            }
+
+            return TryParsePdbSymbolRecords(data, out totalCount, out records, out note);
+        }
+
+        internal static bool TryParseMethodBodySummaryForTest(byte[] data, out ClrMethodBodySummaryInfo summary)
+        {
+            summary = null;
+            if (data == null)
+            {
+                return false;
+            }
+
+            if (!TryParseMethodBodyInfoFromSpan(data, out MethodBodyInfo info))
+            {
+                return false;
+            }
+
+            int tiny = info.IsTiny ? 1 : 0;
+            int fat = info.IsFat ? 1 : 0;
+            summary = new ClrMethodBodySummaryInfo(
+                1,
+                1,
+                tiny,
+                fat,
+                0,
+                info.CodeSize,
+                info.CodeSize,
+                info.CodeSize,
+                info.ExceptionClauseCount,
+                info.ExceptionClauseCatchCount,
+                info.ExceptionClauseFinallyCount,
+                info.ExceptionClauseFaultCount,
+                info.ExceptionClauseFilterCount,
+                info.ExceptionClauseInvalidCount);
+            return true;
+        }
+
         internal static bool TryReadCodeIntegrityForTest(byte[] data, out LoadConfigCodeIntegrityInfo info)
         {
             info = null;
@@ -19505,6 +19837,7 @@ namespace PECoff
                 metadataTableCounts,
                 Array.Empty<ClrTokenReferenceInfo>(),
                 null,
+                null,
                 (header.Flags & 0x00000001) != 0,
                 (header.Flags & 0x00000002) != 0,
                 (header.Flags & 0x00020000) != 0,
@@ -19756,9 +20089,9 @@ namespace PECoff
                         Warn(ParseIssueCategory.Metadata, metadataInfo.ValidationMessages[i]);
                     }
                 }
-                if (TryBuildClrMetadataDeepDive(metadataBuffer, metadataSize, sections, out ClrTokenReferenceInfo[] tokenRefs, out ClrMethodBodySummaryInfo methodSummary))
+                if (TryBuildClrMetadataDeepDive(metadataBuffer, metadataSize, sections, out ClrTokenReferenceInfo[] tokenRefs, out ClrMethodBodySummaryInfo methodSummary, out ClrSignatureDecodeSummaryInfo signatureSummary))
                 {
-                    _clrMetadata = CloneClrMetadataWithDeepDive(_clrMetadata, tokenRefs, methodSummary);
+                    _clrMetadata = CloneClrMetadataWithDeepDive(_clrMetadata, tokenRefs, methodSummary, signatureSummary);
                 }
                 TryPopulateManagedResourceSizes(clrHeader, sections);
             }
@@ -19937,10 +20270,12 @@ namespace PECoff
             int length,
             List<IMAGE_SECTION_HEADER> sections,
             out ClrTokenReferenceInfo[] tokenReferences,
-            out ClrMethodBodySummaryInfo methodBodySummary)
+            out ClrMethodBodySummaryInfo methodBodySummary,
+            out ClrSignatureDecodeSummaryInfo signatureSummary)
         {
             tokenReferences = Array.Empty<ClrTokenReferenceInfo>();
             methodBodySummary = null;
+            signatureSummary = null;
 
             try
             {
@@ -19960,6 +20295,7 @@ namespace PECoff
                     MetadataReader reader = provider.GetMetadataReader();
                     tokenReferences = BuildTokenReferenceInfos(reader);
                     methodBodySummary = BuildMethodBodySummary(reader, sections);
+                    signatureSummary = BuildSignatureSummary(reader);
                     return true;
                 }
             }
@@ -19967,6 +20303,7 @@ namespace PECoff
             {
                 tokenReferences = Array.Empty<ClrTokenReferenceInfo>();
                 methodBodySummary = null;
+                signatureSummary = null;
                 return false;
             }
         }
@@ -20062,6 +20399,107 @@ namespace PECoff
             return infos.ToArray();
         }
 
+        private ClrSignatureDecodeSummaryInfo BuildSignatureSummary(MetadataReader reader)
+        {
+            const int maxSamples = 25;
+            const int maxFailures = 10;
+            List<ClrSignatureSampleInfo> samples = new List<ClrSignatureSampleInfo>();
+            List<string> failures = new List<string>();
+            SignatureTypeNameProvider provider = new SignatureTypeNameProvider(reader);
+
+            int methodCount = 0;
+            int fieldCount = 0;
+            int memberRefCount = 0;
+            int standaloneCount = 0;
+            int decoded = 0;
+            int failed = 0;
+
+            foreach (MethodDefinitionHandle handle in reader.MethodDefinitions)
+            {
+                methodCount++;
+                MethodDefinition method = reader.GetMethodDefinition(handle);
+                string name = reader.GetString(method.Name);
+                try
+                {
+                    MethodSignature<string> signature = method.DecodeSignature(provider, null);
+                    string signatureText = FormatMethodSignature(signature);
+                    decoded++;
+                    AddSignatureSample(samples, maxSamples, "Method", name, signatureText);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    AddFailure(failures, maxFailures, ex.Message);
+                }
+            }
+
+            foreach (FieldDefinitionHandle handle in reader.FieldDefinitions)
+            {
+                fieldCount++;
+                FieldDefinition field = reader.GetFieldDefinition(handle);
+                string name = reader.GetString(field.Name);
+                try
+                {
+                    string typeName = field.DecodeSignature(provider, null);
+                    string signatureText = string.IsNullOrWhiteSpace(typeName) ? string.Empty : typeName;
+                    decoded++;
+                    AddSignatureSample(samples, maxSamples, "Field", name, signatureText);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    AddFailure(failures, maxFailures, ex.Message);
+                }
+            }
+
+            foreach (MemberReferenceHandle handle in reader.MemberReferences)
+            {
+                memberRefCount++;
+                MemberReference member = reader.GetMemberReference(handle);
+                string name = reader.GetString(member.Name);
+                try
+                {
+                    string signatureText = TryDecodeMemberReferenceSignature(member, provider);
+                    decoded++;
+                    AddSignatureSample(samples, maxSamples, "MemberRef", name, signatureText);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    AddFailure(failures, maxFailures, ex.Message);
+                }
+            }
+
+            int standaloneRows = reader.GetTableRowCount(TableIndex.StandAloneSig);
+            for (int i = 1; i <= standaloneRows; i++)
+            {
+                standaloneCount++;
+                StandaloneSignatureHandle handle = MetadataTokens.StandaloneSignatureHandle(i);
+                StandaloneSignature sig = reader.GetStandaloneSignature(handle);
+                try
+                {
+                    string signatureText = TryDecodeStandaloneSignature(reader, sig, provider);
+                    decoded++;
+                    AddSignatureSample(samples, maxSamples, "StandaloneSig", string.Empty, signatureText);
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    AddFailure(failures, maxFailures, ex.Message);
+                }
+            }
+
+            return new ClrSignatureDecodeSummaryInfo(
+                methodCount,
+                fieldCount,
+                memberRefCount,
+                standaloneCount,
+                decoded,
+                failed,
+                samples.ToArray(),
+                failures.ToArray());
+        }
+
         private ClrMethodBodySummaryInfo BuildMethodBodySummary(MetadataReader reader, List<IMAGE_SECTION_HEADER> sections)
         {
             int methodCount = reader.GetTableRowCount(TableIndex.MethodDef);
@@ -20071,6 +20509,12 @@ namespace PECoff
             int invalidCount = 0;
             long totalIlBytes = 0;
             int maxIlBytes = 0;
+            int ehClauseCount = 0;
+            int ehCatchCount = 0;
+            int ehFinallyCount = 0;
+            int ehFaultCount = 0;
+            int ehFilterCount = 0;
+            int ehInvalidCount = 0;
 
             foreach (MethodDefinitionHandle handle in reader.MethodDefinitions)
             {
@@ -20082,27 +20526,34 @@ namespace PECoff
                 }
 
                 uint rva = (uint)rvaValue;
-                if (!TryReadMethodBodyInfo(sections, rva, out int codeSize, out bool isTiny, out bool isFat))
+                if (!TryReadMethodBodyInfo(sections, rva, out MethodBodyInfo bodyInfo))
                 {
                     invalidCount++;
                     continue;
                 }
 
                 methodBodyCount++;
-                if (isTiny)
+                if (bodyInfo.IsTiny)
                 {
                     tinyCount++;
                 }
-                else if (isFat)
+                else if (bodyInfo.IsFat)
                 {
                     fatCount++;
                 }
 
-                totalIlBytes += codeSize;
-                if (codeSize > maxIlBytes)
+                totalIlBytes += bodyInfo.CodeSize;
+                if (bodyInfo.CodeSize > maxIlBytes)
                 {
-                    maxIlBytes = codeSize;
+                    maxIlBytes = bodyInfo.CodeSize;
                 }
+
+                ehClauseCount += bodyInfo.ExceptionClauseCount;
+                ehCatchCount += bodyInfo.ExceptionClauseCatchCount;
+                ehFinallyCount += bodyInfo.ExceptionClauseFinallyCount;
+                ehFaultCount += bodyInfo.ExceptionClauseFaultCount;
+                ehFilterCount += bodyInfo.ExceptionClauseFilterCount;
+                ehInvalidCount += bodyInfo.ExceptionClauseInvalidCount;
             }
 
             int average = methodBodyCount > 0
@@ -20118,20 +20569,248 @@ namespace PECoff
                 invalidCount,
                 total,
                 maxIlBytes,
-                average);
+                average,
+                ehClauseCount,
+                ehCatchCount,
+                ehFinallyCount,
+                ehFaultCount,
+                ehFilterCount,
+                ehInvalidCount);
+        }
+
+        private static void AddSignatureSample(
+            List<ClrSignatureSampleInfo> samples,
+            int maxSamples,
+            string kind,
+            string name,
+            string signature)
+        {
+            if (samples.Count >= maxSamples)
+            {
+                return;
+            }
+
+            samples.Add(new ClrSignatureSampleInfo(kind, name, signature));
+        }
+
+        private static void AddFailure(List<string> failures, int maxFailures, string message)
+        {
+            if (failures.Count >= maxFailures)
+            {
+                return;
+            }
+
+            string text = string.IsNullOrWhiteSpace(message) ? "Unknown signature decode error." : message.Trim();
+            if (!failures.Contains(text))
+            {
+                failures.Add(text);
+            }
+        }
+
+        private static string FormatMethodSignature(MethodSignature<string> signature)
+        {
+            string returnType = string.IsNullOrWhiteSpace(signature.ReturnType) ? "void" : signature.ReturnType;
+            if (signature.ParameterTypes.Length == 0)
+            {
+                return returnType + " ()";
+            }
+
+            string[] parameters = new string[signature.ParameterTypes.Length];
+            for (int i = 0; i < signature.ParameterTypes.Length; i++)
+            {
+                string value = string.IsNullOrWhiteSpace(signature.ParameterTypes[i])
+                    ? "unknown"
+                    : signature.ParameterTypes[i];
+                if (i >= signature.RequiredParameterCount)
+                {
+                    value = "opt " + value;
+                }
+                parameters[i] = value;
+            }
+
+            return returnType + " (" + string.Join(", ", parameters) + ")";
+        }
+
+        private static string TryDecodeMemberReferenceSignature(MemberReference member, SignatureTypeNameProvider provider)
+        {
+            try
+            {
+                MethodSignature<string> methodSig = member.DecodeMethodSignature(provider, null);
+                return FormatMethodSignature(methodSig);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                string fieldSig = member.DecodeFieldSignature(provider, null);
+                return fieldSig ?? string.Empty;
+            }
+            catch
+            {
+            }
+
+            return string.Empty;
+        }
+
+        private static string TryDecodeStandaloneSignature(MetadataReader reader, StandaloneSignature signature, SignatureTypeNameProvider provider)
+        {
+            BlobReader blob = reader.GetBlobReader(signature.Signature);
+            if (blob.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            SignatureDecoder<string, object> decoder = new SignatureDecoder<string, object>(provider, reader, null);
+            BlobReader decodeReader = blob;
+            SignatureHeader header = blob.ReadSignatureHeader();
+            switch (header.Kind)
+            {
+                case SignatureKind.Method:
+                    return FormatMethodSignature(decoder.DecodeMethodSignature(ref decodeReader));
+                case SignatureKind.Field:
+                    return decoder.DecodeFieldSignature(ref decodeReader);
+                case SignatureKind.LocalVariables:
+                    {
+                        ImmutableArray<string> locals = decoder.DecodeLocalSignature(ref decodeReader);
+                        if (locals.IsDefaultOrEmpty)
+                        {
+                            return "locals ()";
+                        }
+                        return "locals (" + string.Join(", ", locals) + ")";
+                    }
+                default:
+                    return header.Kind.ToString();
+            }
+        }
+
+        private sealed class SignatureTypeNameProvider : ISignatureTypeProvider<string, object>
+        {
+            private readonly MetadataReader _reader;
+
+            public SignatureTypeNameProvider(MetadataReader reader)
+            {
+                _reader = reader;
+            }
+
+            public string GetArrayType(string elementType, ArrayShape shape)
+            {
+                if (shape.Rank <= 1)
+                {
+                    return elementType + "[]";
+                }
+
+                return elementType + "[" + new string(',', shape.Rank - 1) + "]";
+            }
+
+            public string GetByReferenceType(string elementType) => elementType + "&";
+
+            public string GetFunctionPointerType(MethodSignature<string> signature) => "fnptr " + FormatMethodSignature(signature);
+
+            public string GetGenericInstantiation(string genericType, ImmutableArray<string> typeArguments)
+            {
+                if (typeArguments.IsDefaultOrEmpty)
+                {
+                    return genericType;
+                }
+
+                return genericType + "<" + string.Join(", ", typeArguments) + ">";
+            }
+
+            public string GetGenericMethodParameter(object genericContext, int index) => "!!" + index.ToString(CultureInfo.InvariantCulture);
+
+            public string GetGenericTypeParameter(object genericContext, int index) => "!" + index.ToString(CultureInfo.InvariantCulture);
+
+            public string GetModifiedType(string modifier, string unmodifiedType, bool isRequired)
+            {
+                string suffix = isRequired ? " modreq(" : " modopt(";
+                return unmodifiedType + suffix + modifier + ")";
+            }
+
+            public string GetPinnedType(string elementType) => elementType + " pinned";
+
+            public string GetPointerType(string elementType) => elementType + "*";
+
+            public string GetPrimitiveType(PrimitiveTypeCode typeCode) => typeCode.ToString();
+
+            public string GetSZArrayType(string elementType) => elementType + "[]";
+
+            public string GetTypeFromDefinition(MetadataReader reader, TypeDefinitionHandle handle, byte rawTypeKind)
+            {
+                TypeDefinition typeDef = _reader.GetTypeDefinition(handle);
+                return FormatTypeName(_reader.GetString(typeDef.Namespace), _reader.GetString(typeDef.Name));
+            }
+
+            public string GetTypeFromReference(MetadataReader reader, TypeReferenceHandle handle, byte rawTypeKind)
+            {
+                TypeReference typeRef = _reader.GetTypeReference(handle);
+                return FormatTypeName(_reader.GetString(typeRef.Namespace), _reader.GetString(typeRef.Name));
+            }
+
+            public string GetTypeFromSpecification(MetadataReader reader, object genericContext, TypeSpecificationHandle handle, byte rawTypeKind)
+            {
+                TypeSpecification typeSpec = _reader.GetTypeSpecification(handle);
+                return typeSpec.DecodeSignature(this, genericContext);
+            }
+
+            private static string FormatTypeName(string ns, string name)
+            {
+                if (string.IsNullOrWhiteSpace(ns))
+                {
+                    return name ?? string.Empty;
+                }
+
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    return ns;
+                }
+
+                return ns + "." + name;
+            }
+        }
+
+        private readonly struct MethodBodyInfo
+        {
+            public int CodeSize { get; }
+            public bool IsTiny { get; }
+            public bool IsFat { get; }
+            public int ExceptionClauseCount { get; }
+            public int ExceptionClauseCatchCount { get; }
+            public int ExceptionClauseFinallyCount { get; }
+            public int ExceptionClauseFaultCount { get; }
+            public int ExceptionClauseFilterCount { get; }
+            public int ExceptionClauseInvalidCount { get; }
+
+            public MethodBodyInfo(
+                int codeSize,
+                bool isTiny,
+                bool isFat,
+                int exceptionClauseCount,
+                int exceptionClauseCatchCount,
+                int exceptionClauseFinallyCount,
+                int exceptionClauseFaultCount,
+                int exceptionClauseFilterCount,
+                int exceptionClauseInvalidCount)
+            {
+                CodeSize = codeSize;
+                IsTiny = isTiny;
+                IsFat = isFat;
+                ExceptionClauseCount = exceptionClauseCount;
+                ExceptionClauseCatchCount = exceptionClauseCatchCount;
+                ExceptionClauseFinallyCount = exceptionClauseFinallyCount;
+                ExceptionClauseFaultCount = exceptionClauseFaultCount;
+                ExceptionClauseFilterCount = exceptionClauseFilterCount;
+                ExceptionClauseInvalidCount = exceptionClauseInvalidCount;
+            }
         }
 
         private bool TryReadMethodBodyInfo(
             List<IMAGE_SECTION_HEADER> sections,
             uint rva,
-            out int codeSize,
-            out bool isTiny,
-            out bool isFat)
+            out MethodBodyInfo info)
         {
-            codeSize = 0;
-            isTiny = false;
-            isFat = false;
-
+            info = default;
             if (PEFileStream == null)
             {
                 return false;
@@ -20145,7 +20824,7 @@ namespace PECoff
             long originalPosition = PEFileStream.CanSeek ? PEFileStream.Position : 0;
             try
             {
-                if (!TrySetPosition(offset, 12))
+                if (!TrySetPosition(offset, 1))
                 {
                     return false;
                 }
@@ -20154,14 +20833,20 @@ namespace PECoff
                 int headerType = first & 0x3;
                 if (headerType == 2)
                 {
-                    isTiny = true;
-                    codeSize = first >> 2;
+                    int codeSize = first >> 2;
+                    info = new MethodBodyInfo(codeSize, true, false, 0, 0, 0, 0, 0, 0);
                     return true;
                 }
                 if (headerType == 3)
                 {
-                    byte second = PEFile.ReadByte();
-                    ushort flags = (ushort)(first | (second << 8));
+                    if (!TrySetPosition(offset, 12))
+                    {
+                        return false;
+                    }
+
+                    byte headerFirst = PEFile.ReadByte();
+                    byte headerSecond = PEFile.ReadByte();
+                    ushort flags = (ushort)(headerFirst | (headerSecond << 8));
                     int headerSize = ((flags >> 12) & 0xF) * 4;
                     if (headerSize < 12)
                     {
@@ -20170,8 +20855,124 @@ namespace PECoff
 
                     PEFile.ReadUInt16(); // maxStack
                     uint size = PEFile.ReadUInt32();
-                    codeSize = size > int.MaxValue ? int.MaxValue : (int)size;
-                    isFat = true;
+                    _ = PEFile.ReadUInt32(); // localVarSigTok
+                    int codeSize = size > int.MaxValue ? int.MaxValue : (int)size;
+                    bool moreSections = (flags & 0x8) != 0;
+                    int ehClauseCount = 0;
+                    int ehCatchCount = 0;
+                    int ehFinallyCount = 0;
+                    int ehFaultCount = 0;
+                    int ehFilterCount = 0;
+                    int ehInvalidCount = 0;
+
+                    if (moreSections && codeSize >= 0)
+                    {
+                        long codeOffset = offset + headerSize;
+                        long sectionOffset = codeOffset + size;
+                        sectionOffset = (sectionOffset + 3) & ~3L;
+                        if (sectionOffset >= 0 && sectionOffset < PEFileStream.Length)
+                        {
+                            long sectionCursor = sectionOffset;
+                            bool hasMore = true;
+                            int safeGuard = 0;
+                            while (hasMore && safeGuard++ < 64)
+                            {
+                                if (sectionCursor + 4 > PEFileStream.Length)
+                                {
+                                    ehInvalidCount++;
+                                    break;
+                                }
+                                if (!TrySetPosition(sectionCursor, 4))
+                                {
+                                    ehInvalidCount++;
+                                    break;
+                                }
+
+                                byte kind = PEFile.ReadByte();
+                                byte dataSizeLow = PEFile.ReadByte();
+                                ushort dataSizeHigh = PEFile.ReadUInt16();
+                                hasMore = (kind & 0x80) != 0;
+                                bool isFatSection = (kind & 0x40) != 0;
+                                int dataSize = isFatSection
+                                    ? (dataSizeHigh << 8) | dataSizeLow
+                                    : dataSizeLow;
+                                if (dataSize < 4)
+                                {
+                                    ehInvalidCount++;
+                                    break;
+                                }
+
+                                int sectionSize = dataSize;
+                                long sectionEnd = sectionCursor + sectionSize;
+                                if (sectionEnd > PEFileStream.Length)
+                                {
+                                    ehInvalidCount++;
+                                    break;
+                                }
+
+                                int sectionKind = kind & 0x3F;
+                                if (sectionKind == 0x01)
+                                {
+                                    int clauseSize = isFatSection ? 24 : 12;
+                                    int clauseBytes = sectionSize - 4;
+                                    if (clauseBytes < 0 || clauseBytes % clauseSize != 0)
+                                    {
+                                        ehInvalidCount++;
+                                    }
+                                    int clauseCount = clauseBytes >= 0 ? clauseBytes / clauseSize : 0;
+                                    ehClauseCount += clauseCount;
+
+                                    long clauseOffset = sectionCursor + 4;
+                                    for (int i = 0; i < clauseCount; i++)
+                                    {
+                                        if (clauseOffset + clauseSize > sectionEnd)
+                                        {
+                                            ehInvalidCount++;
+                                            break;
+                                        }
+                                        if (!TrySetPosition(clauseOffset, clauseSize))
+                                        {
+                                            ehInvalidCount++;
+                                            break;
+                                        }
+
+                                        uint clauseFlags = isFatSection ? PEFile.ReadUInt32() : PEFile.ReadUInt16();
+                                        if ((clauseFlags & 0x1) != 0)
+                                        {
+                                            ehFilterCount++;
+                                        }
+                                        else if ((clauseFlags & 0x2) != 0)
+                                        {
+                                            ehFinallyCount++;
+                                        }
+                                        else if ((clauseFlags & 0x4) != 0)
+                                        {
+                                            ehFaultCount++;
+                                        }
+                                        else
+                                        {
+                                            ehCatchCount++;
+                                        }
+
+                                        clauseOffset += clauseSize;
+                                    }
+                                }
+
+                                sectionCursor = (sectionEnd + 3) & ~3L;
+                            }
+                        }
+                    }
+
+                    info = new MethodBodyInfo(
+                        codeSize,
+                        false,
+                        true,
+                        ehClauseCount,
+                        ehCatchCount,
+                        ehFinallyCount,
+                        ehFaultCount,
+                        ehFilterCount,
+                        ehInvalidCount);
                     return true;
                 }
 
@@ -20184,6 +20985,145 @@ namespace PECoff
                     PEFileStream.Position = originalPosition;
                 }
             }
+        }
+
+        private static bool TryParseMethodBodyInfoFromSpan(ReadOnlySpan<byte> data, out MethodBodyInfo info)
+        {
+            info = default;
+            if (data.Length < 1)
+            {
+                return false;
+            }
+
+            byte first = data[0];
+            int headerType = first & 0x3;
+            if (headerType == 2)
+            {
+                int tinyCodeSize = first >> 2;
+                info = new MethodBodyInfo(tinyCodeSize, true, false, 0, 0, 0, 0, 0, 0);
+                return true;
+            }
+
+            if (headerType != 3 || data.Length < 12)
+            {
+                return false;
+            }
+
+            ushort flags = (ushort)(data[0] | (data[1] << 8));
+            int headerSize = ((flags >> 12) & 0xF) * 4;
+            if (headerSize < 12 || headerSize > data.Length)
+            {
+                return false;
+            }
+
+            uint size = ReadUInt32(data, 4);
+            int fatCodeSize = size > int.MaxValue ? int.MaxValue : (int)size;
+            bool moreSections = (flags & 0x8) != 0;
+            int ehClauseCount = 0;
+            int ehCatchCount = 0;
+            int ehFinallyCount = 0;
+            int ehFaultCount = 0;
+            int ehFilterCount = 0;
+            int ehInvalidCount = 0;
+
+            if (moreSections)
+            {
+                long sectionOffset = headerSize + size;
+                sectionOffset = (sectionOffset + 3) & ~3L;
+                if (sectionOffset >= 0 && sectionOffset < data.Length)
+                {
+                    long cursor = sectionOffset;
+                    bool hasMore = true;
+                    int safeGuard = 0;
+                    while (hasMore && safeGuard++ < 64)
+                    {
+                        if (cursor + 4 > data.Length)
+                        {
+                            ehInvalidCount++;
+                            break;
+                        }
+
+                        byte kind = data[(int)cursor];
+                        byte dataSizeLow = data[(int)cursor + 1];
+                        ushort dataSizeHigh = ReadUInt16(data, (int)cursor + 2);
+                        hasMore = (kind & 0x80) != 0;
+                        bool isFatSection = (kind & 0x40) != 0;
+                        int sectionSize = isFatSection
+                            ? (dataSizeHigh << 8) | dataSizeLow
+                            : dataSizeLow;
+                        if (sectionSize < 4)
+                        {
+                            ehInvalidCount++;
+                            break;
+                        }
+
+                        long sectionEnd = cursor + sectionSize;
+                        if (sectionEnd > data.Length)
+                        {
+                            ehInvalidCount++;
+                            break;
+                        }
+
+                        int sectionKind = kind & 0x3F;
+                        if (sectionKind == 0x01)
+                        {
+                            int clauseSize = isFatSection ? 24 : 12;
+                            int clauseBytes = sectionSize - 4;
+                            if (clauseBytes < 0 || clauseBytes % clauseSize != 0)
+                            {
+                                ehInvalidCount++;
+                            }
+                            int clauseCount = clauseBytes >= 0 ? clauseBytes / clauseSize : 0;
+                            ehClauseCount += clauseCount;
+                            long clauseOffset = cursor + 4;
+                            for (int i = 0; i < clauseCount; i++)
+                            {
+                                if (clauseOffset + clauseSize > sectionEnd)
+                                {
+                                    ehInvalidCount++;
+                                    break;
+                                }
+
+                                uint clauseFlags = isFatSection
+                                    ? ReadUInt32(data, (int)clauseOffset)
+                                    : ReadUInt16(data, (int)clauseOffset);
+                                if ((clauseFlags & 0x1) != 0)
+                                {
+                                    ehFilterCount++;
+                                }
+                                else if ((clauseFlags & 0x2) != 0)
+                                {
+                                    ehFinallyCount++;
+                                }
+                                else if ((clauseFlags & 0x4) != 0)
+                                {
+                                    ehFaultCount++;
+                                }
+                                else
+                                {
+                                    ehCatchCount++;
+                                }
+
+                                clauseOffset += clauseSize;
+                            }
+                        }
+
+                        cursor = (sectionEnd + 3) & ~3L;
+                    }
+                }
+            }
+
+            info = new MethodBodyInfo(
+                fatCodeSize,
+                false,
+                true,
+                ehClauseCount,
+                ehCatchCount,
+                ehFinallyCount,
+                ehFaultCount,
+                ehFilterCount,
+                ehInvalidCount);
+            return true;
         }
 
         private static string TryGetTargetFramework(MetadataReader reader, AssemblyDefinition assembly)
@@ -20578,6 +21518,7 @@ namespace PECoff
                 info.MetadataTableCounts,
                 info.TokenReferences,
                 info.MethodBodySummary,
+                info.SignatureSummary,
                 info.IlOnly,
                 info.Requires32Bit,
                 info.Prefers32Bit,
@@ -20598,7 +21539,8 @@ namespace PECoff
         private static ClrMetadataInfo CloneClrMetadataWithDeepDive(
             ClrMetadataInfo info,
             ClrTokenReferenceInfo[] tokenReferences,
-            ClrMethodBodySummaryInfo methodBodySummary)
+            ClrMethodBodySummaryInfo methodBodySummary,
+            ClrSignatureDecodeSummaryInfo signatureSummary)
         {
             return new ClrMetadataInfo(
                 info.MajorRuntimeVersion,
@@ -20619,6 +21561,7 @@ namespace PECoff
                 info.MetadataTableCounts,
                 tokenReferences ?? Array.Empty<ClrTokenReferenceInfo>(),
                 methodBodySummary,
+                signatureSummary,
                 info.IlOnly,
                 info.Requires32Bit,
                 info.Prefers32Bit,

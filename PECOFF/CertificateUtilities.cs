@@ -138,6 +138,12 @@ namespace PECoff
                                          !policy.RequireChainValid && !policy.RequireTimestamp &&
                                          !policy.RequireTimestampValid && !policy.RequireCodeSigningEku &&
                                          !policy.RequireCertificateTransparency;
+                AuthenticodePolicyEvaluationInfo policyEvaluation = BuildPolicyEvaluation(
+                    policy,
+                    hasSignature: false,
+                    allCodeSigningEku: false,
+                    certificateTransparencyRequiredMet: !policy.RequireCertificateTransparency,
+                    certificateTransparencyLogIds: Array.Empty<string>());
                 return new AuthenticodeStatusInfo(
                     0,
                     0,
@@ -153,6 +159,7 @@ namespace PECoff
                     Array.Empty<string>(),
                     BuildWinTrustResult(policy, filePath),
                     BuildTrustStoreResult(policy, false, false, Array.Empty<string>()),
+                    policyEvaluation,
                     !policy.RequireCertificateTransparency,
                     isPolicyCompliant,
                     isPolicyCompliant ? Array.Empty<string>() : new[] { "Missing signature." },
@@ -304,6 +311,16 @@ namespace PECoff
                 policyFailures.Add("Missing certificate transparency data.");
             }
 
+            string[] ctLogIds = ctLogs.Count == 0
+                ? Array.Empty<string>()
+                : ctLogs.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+            AuthenticodePolicyEvaluationInfo policyEval = BuildPolicyEvaluation(
+                policy,
+                hasSignature,
+                allCodeSigningEku,
+                ctRequiredMet,
+                ctLogIds);
+
             List<AuthenticodeSignerStatusInfo> signerStatuses = BuildSignerStatuses(signers);
             return new AuthenticodeStatusInfo(
                 signerCount,
@@ -317,14 +334,42 @@ namespace PECoff
                 timestampValid,
                 chainStatus.ToArray(),
                 timestampStatus.ToArray(),
-                ctLogs.Count == 0 ? Array.Empty<string>() : ctLogs.OrderBy(value => value, StringComparer.Ordinal).ToArray(),
+                ctLogIds,
                 BuildWinTrustResult(policy, filePath),
                 BuildTrustStoreResult(policy, hasSignature, allChainValid, chainStatus),
+                policyEval,
                 ctRequiredMet,
                 policyCompliant,
                 policyFailures.ToArray(),
                 signerStatuses.ToArray(),
                 policy);
+        }
+
+        private static AuthenticodePolicyEvaluationInfo BuildPolicyEvaluation(
+            AuthenticodePolicy policy,
+            bool hasSignature,
+            bool allCodeSigningEku,
+            bool certificateTransparencyRequiredMet,
+            string[] certificateTransparencyLogIds)
+        {
+            policy ??= new AuthenticodePolicy();
+            bool revocationRequested = policy.RevocationMode != X509RevocationMode.NoCheck;
+            bool revocationPerformed = hasSignature && revocationRequested && !policy.OfflineChainCheck;
+            bool codeSigningEkuSatisfied = !policy.RequireCodeSigningEku || allCodeSigningEku;
+            bool ctSatisfied = !policy.RequireCertificateTransparency || certificateTransparencyRequiredMet;
+            int ctLogCount = certificateTransparencyLogIds?.Length ?? 0;
+            return new AuthenticodePolicyEvaluationInfo(
+                revocationRequested,
+                revocationPerformed,
+                policy.RevocationMode,
+                policy.RevocationFlag,
+                policy.OfflineChainCheck,
+                policy.RequireCodeSigningEku,
+                codeSigningEkuSatisfied,
+                policy.RequireCertificateTransparency,
+                ctSatisfied,
+                ctLogCount,
+                certificateTransparencyLogIds ?? Array.Empty<string>());
         }
 
         private static AuthenticodeTrustStoreInfo BuildTrustStoreResult(
