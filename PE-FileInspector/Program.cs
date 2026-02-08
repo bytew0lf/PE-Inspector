@@ -510,7 +510,7 @@ namespace PE_FileInspector
                     }
                 }
 
-                if (pe.DataDirectoryValidations.Count > 0)
+                if (pe.DataDirectoryValidations.Length > 0)
                 {
                     sb.AppendLine("Data Directory Validations:");
                     foreach (DataDirectoryValidationInfo validation in pe.DataDirectoryValidations.OrderBy(info => info.Index))
