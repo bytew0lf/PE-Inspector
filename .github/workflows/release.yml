@@ -1,0 +1,45 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag name (e.g. v1.2.3)"
+        required: true
+      name:
+        description: "Release title (optional)"
+        required: false
+      prerelease:
+        description: "Mark as prerelease (true/false)"
+        required: false
+        default: "false"
+
+jobs:
+  build_test_release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Restore
+        run: dotnet restore PE-Inspector.sln
+
+      - name: Build
+        run: dotnet build PE-Inspector.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test PE-Inspector.sln -c Release --no-build
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.name || inputs.tag }}
+          prerelease: ${{ inputs.prerelease == 'true' }}
+          generate_release_notes: true
