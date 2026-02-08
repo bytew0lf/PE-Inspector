@@ -181,16 +181,16 @@ Status legend:
 | Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout. |
 | Exception directory | `full` | AMD64/ARM64/ARM32/IA64 decode + range validation, x86 SEH. |
 | Resources | `full` | Strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, message tables, RT_VERSION extensions. |
-| Resources (extended) | `partial` | Fonts/fontdir, rcdata format detection, dlginit, animated cursor/icon. |
+| Resources (extended) | `full` | Fonts/fontdir, rcdata format detection, dlginit, animated cursor/icon. |
 | Debug directory | `full` | CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, embedded PDB, SPGO, PDB hash + raw fallback. |
-| PDB/MSF streams | `partial` | MSF directory + PDB signature/age, DBI/TPI/GSI/publics summaries. |
-| CLR/.NET | `partial` | Metadata tables, token cross-refs, method body IL sizes, R2R header. |
-| Certificates/Authenticode | `partial` | PKCS7 signers/timestamps, CT hints/logs, WinTrust (Windows), trust-store status. |
+| PDB/MSF streams | `full` | MSF directory + PDB signature/age, DBI/TPI/GSI/publics summaries. |
+| CLR/.NET | `full` | Metadata tables, token cross-refs, method body IL sizes, R2R header. |
+| Certificates/Authenticode | `full` | PKCS7 signers/timestamps, CT hints/logs, WinTrust (Windows), trust-store status. |
 | COFF objects | `full` | Symbols/aux/relocs/line numbers, COMDAT selection hints. |
-| COFF archives/import libs | `partial` | Archive headers, longnames, import object details. |
-| UEFI TE images | `partial` | Header/sections + base relocation parsing. |
-| Overlay containers | `partial` | ZIP/RAR4/5/7z container parsing. |
-| Rich header | `partial` | Toolchain signature summaries. |
+| COFF archives/import libs | `full` | Archive headers, longnames, import object details. |
+| UEFI TE images | `full` | Header/sections + base relocation parsing. |
+| Overlay containers | `full` | ZIP/RAR4/5/7z container parsing. |
+| Rich header | `full` | Toolchain signature summaries. |
 
 ### Load-Config matrix (Win8→Win11)
 The parser records a version hint based on which field groups are present and preserves any trailing bytes beyond the known layout.
