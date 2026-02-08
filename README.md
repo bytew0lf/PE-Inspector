@@ -1,167 +1,40 @@
-
 # PE-Inspector
 [![Build](https://github.com/bytew0lf/PE-Inspector/actions/workflows/ci.yml/badge.svg)](https://github.com/bytew0lf/PE-Inspector/actions/workflows/ci.yml)
 
-Extracts information from a PECOFF file. 
+Extracts information from PE/COFF files. Includes:
 
-Just execute the PE-Inspector like this:
+- **PE-Inspector**: CSV output for batch analysis.
+- **PE-FileInspector**: single-file report + certificate extraction.
+- **PECOFF** library: parse and inspect PE/COFF programmatically.
 
-    PE-Inspector.exe output.csv <Path to inspect>
+## Requirements
 
-## PE-FileInspector
-Single-file inspector that writes a human-readable report and extracts certificates.
+- .NET SDK **9.0+**
+- Windows/macOS/Linux supported (some Authenticode policy checks are Windows-only)
 
-Usage:
+## Installation
 
-    PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze> [--suppress-cssm <true|false>] [--sections <list>] [--exclude-sections <list>]
+Prebuilt binaries are not published yet. Build from source:
 
-Notes:
+    dotnet build PE-Inspector.sln -c Release
 
-- On macOS, `CSSM_ModuleLoad()` warnings can appear when the runtime touches the Security framework. They are suppressed by default in PE-FileInspector.
-- Set `--suppress-cssm false` or `PE_INSPECTOR_SUPPRESS_CSSM=0` to allow these warnings.
+Executable outputs land in the project `bin/<Configuration>/net9.0/` folders.
 
-The report contains all analysis details, and any embedded certificates are written to the output directory with their native extensions (e.g. `.cer`, `.p7b`) and additionally as PEM (`.pem`).
-Use `--sections` to emit only selected report sections, or `--exclude-sections` to omit sections (comma-separated keys). Keys are normalized to lowercase with dashes, for example:
+## Features
 
-`file-info`, `version-info`, `pe-analysis`, `data-directories`, `section-entropy`, `section-permissions`, `section-padding`, `certificates`, `parse-status`, `findings`, `clr`, `strong-name`, `readytorun`, `assembly-refs`, `imports`, `import-details`, `import-descriptors`, `delay-import-details`, `delay-import-descriptors`, `bound-imports`, `exports`, `export-anomalies`, `export-details`, `exception`, `debug`, `coff-symbols`, `coff-string-table`, `coff-line-numbers`, `relocations`, `tls`, `load-config`, `rich-header`, `version-info-details`, `icon-groups`, `resource-icons`, `cursor-groups`, `resource-cursors`, `bitmaps`, `resource-fonts`, `resource-fontdirs`, `resource-dlginit`, `resource-animated-cursors`, `resource-animated-icons`, `resource-rcdata`, `resources`, `resource-string-tables`, `resource-string-coverage`, `resource-message-tables`, `resource-dialogs`, `resource-accelerators`, `resource-menus`, `resource-toolbars`, `resource-manifests`, `resource-locale-coverage`.
-
-The report also includes CLR/.NET metadata when present (runtime version, metadata version, stream list, module references, managed resource names/sizes/hashes).
-It now also includes assembly metadata (assembly name/version, MVID, target framework, debuggable attribute, assembly/module attribute lists) and metadata-based assembly references (with public key tokens and resolution hints), plus a runtime hint (IL/Mixed/ReadyToRun).
-Resource string tables and manifests are decoded and included in the report when available, along with string coverage summaries and strong-name signature validation details for .NET files.
-The report also includes debug directory entries (CodeView/PDB IDs + identity checks, MSF directory parsing with PDB signature/age, DBI/TPI/GSI/publics summaries, and symbol-record decoding, plus POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO/Borland/reserved summaries), data directory mapping + validation (name/RVA/size/section, size/alignment/mapping checks, plus Architecture/GlobalPtr/IAT summaries), COFF symbol/line/string tables when present (type decoding + aux detail), base relocation summaries (top types + sample RVAs, anomaly counts), TLS/load-config data (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, dynamic value relocation table details, GuardRF/HotPatch/Enclave/Volatile metadata pointers, callback resolution + section mapping, TLS raw data hash/preview + template sizing, guard feature matrix, SEH handler table parsing), version-info details (string tables + translations + file flags), icon-group reconstruction (PNG detection), bitmap/cursor resource metadata, font/fontdir/rcdata/dlginit/animated cursor/icon parsing (JSON schema/XML manifest hints, protobuf/flatbuffers/unity bundle detection), Authenticode digest checks and signer status/policy summaries (RFC3161 timestamps, nested signatures, certificate transparency hints + CT log IDs, WinTrust on Windows, cross-platform trust store/revocation summaries, optional catalog lookup on Windows), message tables (entry ranges, flags/length), dialog/menu/toolbar/accelerator summaries, manifest schema summaries (including MUI, requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/entropy summaries and packing hints plus overlay container parsing (ZIP/RAR4/5/7z NextHeader + EncodedHeader with LZMA/LZMA2), import descriptor consistency/bind hints with API-set resolution confidence and canonical targets plus null-thunk/termination stats, export forwarder resolution hints plus export anomaly counts, section padding and permission analysis, exception directory summaries (unwind counts/details/range validity), resource locale coverage, rich-header toolchain summaries, and subsystem/security flags when present.
-
-## Additional functionality
-The PECOFF Library has also the ability to get all imports and exports of the PE-file as well as the certificate.
-It now exposes debug directory entries (CodeView/PDB IDs + identity checks, MSF directory parsing with PDB signature/age, DBI/TPI/GSI/publics summaries, and symbol-record decoding, plus POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO/Borland/reserved summaries), data directory mapping + validation (name/RVA/size/section, size/alignment/mapping checks, plus Architecture/GlobalPtr/IAT summaries), COFF symbol/line/string tables when present (type decoding + aux detail), base relocation details + section summaries (with anomaly counts), TLS/load-config metadata (guard flags/global flags, CHPE/GuardEH/GuardXFG fields, dynamic value reloc table/GuardRF/HotPatch/Enclave/Volatile metadata pointers, callback resolution + section mapping, TLS raw data hash/preview + template sizing, guard feature matrix, SEH handler table parsing), icon groups (PNG detection), version-info details (string tables + translations + file flags), bitmap/cursor metadata, font/fontdir/rcdata/dlginit/animated cursor/icon parsing (JSON schema/XML manifest hints, protobuf/flatbuffers/unity bundle detection), message tables (entry ranges, flags/length), dialog/menu/toolbar/accelerator parsing, manifest schema details (requestedExecutionLevel, DPI/UI language), ReadyToRun headers (with entry point section stats), import hash/overlay/section entropy and packing hints plus overlay container parsing (ZIP/RAR4/5/7z NextHeader + EncodedHeader with LZMA/LZMA2), import descriptor consistency/bind status with API-set resolution confidence and canonical targets plus null-thunk/termination stats, export forwarder resolution hints plus export anomaly counts, section padding/permission analysis, exception directory summaries (including unwind details + directory placement), resource locale and string coverage, strong-name signature validation, subsystem/DllCharacteristics summaries, Authenticode digest verification results, signer status/policy summaries (RFC3161 timestamps, nested signatures, certificate transparency hints + CT log IDs, WinTrust on Windows, cross-platform trust store/revocation summaries), plus CLR module references, token cross-refs, method signature decoding + EH clause summaries, and managed resource summaries.
-
-### Library API options
-The PECOFF parser supports options and an immutable result snapshot:
-
-- `PECOFFOptions.StrictMode`: treat warnings as errors and throw `PECOFFParseException`.
-- `PECOFFOptions.ComputeHash` / `ComputeChecksum`: toggle hashing/checksum work.
-- `PECOFFOptions.ComputeImportHash`: toggle imphash computation for imports.
-- `PECOFFOptions.ComputeSectionEntropy`: toggle section entropy scanning.
-- `PECOFFOptions.ComputeAuthenticode`: toggle Authenticode digest verification.
-- `PECOFFOptions.EnableAssemblyAnalysis`: controls reflection-based obfuscation analysis.
-- `PECOFFOptions.ParseCertificateSigners`: extract PKCS7 signer info.
-- `PECOFFOptions.UseMemoryMappedFile`: enable memory-mapped parsing.
-- `PECOFFOptions.LazyParseDataDirectories`: defer parsing resources/debug/relocations/exception/load-config/CLR until accessed.
-- `PECOFFOptions.AuthenticodePolicy`: configure chain/timestamp/EKU policy checks in signer status (including optional trust-store checks and revocation settings on all platforms).
-- `AuthenticodePolicy.RequireCertificateTransparency`: optionally require SCT data for code-signing certificates.
-- `AuthenticodePolicy.OfflineChainCheck`: disable certificate downloads and force offline chain evaluation.
-- `AuthenticodePolicy.EnableCatalogSignatureCheck`: enable WinTrust catalog signature lookup (Windows only).
-- `PECOFFOptions.ComputeManagedResourceHashes`: compute SHA256 for embedded managed resources.
-- `PECOFFOptions.IssueCallback`: receive issues as they are raised (warnings/errors) in addition to the collected lists.
-- `PECOFFOptions.PresetFast()` / `PresetDefault()` / `PresetStrictSecurity()`: convenience presets for common configurations.
-- `PECOFFOptions.ValidationProfile`: `Default`, `Compatibility`, `Strict`, `Forensic` severity presets for warnings/errors.
-- `PECOFFOptions.ApiSetSchemaPath`: optional path to an `apisetschema.dll` for precise API-set resolution (otherwise heuristics are used). On Windows, the parser attempts `%SystemRoot%\\System32\\apisetschema.dll` automatically when this is not set.
-- `PECOFFOptions.IssuePolicy`: override per-category severity (e.g. treat Imports as warnings, Authenticode as errors).
-
-You can retrieve a stable snapshot via `pe.Result` or `PECOFF.Parse(path, options)`.
-`PECOFFResult.SchemaVersion` provides a stable DTO schema version for snapshot compatibility.
-
-### JSON report
-For CI/automation, you can emit a JSON report snapshot:
-
-    string json = pe.Result.ToJsonReport();
-
-Set `includeBinary: true` if you want raw byte arrays embedded; the default summarizes binary blobs by size.
-Set `stableOrdering: false` to keep the natural parse order; the default orders common lists for diff-friendly snapshots.
-
-### Corrupt fixtures
-Small intentionally-corrupt fixtures live in `PECOFF.Tests/Fixtures/corrupt/` (e.g., bad RVA, overlapping sections) to validate warning behavior and profile policies.
-
-### Snapshot regression tests
-PECOFF.Tests uses a snapshot file for the `testfiles` corpus:
-
-    PECOFF.Tests/Fixtures/testfiles.snap
-
-Regenerate it with the snapshot generator:
-
-    dotnet run --project tools/SnapshotGenerator/SnapshotGenerator.csproj
-
-Optional parameters:
-
-    dotnet run --project tools/SnapshotGenerator/SnapshotGenerator.csproj -- --input <testfiles-dir> --output <snapshot-path>
-
-JSON golden snapshots for minimal fixtures live in:
-
-    PECOFF.Tests/Fixtures/json/
-
-Regenerate them by running the tests with:
-
-    PECOFF_UPDATE_JSON_SNAPSHOTS=1 dotnet test
-
-Or use the standalone JSON snapshot generator (avoids VSTest):
-
-    dotnet run --project tools/JsonSnapshotGenerator/JsonSnapshotGenerator.csproj
-
-Optional parameters:
-
-    dotnet run --project tools/JsonSnapshotGenerator/JsonSnapshotGenerator.csproj -- --fixtures <path> --output <path>
-
-### Minimal fixtures
-Small deterministic fixtures live in `PECOFF.Tests/Fixtures/minimal/` and are used for fast metadata sanity checks and option-policy coverage. The folder includes a compact `PE-Inspector.dll` sample plus two synthetic stubs (`minimal-x86.exe`, `minimal-x64.exe`) that keep edge-case parsing stable across environments.
-
-### Build scripts
-Self-contained single-file builds are available via the scripts in `scripts/`.
-
-PE-FileInspector:
-
-    # Windows (PowerShell)
-    ./scripts/build-pe-fileinspector-windows.ps1
-
-    # Linux/macOS
-    ./scripts/build-pe-fileinspector-linux.sh
-    ./scripts/build-pe-fileinspector-macos.sh
-
-PE-Inspector:
-
-    # Windows (PowerShell)
-    ./scripts/build-pe-inspector-windows.ps1
-
-    # Linux/macOS
-    ./scripts/build-pe-inspector-linux.sh
-    ./scripts/build-pe-inspector-macos.sh
-
-Defaults:
-
-- Output goes to `artifacts/<app-name>/<rid>/`.
-- Override `RID` and `CONFIGURATION` if needed (e.g. `RID=osx-arm64`).
-
-### SchemaVersion
-`PECOFFResult.SchemaVersion` increments when report fields change:
-
-- v3: resource metadata (bitmap/cursor), API-set schema, relocation summaries.
-- v4: CLR module references and managed resource list; public key tokens for assembly references.
-- v5: managed resource sizes, Pkcs7 chain element details, and stable JSON ordering support.
-- v6: managed resource hashes, manifest validation details, and CLR attribute lists.
-- v7: section permission summaries, resource locale coverage, export/relocation anomaly counts, guard feature matrix, and CLR metadata validation details.
-- v8: resource string coverage, strong-name signature validation, certificate entry metadata (length/alignment), guard table sanity checks, forwarder-missing export counts, and exception directory placement metadata.
-- v9: load config dynamic value reloc/GuardRF/HotPatch/Enclave pointers, import descriptor null-thunk/termination stats, message table entry ranges/flags, metadata table token ranges, and signer status summaries.
-- v10: data directory mapping with Architecture/GlobalPtr/IAT details, plus COFF symbol/string/line table decoding.
-- v11: extra resource parsing (fonts/fontdir/dlginit/animated/rcdata), debug directory POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO summaries, and SEH handler table parsing.
-- v12: debug directory MISC/OMAP/REPRO details, ARM64 unwind summaries, and load-config code-integrity/enclave metadata.
-- v13: debug directory COFF/FIXUP/ILTCG/MPX/CLSID details, load-config guard tables, and raw HTML/DLGINCLUDE/PLUGPLAY/VXD resource summaries.
-- v14: full ARM64 unwind decoding, ARM/IA64 unwind headers, and enclave import list parsing.
-- v15: COFF object + TE image metadata, image kind, and catalog signature lookup metadata.
-- v16: COFF relocation decoding + aux symbol details, TLS raw data mapping/alignment, and SEH handler entry resolution.
-- v17: overlay container parsing (ZIP/RAR/7z) and RCDATA format detection.
-- v18: TLS raw data hash/preview, COFF bigobj + type decoding, richer RCDATA formats, and certificate transparency hints.
-- v19: Architecture/GlobalPtr/IAT content summaries and COFF COMDAT association hints.
-- v20: TLS template sizing/notes, extended base relocation type mapping, and Borland/reserved debug entries.
-- v21: PDB/MSF parsing, WinTrust/CT log policy metadata, and CLR metadata deep-dive (token refs + method bodies).
-- v22: COFF archive/import-library parsing, DOS relocation table summary, and additional debug directory types (Embedded PDB/SPGO/PDBHASH).
-- v23: Architecture/GlobalPtr/IAT deep decode, ARM32/IA64 unwind details, and machine-aware base relocation types (RISC-V/LoongArch).
-- v24: Load-config version info + trailing field capture, resource group variants, and RT_VERSION extensions.
-- v25: TE header depth + relocations, COFF symbol scope details, COMDAT selection metadata, and raw icon/cursor resources.
-- v26: PDB DBI/TPI/GSI stream parsing + publics extraction, and cross-platform trust-store status summaries.
-- v27: Section header detail coverage (alignment/size checks + directory containment summary).
-- v28: Data directory validation (size/alignment/mapping checks).
-- v29: Relocation anomaly totals, TLS index mapping, and debug raw fallback entries.
-- v30: Authenticode policy evaluation summary, CLR signature decoding + EH clause summary, and PDB symbol record parsing.
-- v31: COFF archive thin/SYM64 handling + import object variants, TE entrypoint file offsets + mapping, and load-config truncation tracking.
-- v32: Manifest edge metadata (supported OS/longPath/active code page), debug exception summaries, and richer overlay notes.
+- Imports/exports (INT/IAT, delay/bound, forwarders, anomalies, API-set hints)
+- Data directories mapping + validation (Architecture/GlobalPtr/IAT deep decode)
+- Sections (entropy, permissions, padding, alignment/overlap checks)
+- TLS/load-config metadata (guard flags, CHPE/XFG, callback mapping, raw data hash/preview)
+- Exception/unwind decoding (x64/ARM64/ARM32/IA64 + x86 SEH)
+- Resources (strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, RT_VERSION extensions)
+- Debug directory decoding (CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, raw fallback)
+- PDB/MSF stream parsing + symbol record decoding
+- CLR/.NET metadata deep-dive (tables, token refs, signature decode, IL/EH summaries, ReadyToRun)
+- Authenticode (PKCS7 signers/timestamps, CT hints, WinTrust on Windows, policy summaries)
+- COFF objects/archives + UEFI TE images
+- Overlay container parsing (ZIP/RAR/7z NextHeader + EncodedHeader notes)
+- JSON report snapshotting (stable schema versioning)
 
 ## Current Coverage Map (auto-generated)
 
@@ -197,7 +70,9 @@ Status legend:
 | Rich header | `full` | Toolchain signature summaries + extended product mapping. |
 
 ### Load-Config matrix (Win8→Win11)
-The parser records a version hint based on which field groups are present and preserves any trailing bytes beyond the known layout.
+
+The parser records a version hint based on which field groups are present and preserves any
+trailing bytes beyond the known layout.
 
 - pre-Win8: base layout only (no CodeIntegrity/Guard tables)
 - Win8+: CodeIntegrity + GuardIAT + DynamicReloc/CHPE
@@ -206,33 +81,247 @@ The parser records a version hint based on which field groups are present and pr
 - Win10+ (XFG): XFG fields present
 - Win11+: trailing fields beyond known layout (captured as hash/preview; truncated layouts flagged)
 
-## Contents of the output file
-The CSV-Output currently contains the following values for each analyzed file.
- - Filename
- - Extension 
- - Path 
- - Product Version 
- - File Version 
- - IsDotNetFile
- - IsObfuscated 
- - Obfuscationpercentage 
- - SHA256 HASH 
- - HasCertificate   
- - Comments 
- - CompanyName 
- - FileDescription 
- - InternalName 
- - IsDebug 
- - IsPatched
- - IsPreRelease
- - IsPrivateBuild
- - IsSpecialBuild 
- - Language 
- - Copyright
- - Trademarks 
- - OriginalFilename 
- - PrivateBuild 
- - ProductName 
- - SpecialBuild
- - ParseErrors
- - ParseWarnings
+## Usage
+
+### PE-Inspector (CSV)
+
+    PE-Inspector.exe output.csv <Path to inspect>
+
+### PE-FileInspector (report + certificates)
+
+    PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze> \
+      [--suppress-cssm <true|false>] [--sections <list>] [--exclude-sections <list>]
+
+Notes:
+
+- On macOS, `CSSM_ModuleLoad()` warnings can appear when the runtime touches the Security framework.
+  They are suppressed by default.
+- Set `--suppress-cssm false` or `PE_INSPECTOR_SUPPRESS_CSSM=0` to allow these warnings.
+
+Section filtering uses comma-separated keys (lowercase, dash-separated). Examples:
+
+`file-info`, `version-info`, `pe-analysis`, `data-directories`, `section-entropy`, `section-permissions`,
+`section-padding`, `certificates`, `parse-status`, `findings`, `clr`, `strong-name`, `readytorun`,
+`assembly-refs`, `imports`, `import-details`, `import-descriptors`, `delay-import-details`,
+`delay-import-descriptors`, `bound-imports`, `exports`, `export-anomalies`, `export-details`,
+`exception`, `debug`, `coff-symbols`, `coff-string-table`, `coff-line-numbers`, `relocations`,
+`tls`, `load-config`, `rich-header`, `version-info-details`, `icon-groups`, `resource-icons`,
+`cursor-groups`, `resource-cursors`, `bitmaps`, `resource-fonts`, `resource-fontdirs`,
+`resource-dlginit`, `resource-animated-cursors`, `resource-animated-icons`, `resource-rcdata`,
+`resources`, `resource-string-tables`, `resource-string-coverage`, `resource-message-tables`,
+`resource-dialogs`, `resource-accelerators`, `resource-menus`, `resource-toolbars`,
+`resource-manifests`, `resource-locale-coverage`.
+
+The report contains detailed analysis and extracts embedded certificates as native extensions
+(e.g. `.cer`, `.p7b`) and as PEM (`.pem`).
+
+### Library usage
+
+The PECOFF library exposes a rich result model:
+
+    PECOFF pe = new PECOFF(path);
+    PECOFFResult result = pe.Result; // stable snapshot
+
+## Library API options
+
+- `PECOFFOptions.StrictMode`: treat warnings as errors and throw `PECOFFParseException`.
+- `PECOFFOptions.ComputeHash` / `ComputeChecksum`: toggle hashing/checksum work.
+- `PECOFFOptions.ComputeImportHash`: toggle imphash computation for imports.
+- `PECOFFOptions.ComputeSectionEntropy`: toggle section entropy scanning.
+- `PECOFFOptions.ComputeAuthenticode`: toggle Authenticode digest verification.
+- `PECOFFOptions.EnableAssemblyAnalysis`: controls reflection-based obfuscation analysis.
+- `PECOFFOptions.ParseCertificateSigners`: extract PKCS7 signer info.
+- `PECOFFOptions.UseMemoryMappedFile`: enable memory-mapped parsing.
+- `PECOFFOptions.LazyParseDataDirectories`: defer parsing resources/debug/relocations/exception/load-config/CLR until accessed.
+- `PECOFFOptions.AuthenticodePolicy`: configure chain/timestamp/EKU policy checks in signer status (including optional trust-store checks and revocation settings on all platforms).
+- `AuthenticodePolicy.RequireCertificateTransparency`: optionally require SCT data for code-signing certificates.
+- `AuthenticodePolicy.OfflineChainCheck`: disable certificate downloads and force offline chain evaluation.
+- `AuthenticodePolicy.EnableCatalogSignatureCheck`: enable WinTrust catalog signature lookup (Windows only).
+- `PECOFFOptions.ComputeManagedResourceHashes`: compute SHA256 for embedded managed resources.
+- `PECOFFOptions.IssueCallback`: receive issues as they are raised (warnings/errors) in addition to the collected lists.
+- `PECOFFOptions.PresetFast()` / `PresetDefault()` / `PresetStrictSecurity()`: convenience presets for common configurations.
+- `PECOFFOptions.ValidationProfile`: `Default`, `Compatibility`, `Strict`, `Forensic` severity presets for warnings/errors.
+- `PECOFFOptions.ApiSetSchemaPath`: optional path to an `apisetschema.dll` for precise API-set resolution (otherwise heuristics are used). On Windows, the parser attempts `%SystemRoot%\System32\apisetschema.dll` automatically when this is not set.
+- `PECOFFOptions.IssuePolicy`: override per-category severity (e.g. treat Imports as warnings, Authenticode as errors).
+
+You can retrieve a stable snapshot via `pe.Result` or `PECOFF.Parse(path, options)`.
+`PECOFFResult.SchemaVersion` provides a stable DTO schema version for snapshot compatibility.
+
+## JSON report
+
+For CI/automation, emit a JSON report snapshot:
+
+    string json = pe.Result.ToJsonReport();
+
+Options:
+
+- `includeBinary: true` embeds raw byte arrays; default is size-only summaries.
+- `stableOrdering: false` keeps natural parse order; default is diff-friendly ordering.
+
+## Tests and fixtures
+
+### Testfiles corpus
+
+Tests that validate real-world parsing use the `testfiles` corpus (not checked into the repo).
+Set a custom path using:
+
+- `PECOFF_TESTFILES_DIR=/path/to/testfiles`
+
+### Minimal fixtures
+
+Small deterministic fixtures live in `PECOFF.Tests/Fixtures/minimal/` and are used for fast
+metadata sanity checks and option-policy coverage. The folder includes a compact
+`PE-Inspector.dll` sample plus two synthetic stubs (`minimal-x86.exe`, `minimal-x64.exe`).
+
+### Corrupt fixtures
+
+Intentionally-corrupt fixtures live in `PECOFF.Tests/Fixtures/corrupt/` (e.g., bad RVA,
+overlapping sections) to validate warning behavior and profile policies.
+
+### Snapshot regression tests
+
+PECOFF.Tests uses a snapshot file for the `testfiles` corpus:
+
+    PECOFF.Tests/Fixtures/testfiles.snap
+
+Regenerate it with the snapshot generator:
+
+    dotnet run --project tools/SnapshotGenerator/SnapshotGenerator.csproj
+
+Optional parameters:
+
+    dotnet run --project tools/SnapshotGenerator/SnapshotGenerator.csproj -- --input <testfiles-dir> --output <snapshot-path>
+
+JSON golden snapshots for minimal fixtures live in:
+
+    PECOFF.Tests/Fixtures/json/
+
+Regenerate them by running the tests with:
+
+    PECOFF_UPDATE_JSON_SNAPSHOTS=1 dotnet test
+
+Or use the standalone JSON snapshot generator (avoids VSTest):
+
+    dotnet run --project tools/JsonSnapshotGenerator/JsonSnapshotGenerator.csproj
+
+Optional parameters:
+
+    dotnet run --project tools/JsonSnapshotGenerator/JsonSnapshotGenerator.csproj -- --fixtures <path> --output <path>
+
+## Build notes
+
+### Build
+
+    dotnet build PE-Inspector.sln
+
+### Test
+
+    dotnet test
+
+### Build scripts
+
+Self-contained single-file builds are available via the scripts in `scripts/`.
+
+PE-FileInspector:
+
+    # Windows (PowerShell)
+    ./scripts/build-pe-fileinspector-windows.ps1
+
+    # Linux/macOS
+    ./scripts/build-pe-fileinspector-linux.sh
+    ./scripts/build-pe-fileinspector-macos.sh
+
+PE-Inspector:
+
+    # Windows (PowerShell)
+    ./scripts/build-pe-inspector-windows.ps1
+
+    # Linux/macOS
+    ./scripts/build-pe-inspector-linux.sh
+    ./scripts/build-pe-inspector-macos.sh
+
+Defaults:
+
+- Output goes to `artifacts/<app-name>/<rid>/`.
+- Override `RID` and `CONFIGURATION` if needed (e.g. `RID=osx-arm64`).
+
+### Release workflow
+
+A manual GitHub Actions workflow (`.github/workflows/release.yml`) builds, tests, and publishes a
+GitHub Release. It requires a tag input (e.g. `v1.2.3`) and runs on demand.
+
+## CSV output fields (PE-Inspector)
+
+The CSV output contains the following values per file:
+
+- Filename
+- Extension
+- Path
+- Product Version
+- File Version
+- IsDotNetFile
+- IsObfuscated
+- Obfuscationpercentage
+- SHA256 HASH
+- HasCertificate
+- Comments
+- CompanyName
+- FileDescription
+- InternalName
+- IsDebug
+- IsPatched
+- IsPreRelease
+- IsPrivateBuild
+- IsSpecialBuild
+- Language
+- Copyright
+- Trademarks
+- OriginalFilename
+- PrivateBuild
+- ProductName
+- SpecialBuild
+- ParseErrors
+- ParseWarnings
+
+## SchemaVersion
+
+`PECOFFResult.SchemaVersion` increments when report fields change:
+
+- v3: resource metadata (bitmap/cursor), API-set schema, relocation summaries.
+- v4: CLR module references and managed resource list; public key tokens for assembly references.
+- v5: managed resource sizes, Pkcs7 chain element details, and stable JSON ordering support.
+- v6: managed resource hashes, manifest validation details, and CLR attribute lists.
+- v7: section permission summaries, resource locale coverage, export/relocation anomaly counts, guard feature matrix, and CLR metadata validation details.
+- v8: resource string coverage, strong-name signature validation, certificate entry metadata (length/alignment), guard table sanity checks, forwarder-missing export counts, and exception directory placement metadata.
+- v9: load config dynamic value reloc/GuardRF/HotPatch/Enclave pointers, import descriptor null-thunk/termination stats, message table entry ranges/flags, metadata table token ranges, and signer status summaries.
+- v10: data directory mapping with Architecture/GlobalPtr/IAT details, plus COFF symbol/string/line table decoding.
+- v11: extra resource parsing (fonts/fontdir/dlginit/animated/rcdata), debug directory POGO/VC_FEATURE/EX_DLLCHARACTERISTICS/FPO summaries, and SEH handler table parsing.
+- v12: debug directory MISC/OMAP/REPRO details, ARM64 unwind summaries, and load-config code-integrity/enclave metadata.
+- v13: debug directory COFF/FIXUP/ILTCG/MPX/CLSID details, load-config guard tables, and raw HTML/DLGINCLUDE/PLUGPLAY/VXD resource summaries.
+- v14: full ARM64 unwind decoding, ARM/IA64 unwind headers, and enclave import list parsing.
+- v15: COFF object + TE image metadata, image kind, and catalog signature lookup metadata.
+- v16: COFF relocation decoding + aux symbol details, TLS raw data mapping/alignment, and SEH handler entry resolution.
+- v17: overlay container parsing (ZIP/RAR/7z) and RCDATA format detection.
+- v18: TLS raw data hash/preview, COFF bigobj + type decoding, richer RCDATA formats, and certificate transparency hints.
+- v19: Architecture/GlobalPtr/IAT content summaries and COFF COMDAT association hints.
+- v20: TLS template sizing/notes, extended base relocation type mapping, and Borland/reserved debug entries.
+- v21: PDB/MSF parsing, WinTrust/CT log policy metadata, and CLR metadata deep-dive (token refs + method bodies).
+- v22: COFF archive/import-library parsing, DOS relocation table summary, and additional debug directory types (Embedded PDB/SPGO/PDBHASH).
+- v23: Architecture/GlobalPtr/IAT deep decode, ARM32/IA64 unwind details, and machine-aware base relocation types (RISC-V/LoongArch).
+- v24: Load-config version info + trailing field capture, resource group variants, and RT_VERSION extensions.
+- v25: TE header depth + relocations, COFF symbol scope details, COMDAT selection metadata, and raw icon/cursor resources.
+- v26: PDB DBI/TPI/GSI stream parsing + publics extraction, and cross-platform trust-store status summaries.
+- v27: Section header detail coverage (alignment/size checks + directory containment summary).
+- v28: Data directory validation (size/alignment/mapping checks).
+- v29: Relocation anomaly totals, TLS index mapping, and debug raw fallback entries.
+- v30: Authenticode policy evaluation summary, CLR signature decoding + EH clause summary, and PDB symbol record parsing.
+- v31: COFF archive thin/SYM64 handling + import object variants, TE entrypoint file offsets + mapping, and load-config truncation tracking.
+- v32: Manifest edge metadata (supported OS/longPath/active code page), debug exception summaries, and richer overlay notes.
+
+## Security
+
+See `SECURITY.md` for the security policy and reporting process.
+
+## License
+
+See `LICENSE` for details.
