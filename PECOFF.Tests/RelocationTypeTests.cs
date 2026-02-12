@@ -17,12 +17,20 @@ public class RelocationTypeTests
         Assert.Equal(expected, name);
     }
 
+    [Fact]
+    public void BaseRelocation_Type11_UsesReservedName()
+    {
+        string name = PECOFF.GetRelocationTypeNameForTest((ushort)0x014C, 11);
+        Assert.Equal("RESERVED", name);
+    }
+
     [Theory]
     [InlineData((ushort)0x8664, 5, true)] // AMD64 + ARM/RISCV relocation
     [InlineData((ushort)0x5032, 5, false)] // RISCV32
     [InlineData((ushort)0x5064, 8, false)] // RISCV64
     [InlineData((ushort)0x6264, 8, false)] // LOONGARCH64
     [InlineData((ushort)0x014c, 8, true)] // x86 + reserved
+    [InlineData((ushort)0x014c, 11, true)] // HIGH3ADJ treated as reserved by current spec
     [InlineData((ushort)0x014c, 10, false)] // DIR64 known even if unusual
     public void BaseRelocation_Reserved_Detection(ushort machine, int type, bool expected)
     {

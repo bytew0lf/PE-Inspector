@@ -39,6 +39,8 @@ public class CoffObjectConformanceGapTests
     }
 
     [Theory]
+    [InlineData((ushort)0x01C2, (ushort)0x0016)] // ARM_PAIR
+    [InlineData((ushort)0x01F0, (ushort)0x0012)] // PPC_PAIR
     [InlineData((ushort)0x0166, (ushort)0x0025)] // MIPS_PAIR
     [InlineData((ushort)0x9041, (ushort)0x000B)] // M32R_PAIR
     [InlineData((ushort)0x01A6, (ushort)0x0018)] // SHM_PAIR

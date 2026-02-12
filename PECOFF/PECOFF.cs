@@ -4933,7 +4933,25 @@ namespace PECoff
             {
                 IMAGE_SECTION_HEADER section = sections[i];
                 string sectionName = NormalizeSectionName(section);
-                if (section.NumberOfRelocations == 0)
+                bool hasOverflowRelocationFlag =
+                    (section.Characteristics & SectionCharacteristics.IMAGE_SCN_LNK_NRELOC_OVFL) != 0;
+                bool usesOverflowEncoding = hasOverflowRelocationFlag && section.NumberOfRelocations == ushort.MaxValue;
+
+                if (hasOverflowRelocationFlag && section.NumberOfRelocations != ushort.MaxValue)
+                {
+                    Warn(
+                        ParseIssueCategory.Header,
+                        $"SPEC violation: Section {sectionName} sets IMAGE_SCN_LNK_NRELOC_OVFL but NumberOfRelocations is 0x{section.NumberOfRelocations:X4} instead of 0xFFFF.");
+                }
+
+                if (!hasOverflowRelocationFlag && section.NumberOfRelocations == ushort.MaxValue)
+                {
+                    Warn(
+                        ParseIssueCategory.Header,
+                        $"SPEC violation: Section {sectionName} uses NumberOfRelocations=0xFFFF without IMAGE_SCN_LNK_NRELOC_OVFL.");
+                }
+
+                if (section.NumberOfRelocations == 0 && !usesOverflowEncoding)
                 {
                     continue;
                 }
@@ -4945,7 +4963,50 @@ namespace PECoff
                 }
 
                 long offset = section.PointerToRelocations;
-                long totalSize = (long)section.NumberOfRelocations * CoffRelocationSize;
+                uint relocationEntryCount = section.NumberOfRelocations;
+                bool skipFirstOverflowMarker = false;
+                if (usesOverflowEncoding)
+                {
+                    if (!TrySetPosition(offset, CoffRelocationSize))
+                    {
+                        Warn(
+                            ParseIssueCategory.Header,
+                            $"SPEC violation: Overflow COFF relocation marker for section {sectionName} is outside file bounds.");
+                        continue;
+                    }
+
+                    byte[] marker = new byte[CoffRelocationSize];
+                    ReadExactly(PEFileStream, marker, 0, marker.Length);
+                    uint overflowCount = ReadUInt32(marker, 0);
+                    uint markerSymbolIndex = ReadUInt32(marker, 4);
+                    ushort markerType = ReadUInt16(marker, 8);
+                    if (markerSymbolIndex != 0 || markerType != 0)
+                    {
+                        Warn(
+                            ParseIssueCategory.Header,
+                            $"SPEC violation: Overflow COFF relocation marker for section {sectionName} must have SymbolTableIndex=0 and Type=0.");
+                    }
+
+                    if (overflowCount < ushort.MaxValue)
+                    {
+                        Warn(
+                            ParseIssueCategory.Header,
+                            $"SPEC violation: Overflow COFF relocation marker for section {sectionName} reports fewer than 0xFFFF entries ({overflowCount}).");
+                    }
+
+                    if (overflowCount == 0)
+                    {
+                        Warn(
+                            ParseIssueCategory.Header,
+                            $"SPEC violation: Overflow COFF relocation marker for section {sectionName} reports zero entries.");
+                        continue;
+                    }
+
+                    relocationEntryCount = overflowCount;
+                    skipFirstOverflowMarker = true;
+                }
+
+                long totalSize = (long)relocationEntryCount * CoffRelocationSize;
                 if (offset + totalSize > fileLength)
                 {
                     Warn(ParseIssueCategory.Header, $"Relocation table for section {sectionName} exceeds file size.");
@@ -4966,7 +5027,16 @@ namespace PECoff
                 byte[] buffer = new byte[totalSize];
                 ReadExactly(PEFileStream, buffer, 0, buffer.Length);
                 int entries = buffer.Length / CoffRelocationSize;
-                for (int j = 0; j < entries; j++)
+                int startEntry = skipFirstOverflowMarker ? 1 : 0;
+                if (skipFirstOverflowMarker && entries <= 1)
+                {
+                    Warn(
+                        ParseIssueCategory.Header,
+                        $"SPEC violation: Overflow COFF relocation table for section {sectionName} does not contain relocation entries after the marker.");
+                    continue;
+                }
+
+                for (int j = startEntry; j < entries; j++)
                 {
                     int entryOffset = j * CoffRelocationSize;
                     uint virtualAddress = ReadUInt32(buffer, entryOffset);
@@ -16159,6 +16229,14 @@ namespace PECoff
             long cursor = tableOffset;
             while (cursor + headerSize <= end)
             {
+                if (((cursor - tableOffset) & 0x3) != 0)
+                {
+                    WarnAt(
+                        ParseIssueCategory.Relocations,
+                        "SPEC violation: Base relocation block does not start on a 32-bit boundary.",
+                        cursor);
+                }
+
                 if (!TrySetPosition(cursor, headerSize))
                 {
                     WarnAt(ParseIssueCategory.Relocations, "Base relocation header outside file bounds.", cursor);
@@ -16200,12 +16278,11 @@ namespace PECoff
                     Warn(ParseIssueCategory.Relocations, $"Base relocation block at 0x{header.VirtualAddress:X} contains no entries.");
                 }
                 int[] typeCounts = new int[16];
+                int parsedEntryCount = 0;
                 int reservedTypeCount = 0;
                 int outOfRangeCount = 0;
                 int unmappedCount = 0;
-                bool isPageAligned = _sectionAlignment > 0
-                    ? (header.VirtualAddress % _sectionAlignment) == 0
-                    : (header.VirtualAddress % 0x1000) == 0;
+                bool isPageAligned = (header.VirtualAddress % 0x1000) == 0;
                 if (!isPageAligned)
                 {
                     Warn(ParseIssueCategory.Relocations, $"Base relocation page RVA 0x{header.VirtualAddress:X} is not aligned.");
@@ -16238,6 +16315,7 @@ namespace PECoff
 
                     ushort entry = PEFile.ReadUInt16();
                     int type = (entry >> 12) & 0xF;
+                    parsedEntryCount++;
                     if (type >= 0 && type < typeCounts.Length)
                     {
                         typeCounts[type]++;
@@ -16261,11 +16339,26 @@ namespace PECoff
                     {
                         accumulator.Samples.Add(new RelocationSampleInfo(entryRva, type, GetRelocationTypeName(_machineType, type)));
                     }
+
+                    if (type == 4) // HIGHADJ consumes the following slot as payload.
+                    {
+                        if (i + 1 >= entryCount)
+                        {
+                            Warn(
+                                ParseIssueCategory.Relocations,
+                                $"SPEC violation: Base relocation HIGHADJ entry at block RVA 0x{header.VirtualAddress:X} is missing its adjustment slot.");
+                            invalidBlocks++;
+                        }
+                        else
+                        {
+                            i++;
+                        }
+                    }
                 }
 
                 if (!blockMapped)
                 {
-                    unmappedCount = entryCount;
+                    unmappedCount = parsedEntryCount;
                 }
 
                 if (reservedTypeCount > 0)
@@ -16281,7 +16374,7 @@ namespace PECoff
                 _baseRelocations.Add(new BaseRelocationBlockInfo(
                     header.VirtualAddress,
                     header.SizeOfBlock,
-                    entryCount,
+                    parsedEntryCount,
                     typeCounts,
                     reservedTypeCount,
                     outOfRangeCount,
@@ -16293,7 +16386,7 @@ namespace PECoff
                 unmappedTotal += unmappedCount;
 
                 accumulator.BlockCount++;
-                accumulator.EntryCount += entryCount;
+                accumulator.EntryCount += parsedEntryCount;
                 accumulator.ReservedTypeCount += reservedTypeCount;
                 accumulator.OutOfRangeCount += outOfRangeCount;
                 accumulator.UnmappedCount += unmappedCount;
@@ -16472,7 +16565,7 @@ namespace PECoff
                 case 9:
                     return IsMipsMachine(machine) ? "MIPS_JMPADDR16" : "RESERVED";
                 case 10: return "DIR64";
-                case 11: return "HIGH3ADJ";
+                case 11: return "RESERVED";
                 default: return string.Format(CultureInfo.InvariantCulture, "TYPE_{0}", type);
             }
         }
@@ -16487,7 +16580,6 @@ namespace PECoff
                 case 3:
                 case 4:
                 case 10:
-                case 11:
                     return true;
                 case 5:
                     return IsArmMachine(machine) || IsRiscVMachine(machine) || IsMipsMachine(machine);
@@ -16563,6 +16655,19 @@ namespace PECoff
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_M32R)
             {
                 return type == 0x000B; // IMAGE_REL_M32R_PAIR
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_ARM ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_ARMNT ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_THUMB)
+            {
+                return type == 0x0016; // IMAGE_REL_ARM_PAIR
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPC ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP)
+            {
+                return type == 0x0012; // IMAGE_REL_PPC_PAIR
             }
 
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_SH3 ||
@@ -16700,9 +16805,6 @@ namespace PECoff
                         case 0x0003: return "BRANCH24";
                         case 0x0004: return "BRANCH11";
                         case 0x000A: return "REL32";
-                        case 0x000B: return "BLX24";
-                        case 0x000C: return "BLX11";
-                        case 0x000D: return "TOKEN";
                         case 0x000E: return "SECTION";
                         case 0x000F: return "SECREL";
                         case 0x0010: return "ARM_MOV32";

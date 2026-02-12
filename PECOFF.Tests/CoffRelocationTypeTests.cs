@@ -5,14 +5,53 @@ public class CoffRelocationTypeTests
 {
     [Theory]
     [InlineData((ushort)0x0000, "ABSOLUTE")]
+    [InlineData((ushort)0x0001, "DIR16")]
+    [InlineData((ushort)0x0002, "REL16")]
+    [InlineData((ushort)0x0006, "DIR32")]
+    [InlineData((ushort)0x0007, "DIR32NB")]
+    [InlineData((ushort)0x0009, "SEG12")]
+    [InlineData((ushort)0x000A, "SECTION")]
+    [InlineData((ushort)0x000B, "SECREL")]
+    [InlineData((ushort)0x000C, "TOKEN")]
+    [InlineData((ushort)0x000D, "SECREL7")]
+    [InlineData((ushort)0x0014, "REL32")]
+    public void CoffRelocationTypeName_I386Table_MatchesSpec(ushort type, string expected)
+    {
+        string name = PECOFF.GetCoffRelocationTypeNameForTest((ushort)0x014C, type);
+        Assert.Equal(expected, name);
+    }
+
+    [Theory]
+    [InlineData((ushort)0x0000, "ABSOLUTE")]
+    [InlineData((ushort)0x0001, "ADDR64")]
+    [InlineData((ushort)0x0002, "ADDR32")]
+    [InlineData((ushort)0x0003, "ADDR32NB")]
+    [InlineData((ushort)0x0004, "REL32")]
+    [InlineData((ushort)0x0005, "REL32_1")]
+    [InlineData((ushort)0x0006, "REL32_2")]
+    [InlineData((ushort)0x0007, "REL32_3")]
+    [InlineData((ushort)0x0008, "REL32_4")]
+    [InlineData((ushort)0x0009, "REL32_5")]
+    [InlineData((ushort)0x000A, "SECTION")]
+    [InlineData((ushort)0x000B, "SECREL")]
+    [InlineData((ushort)0x000C, "SECREL7")]
+    [InlineData((ushort)0x000D, "TOKEN")]
+    [InlineData((ushort)0x000E, "SREL32")]
+    [InlineData((ushort)0x000F, "PAIR")]
+    [InlineData((ushort)0x0010, "SSPAN32")]
+    public void CoffRelocationTypeName_Amd64Table_MatchesSpec(ushort type, string expected)
+    {
+        string name = PECOFF.GetCoffRelocationTypeNameForTest((ushort)0x8664, type);
+        Assert.Equal(expected, name);
+    }
+
+    [Theory]
+    [InlineData((ushort)0x0000, "ABSOLUTE")]
     [InlineData((ushort)0x0001, "ADDR32")]
     [InlineData((ushort)0x0002, "ADDR32NB")]
     [InlineData((ushort)0x0003, "BRANCH24")]
     [InlineData((ushort)0x0004, "BRANCH11")]
     [InlineData((ushort)0x000A, "REL32")]
-    [InlineData((ushort)0x000B, "BLX24")]
-    [InlineData((ushort)0x000C, "BLX11")]
-    [InlineData((ushort)0x000D, "TOKEN")]
     [InlineData((ushort)0x000E, "SECTION")]
     [InlineData((ushort)0x000F, "SECREL")]
     [InlineData((ushort)0x0010, "ARM_MOV32")]
@@ -25,6 +64,31 @@ public class CoffRelocationTypeTests
     public void CoffRelocationTypeName_ArmTable_MatchesSpec(ushort type, string expected)
     {
         string name = PECOFF.GetCoffRelocationTypeNameForTest((ushort)0x01C2, type);
+        Assert.Equal(expected, name);
+    }
+
+    [Theory]
+    [InlineData((ushort)0x0000, "ABSOLUTE")]
+    [InlineData((ushort)0x0001, "ADDR32")]
+    [InlineData((ushort)0x0002, "ADDR32NB")]
+    [InlineData((ushort)0x0003, "BRANCH26")]
+    [InlineData((ushort)0x0004, "PAGEBASE_REL21")]
+    [InlineData((ushort)0x0005, "REL21")]
+    [InlineData((ushort)0x0006, "PAGEOFFSET_12A")]
+    [InlineData((ushort)0x0007, "PAGEOFFSET_12L")]
+    [InlineData((ushort)0x0008, "SECREL")]
+    [InlineData((ushort)0x0009, "SECREL_LOW12A")]
+    [InlineData((ushort)0x000A, "SECREL_HIGH12A")]
+    [InlineData((ushort)0x000B, "SECREL_LOW12L")]
+    [InlineData((ushort)0x000C, "TOKEN")]
+    [InlineData((ushort)0x000D, "SECTION")]
+    [InlineData((ushort)0x000E, "ADDR64")]
+    [InlineData((ushort)0x000F, "BRANCH19")]
+    [InlineData((ushort)0x0010, "BRANCH14")]
+    [InlineData((ushort)0x0011, "REL32")]
+    public void CoffRelocationTypeName_Arm64Table_MatchesSpec(ushort type, string expected)
+    {
+        string name = PECOFF.GetCoffRelocationTypeNameForTest((ushort)0xAA64, type);
         Assert.Equal(expected, name);
     }
 
@@ -86,6 +150,28 @@ public class CoffRelocationTypeTests
     public void CoffRelocationTypeName_PowerPcTable_MatchesSpec(ushort type, string expected)
     {
         string name = PECOFF.GetCoffRelocationTypeNameForTest((ushort)0x01F0, type);
+        Assert.Equal(expected, name);
+    }
+
+    [Theory]
+    [InlineData((ushort)0x0000, "ABSOLUTE")]
+    [InlineData((ushort)0x0001, "REFHALF")]
+    [InlineData((ushort)0x0002, "REFWORD")]
+    [InlineData((ushort)0x0003, "JMPADDR")]
+    [InlineData((ushort)0x0004, "REFHI")]
+    [InlineData((ushort)0x0005, "REFLO")]
+    [InlineData((ushort)0x0006, "GPREL")]
+    [InlineData((ushort)0x0007, "LITERAL")]
+    [InlineData((ushort)0x000A, "SECTION")]
+    [InlineData((ushort)0x000B, "SECREL")]
+    [InlineData((ushort)0x000C, "SECRELLO")]
+    [InlineData((ushort)0x000D, "SECRELHI")]
+    [InlineData((ushort)0x0010, "JMPADDR16")]
+    [InlineData((ushort)0x0022, "REFWORDNB")]
+    [InlineData((ushort)0x0025, "PAIR")]
+    public void CoffRelocationTypeName_MipsTable_MatchesSpec(ushort type, string expected)
+    {
+        string name = PECOFF.GetCoffRelocationTypeNameForTest((ushort)0x0166, type);
         Assert.Equal(expected, name);
     }
 
@@ -155,6 +241,9 @@ public class CoffRelocationTypeTests
 
     [Theory]
     [InlineData((ushort)0x01C2, (ushort)0x0008)] // ARM
+    [InlineData((ushort)0x01C2, (ushort)0x000B)] // ARM non-spec legacy
+    [InlineData((ushort)0x01C2, (ushort)0x000C)] // ARM non-spec legacy
+    [InlineData((ushort)0x01C2, (ushort)0x000D)] // ARM non-spec legacy
     [InlineData((ushort)0x0200, (ushort)0x000F)] // IA64
     [InlineData((ushort)0x0200, (ushort)0x001D)] // IA64 gap
     [InlineData((ushort)0x01F0, (ushort)0x0008)] // PPC
