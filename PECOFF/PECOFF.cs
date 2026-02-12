@@ -883,8 +883,11 @@ namespace PECoff
             IMAGE_FILE_MACHINE_I860 = 0x14d, // Intel i860
 
             IMAGE_FILE_MACHINE_ALPHA_AXP_old = 0x183,
-            IMAGE_FILE_MACHINE_ALPHA_AXP = 0x184,
-            IMAGE_FILE_MACHINE_ALPHA_AXP64 = 0x284,
+            IMAGE_FILE_MACHINE_ALPHA = 0x184,
+            IMAGE_FILE_MACHINE_ALPHA64 = 0x284,
+            IMAGE_FILE_MACHINE_AXP64 = IMAGE_FILE_MACHINE_ALPHA64,
+            IMAGE_FILE_MACHINE_ALPHA_AXP = IMAGE_FILE_MACHINE_ALPHA,
+            IMAGE_FILE_MACHINE_ALPHA_AXP64 = IMAGE_FILE_MACHINE_ALPHA64,
 
             IMAGE_FILE_MACHINE_POWERPC = 0x1f0,
             IMAGE_FILE_MACHINE_POWERPCFP = 0x1f1,
@@ -920,7 +923,8 @@ namespace PECoff
             IMAGE_FILE_MACHINE_RISCV128 = 0x5128,
             
 
-            IMAGE_FILE_MACHINE_PURE_MSIL = 0xc0ee
+            IMAGE_FILE_MACHINE_CEE = 0xc0ee,
+            IMAGE_FILE_MACHINE_PURE_MSIL = IMAGE_FILE_MACHINE_CEE
         }
 
         [Flags]
@@ -16863,8 +16867,8 @@ namespace PECoff
                     case MachineTypes.IMAGE_FILE_MACHINE_R3000: return "R3000";
                     case MachineTypes.IMAGE_FILE_MACHINE_R4000: return "R4000";
                     case MachineTypes.IMAGE_FILE_MACHINE_R10000: return "R10000";
-                    case MachineTypes.IMAGE_FILE_MACHINE_ALPHA_AXP: return "Alpha AXP";
-                    case MachineTypes.IMAGE_FILE_MACHINE_ALPHA_AXP64: return "Alpha AXP64";
+                    case MachineTypes.IMAGE_FILE_MACHINE_ALPHA: return "ALPHA";
+                    case MachineTypes.IMAGE_FILE_MACHINE_ALPHA64: return "ALPHA64 (AXP64)";
                     case MachineTypes.IMAGE_FILE_MACHINE_SH3E: return "SH3E";
                     case MachineTypes.IMAGE_FILE_MACHINE_TRICORE: return "TRICORE";
                     case MachineTypes.IMAGE_FILE_MACHINE_MIPS16: return "MIPS16";
@@ -16876,7 +16880,7 @@ namespace PECoff
                     case MachineTypes.IMAGE_FILE_MACHINE_RISCV64: return "RISC-V64";
                     case MachineTypes.IMAGE_FILE_MACHINE_RISCV128: return "RISC-V128";
                     case MachineTypes.IMAGE_FILE_MACHINE_THUMB: return "Thumb";
-                    case MachineTypes.IMAGE_FILE_MACHINE_PURE_MSIL: return "MSIL";
+                    case MachineTypes.IMAGE_FILE_MACHINE_CEE: return "CEE";
                     default: return type.ToString();
                 }
             }

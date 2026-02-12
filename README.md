@@ -32,7 +32,7 @@ Executable outputs land in the project `bin/<Configuration>/net9.0/` folders.
 - PDB/MSF stream parsing + symbol record decoding
 - CLR/.NET metadata deep-dive (tables, token refs, signature decode, IL/EH summaries, ReadyToRun)
 - Authenticode/certificates (PKCS7 signers/timestamps, X509/TS-stack metadata, tuple-uniqueness checks + per-field uniqueness warnings with strict-profile escalation, CT hints, WinTrust on Windows, policy summaries)
-- COFF objects/archives + UEFI TE images (expanded relocation families, linker-member mapping, import header reserved-bit validation, broader machine-type constant coverage including `R3000BE`/`TARGET_HOST`/`CHPE_X86`, spec-aligned storage-class constants, richer aux symbol decode including CLR-token structured fields, Aux Format 1/2 reserved-field conformance checks, weak-external symbol-table-index resolution, relocation SymbolTableIndex vs PAIR-displacement conformance plus PAIR ordering validation (ARM/PPC/MIPS/M32R/SH), current-spec IA64/PPC relocation constant coverage including symbolic `LTOFF64`/`SECRELHI` name resolution, IA64 ADDEND ordering/payload conformance checks, COFF extended relocation-overflow (`LNK_NRELOC_OVFL`) parsing, COFF `/nnn` section long-name resolution, and UTF-8 short/string-table name decode with deterministic Latin-1 fallback)
+- COFF objects/archives + UEFI TE images (expanded relocation families, linker-member mapping, import header reserved-bit validation, broader machine-type constant coverage including canonical `ALPHA`/`ALPHA64 (AXP64)`/`CEE` naming plus `R3000BE`/`TARGET_HOST`/`CHPE_X86`, spec-aligned storage-class constants, richer aux symbol decode including CLR-token structured fields, Aux Format 1/2 reserved-field conformance checks, weak-external symbol-table-index resolution, relocation SymbolTableIndex vs PAIR-displacement conformance plus PAIR ordering validation (ARM/PPC/MIPS/M32R/SH), current-spec IA64/PPC relocation constant coverage including symbolic `LTOFF64`/`SECRELHI` name resolution, IA64 ADDEND ordering/payload conformance checks, COFF extended relocation-overflow (`LNK_NRELOC_OVFL`) parsing, COFF `/nnn` section long-name resolution, and UTF-8 short/string-table name decode with deterministic Latin-1 fallback)
 - Overlay container parsing (ZIP/RAR/7z NextHeader + EncodedHeader notes)
 - JSON report snapshotting (stable schema versioning)
 
@@ -48,7 +48,7 @@ Status legend:
 | Area | Status | Current coverage |
 | --- | --- | --- |
 | DOS header + stub | `full` | Header + relocation table summary. |
-| COFF file header | `full` | Machine/characteristics (including additional documented machine IDs such as `R3000BE`/`TARGET_HOST`/`CHPE_X86`), bigobj header support, image-vs-object COFF deprecation checks. |
+| COFF file header | `full` | Machine/characteristics with full documented machine-name matrix coverage (including canonical `ALPHA`, `ALPHA64 (AXP64)`, `CEE`, and additional IDs such as `R3000BE`/`TARGET_HOST`/`CHPE_X86`), bigobj header support, image-vs-object COFF deprecation checks. |
 | Optional header (PE32/PE32+) | `full` | Standard fields + checksum/timestamp decoding + reserved-field conformance checks + full documented subsystem mapping/classification (including `OS2_CUI` and `NATIVE_WINDOWS`). |
 | Sections | `full` | Header decoding (sizes/flags/align), entropy, permissions, padding, overlaps/align checks, directory containment summaries. |
 | Data directories | `full` | Name/section mapping + Architecture/GlobalPtr/IAT deep decode + size/mapping validation. |
