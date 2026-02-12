@@ -25,14 +25,14 @@ Executable outputs land in the project `bin/<Configuration>/net9.0/` folders.
 - Imports/exports (INT/IAT, delay/bound, forwarders, anomalies, API-set hints)
 - Data directories mapping + validation (Architecture/GlobalPtr/IAT deep decode)
 - Sections (entropy, permissions, padding, alignment/overlap checks)
-- TLS/load-config metadata (guard flags, CHPE/XFG, callback mapping, raw data hash/preview)
+- TLS/load-config metadata (guard flags, CHPE/XFG, dynamic-reloc/volatile pointed-structure decode, callback mapping, raw data hash/preview)
 - Exception/unwind decoding (x64/ARM64/ARM32/IA64 + x86 SEH)
-- Resources (strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, RT_VERSION extensions)
+- Resources (strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, RT_VERSION extensions, ordering/depth/cycle compliance checks)
 - Debug directory decoding (CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, raw fallback)
 - PDB/MSF stream parsing + symbol record decoding
 - CLR/.NET metadata deep-dive (tables, token refs, signature decode, IL/EH summaries, ReadyToRun)
-- Authenticode (PKCS7 signers/timestamps, CT hints, WinTrust on Windows, policy summaries)
-- COFF objects/archives + UEFI TE images
+- Authenticode/certificates (PKCS7 signers/timestamps, X509/TS-stack metadata, tuple-uniqueness checks, CT hints, WinTrust on Windows, policy summaries)
+- COFF objects/archives + UEFI TE images (expanded relocation families, linker-member mapping, import header reserved-bit validation, richer aux symbol decode)
 - Overlay container parsing (ZIP/RAR/7z NextHeader + EncodedHeader notes)
 - JSON report snapshotting (stable schema versioning)
 
@@ -48,23 +48,24 @@ Status legend:
 | Area | Status | Current coverage |
 | --- | --- | --- |
 | DOS header + stub | `full` | Header + relocation table summary. |
-| COFF file header | `full` | Machine/characteristics, bigobj header support. |
-| Optional header (PE32/PE32+) | `full` | Standard fields + checksum/timestamp decoding. |
+| COFF file header | `full` | Machine/characteristics, bigobj header support, image-vs-object COFF deprecation checks. |
+| Optional header (PE32/PE32+) | `full` | Standard fields + checksum/timestamp decoding + reserved-field conformance checks. |
 | Sections | `full` | Header decoding (sizes/flags/align), entropy, permissions, padding, overlaps/align checks, directory containment summaries. |
 | Data directories | `full` | Name/section mapping + Architecture/GlobalPtr/IAT deep decode + size/mapping validation. |
 | Imports/Exports | `full` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints. |
 | Relocations | `full` | Summaries + anomaly totals, machine-aware type mapping. |
 | TLS | `full` | Callbacks + raw data mapping, hash/preview, template sizing + index mapping. |
-| Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation. |
+| Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation, structured decode for dynamic-reloc/CHPE/volatile pointed metadata with deterministic malformed issues. |
 | Exception directory | `full` | AMD64/ARM64/ARM32/IA64 decode + range validation, x86 SEH. |
-| Resources | `full` | Strings, dialogs/menus/toolbars, manifests/MUI edge fields, icons/cursors/bitmaps, message tables, RT_VERSION extensions. |
+| Resources | `full` | Strings, dialogs/menus/toolbars, manifests/MUI edge fields, icons/cursors/bitmaps, message tables, RT_VERSION extensions, ordering and malformed-tree checks. |
+| Resources (tree compliance) | `full` | Named/ID ordering checks, circular-reference detection, malformed entry bounds checks, optional safe deep-tree validation beyond 3 levels. |
 | Resources (extended) | `full` | Fonts/fontdir, rcdata format detection, dlginit, animated cursor/icon. |
 | Debug directory | `full` | CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, embedded PDB, SPGO, PDB hash + exception summaries + raw fallback. |
 | PDB/MSF streams | `full` | MSF directory + PDB signature/age, DBI/TPI/GSI/publics + symbol record parsing. |
 | CLR/.NET | `full` | Metadata tables, token cross-refs, signature decode, method body IL sizes + EH clauses, R2R header. |
-| Certificates/Authenticode | `full` | PKCS7 signers/timestamps, CT hints/logs, WinTrust (Windows), trust-store status + policy evaluation. |
-| COFF objects | `full` | Symbols/aux/relocs/line numbers, COMDAT selection hints. |
-| COFF archives/import libs | `full` | Archive headers, longnames, thin/SYM64 support, import object variants. |
+| Certificates/Authenticode | `full` | PKCS7 signers/timestamps, CT hints/logs, WinTrust (Windows), trust-store status + policy evaluation, strict tuple uniqueness for `(wRevision,wCertificateType)`, X509/TS-stack typed metadata reporting. |
+| COFF objects | `full` | Symbols/aux/relocs/line numbers, COMDAT selection hints, expanded aux formats (file multi-record, function line info, symbol definition, section class decoding). |
+| COFF archives/import libs | `full` | Archive headers, longnames, thin/SYM64 support, first/second linker member symbol-to-member mapping, import object variants + reserved-bit validation. |
 | UEFI TE images | `full` | Header/sections, base relocations, entrypoint/base-of-code file offsets + mapping checks. |
 | Overlay containers | `full` | ZIP/RAR4/5/7z container parsing + encoded-header method notes. |
 | Rich header | `full` | Toolchain signature summaries + extended product mapping. |
@@ -138,6 +139,7 @@ The PECOFF library exposes a rich result model:
 - `AuthenticodePolicy.OfflineChainCheck`: disable certificate downloads and force offline chain evaluation.
 - `AuthenticodePolicy.EnableCatalogSignatureCheck`: enable WinTrust catalog signature lookup (Windows only).
 - `PECOFFOptions.ComputeManagedResourceHashes`: compute SHA256 for embedded managed resources.
+- `PECOFFOptions.EnableDeepResourceTreeParsing`: enable safe resource-directory traversal beyond the conventional 3 levels (depth/cycle guarded).
 - `PECOFFOptions.IssueCallback`: receive issues as they are raised (warnings/errors) in addition to the collected lists.
 - `PECOFFOptions.PresetFast()` / `PresetDefault()` / `PresetStrictSecurity()`: convenience presets for common configurations.
 - `PECOFFOptions.ValidationProfile`: `Default`, `Compatibility`, `Strict`, `Forensic` severity presets for warnings/errors.

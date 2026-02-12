@@ -70,6 +70,7 @@ namespace PECoff
         public bool ParseCertificateSigners { get; init; } = true;
         public bool ComputeAuthenticode { get; init; } = true;
         public bool ComputeManagedResourceHashes { get; init; }
+        public bool EnableDeepResourceTreeParsing { get; init; }
         public bool UseMemoryMappedFile { get; init; }
         public bool LazyParseDataDirectories { get; init; }
         public string ApiSetSchemaPath { get; init; } = string.Empty;
@@ -1779,6 +1780,165 @@ namespace PECoff
         }
     }
 
+    public sealed class DynamicRelocationEntryInfo
+    {
+        public uint Symbol { get; }
+        public uint BaseRelocSize { get; }
+
+        public DynamicRelocationEntryInfo(uint symbol, uint baseRelocSize)
+        {
+            Symbol = symbol;
+            BaseRelocSize = baseRelocSize;
+        }
+    }
+
+    public sealed class DynamicRelocationMetadataInfo
+    {
+        public ulong Pointer { get; }
+        public bool IsMapped { get; }
+        public string PointerSource { get; }
+        public uint Rva { get; }
+        public string SectionName { get; }
+        public uint Version { get; }
+        public uint Size { get; }
+        public bool IsMalformed { get; }
+        public string Notes { get; }
+        public IReadOnlyList<string> Issues { get; }
+        public IReadOnlyList<DynamicRelocationEntryInfo> Entries { get; }
+
+        public DynamicRelocationMetadataInfo(
+            ulong pointer,
+            bool isMapped,
+            string pointerSource,
+            uint rva,
+            string sectionName,
+            uint version,
+            uint size,
+            bool isMalformed,
+            string notes,
+            string[] issues,
+            DynamicRelocationEntryInfo[] entries)
+        {
+            Pointer = pointer;
+            IsMapped = isMapped;
+            PointerSource = pointerSource ?? string.Empty;
+            Rva = rva;
+            SectionName = sectionName ?? string.Empty;
+            Version = version;
+            Size = size;
+            IsMalformed = isMalformed;
+            Notes = notes ?? string.Empty;
+            Issues = Array.AsReadOnly(issues ?? Array.Empty<string>());
+            Entries = Array.AsReadOnly(entries ?? Array.Empty<DynamicRelocationEntryInfo>());
+        }
+    }
+
+    public sealed class ChpeCodeRangeInfo
+    {
+        public uint StartRva { get; }
+        public uint EndRva { get; }
+
+        public ChpeCodeRangeInfo(uint startRva, uint endRva)
+        {
+            StartRva = startRva;
+            EndRva = endRva;
+        }
+    }
+
+    public sealed class ChpeMetadataInfo
+    {
+        public ulong Pointer { get; }
+        public bool IsMapped { get; }
+        public string PointerSource { get; }
+        public uint Rva { get; }
+        public string SectionName { get; }
+        public uint Version { get; }
+        public uint CodeRangeOffset { get; }
+        public uint CodeRangeCount { get; }
+        public bool IsMalformed { get; }
+        public string Notes { get; }
+        public IReadOnlyList<string> Issues { get; }
+        public IReadOnlyList<ChpeCodeRangeInfo> CodeRanges { get; }
+
+        public ChpeMetadataInfo(
+            ulong pointer,
+            bool isMapped,
+            string pointerSource,
+            uint rva,
+            string sectionName,
+            uint version,
+            uint codeRangeOffset,
+            uint codeRangeCount,
+            bool isMalformed,
+            string notes,
+            string[] issues,
+            ChpeCodeRangeInfo[] codeRanges)
+        {
+            Pointer = pointer;
+            IsMapped = isMapped;
+            PointerSource = pointerSource ?? string.Empty;
+            Rva = rva;
+            SectionName = sectionName ?? string.Empty;
+            Version = version;
+            CodeRangeOffset = codeRangeOffset;
+            CodeRangeCount = codeRangeCount;
+            IsMalformed = isMalformed;
+            Notes = notes ?? string.Empty;
+            Issues = Array.AsReadOnly(issues ?? Array.Empty<string>());
+            CodeRanges = Array.AsReadOnly(codeRanges ?? Array.Empty<ChpeCodeRangeInfo>());
+        }
+    }
+
+    public sealed class VolatileMetadataInfo
+    {
+        public ulong Pointer { get; }
+        public bool IsMapped { get; }
+        public string PointerSource { get; }
+        public uint Rva { get; }
+        public string SectionName { get; }
+        public uint Size { get; }
+        public uint Version { get; }
+        public uint AccessTableRva { get; }
+        public uint AccessTableSize { get; }
+        public uint InfoRangeTableRva { get; }
+        public uint InfoRangeTableSize { get; }
+        public bool IsMalformed { get; }
+        public string Notes { get; }
+        public IReadOnlyList<string> Issues { get; }
+
+        public VolatileMetadataInfo(
+            ulong pointer,
+            bool isMapped,
+            string pointerSource,
+            uint rva,
+            string sectionName,
+            uint size,
+            uint version,
+            uint accessTableRva,
+            uint accessTableSize,
+            uint infoRangeTableRva,
+            uint infoRangeTableSize,
+            bool isMalformed,
+            string notes,
+            string[] issues)
+        {
+            Pointer = pointer;
+            IsMapped = isMapped;
+            PointerSource = pointerSource ?? string.Empty;
+            Rva = rva;
+            SectionName = sectionName ?? string.Empty;
+            Size = size;
+            Version = version;
+            AccessTableRva = accessTableRva;
+            AccessTableSize = accessTableSize;
+            InfoRangeTableRva = infoRangeTableRva;
+            InfoRangeTableSize = infoRangeTableSize;
+            IsMalformed = isMalformed;
+            Notes = notes ?? string.Empty;
+            Issues = Array.AsReadOnly(issues ?? Array.Empty<string>());
+        }
+    }
+
     public sealed class EnclaveConfigurationInfo
     {
         public uint Size { get; }
@@ -1941,6 +2101,9 @@ namespace PECoff
         public IReadOnlyList<GuardFeatureInfo> GuardFeatureMatrix { get; }
         public IReadOnlyList<GuardTableSanityInfo> GuardTableSanity { get; }
         public SehHandlerTableInfo SehHandlerTable { get; }
+        public DynamicRelocationMetadataInfo DynamicRelocationMetadata { get; }
+        public ChpeMetadataInfo ChpeMetadata { get; }
+        public VolatileMetadataInfo VolatileMetadata { get; }
         public EnclaveConfigurationInfo EnclaveConfiguration { get; }
 
         public LoadConfigInfo(
@@ -1986,6 +2149,9 @@ namespace PECoff
             GuardFeatureInfo[] guardFeatureMatrix,
             GuardTableSanityInfo[] guardTableSanity,
             SehHandlerTableInfo sehHandlerTable,
+            DynamicRelocationMetadataInfo dynamicRelocationMetadata,
+            ChpeMetadataInfo chpeMetadata,
+            VolatileMetadataInfo volatileMetadata,
             EnclaveConfigurationInfo enclaveConfiguration)
         {
             Size = size;
@@ -2030,6 +2196,9 @@ namespace PECoff
             GuardFeatureMatrix = Array.AsReadOnly(guardFeatureMatrix ?? Array.Empty<GuardFeatureInfo>());
             GuardTableSanity = Array.AsReadOnly(guardTableSanity ?? Array.Empty<GuardTableSanityInfo>());
             SehHandlerTable = sehHandlerTable;
+            DynamicRelocationMetadata = dynamicRelocationMetadata;
+            ChpeMetadata = chpeMetadata;
+            VolatileMetadata = volatileMetadata;
             EnclaveConfiguration = enclaveConfiguration;
         }
     }
@@ -2566,13 +2735,65 @@ namespace PECoff
         public int NameTableSize { get; }
         public bool Is64Bit { get; }
         public bool IsTruncated { get; }
+        public string Format { get; }
+        public int ParsedReferenceCount { get; }
+        public bool ReferencesTruncated { get; }
+        public IReadOnlyList<CoffArchiveSymbolReferenceInfo> References { get; }
 
         public CoffArchiveSymbolTableInfo(int symbolCount, int nameTableSize, bool is64Bit, bool isTruncated)
+            : this(
+                symbolCount,
+                nameTableSize,
+                is64Bit,
+                isTruncated,
+                string.Empty,
+                0,
+                false,
+                Array.Empty<CoffArchiveSymbolReferenceInfo>())
+        {
+        }
+
+        public CoffArchiveSymbolTableInfo(
+            int symbolCount,
+            int nameTableSize,
+            bool is64Bit,
+            bool isTruncated,
+            string format,
+            int parsedReferenceCount,
+            bool referencesTruncated,
+            CoffArchiveSymbolReferenceInfo[] references)
         {
             SymbolCount = symbolCount;
             NameTableSize = nameTableSize;
             Is64Bit = is64Bit;
             IsTruncated = isTruncated;
+            Format = format ?? string.Empty;
+            ParsedReferenceCount = parsedReferenceCount;
+            ReferencesTruncated = referencesTruncated;
+            References = Array.AsReadOnly(references ?? Array.Empty<CoffArchiveSymbolReferenceInfo>());
+        }
+    }
+
+    public sealed class CoffArchiveSymbolReferenceInfo
+    {
+        public string Name { get; }
+        public long MemberOffset { get; }
+        public bool MemberFound { get; }
+        public int MemberIndex { get; }
+        public string MemberName { get; }
+
+        public CoffArchiveSymbolReferenceInfo(
+            string name,
+            long memberOffset,
+            bool memberFound,
+            int memberIndex,
+            string memberName)
+        {
+            Name = name ?? string.Empty;
+            MemberOffset = memberOffset;
+            MemberFound = memberFound;
+            MemberIndex = memberIndex;
+            MemberName = memberName ?? string.Empty;
         }
     }
 
@@ -2594,6 +2815,9 @@ namespace PECoff
         public ushort? Ordinal { get; }
         public ushort? Hint { get; }
         public string ImportName { get; }
+        public ushort Flags { get; }
+        public ushort ReservedFlags { get; }
+        public bool HasReservedFlags { get; }
 
         public CoffImportObjectInfo(
             ushort version,
@@ -2612,6 +2836,47 @@ namespace PECoff
             ushort? ordinal,
             ushort? hint,
             string importName)
+            : this(
+                version,
+                machine,
+                machineName,
+                timeDateStamp,
+                sizeOfData,
+                ordinalOrHint,
+                type,
+                typeName,
+                nameType,
+                nameTypeName,
+                symbolName,
+                dllName,
+                isImportByOrdinal,
+                ordinal,
+                hint,
+                importName,
+                0,
+                0)
+        {
+        }
+
+        public CoffImportObjectInfo(
+            ushort version,
+            ushort machine,
+            string machineName,
+            uint timeDateStamp,
+            uint sizeOfData,
+            ushort ordinalOrHint,
+            ushort type,
+            string typeName,
+            ushort nameType,
+            string nameTypeName,
+            string symbolName,
+            string dllName,
+            bool isImportByOrdinal,
+            ushort? ordinal,
+            ushort? hint,
+            string importName,
+            ushort flags,
+            ushort reservedFlags)
         {
             Version = version;
             Machine = machine;
@@ -2629,12 +2894,16 @@ namespace PECoff
             Ordinal = ordinal;
             Hint = hint;
             ImportName = importName ?? string.Empty;
+            Flags = flags;
+            ReservedFlags = reservedFlags;
+            HasReservedFlags = reservedFlags != 0;
         }
     }
 
     public sealed class CoffArchiveMemberInfo
     {
         public string Name { get; }
+        public long HeaderOffset { get; }
         public long DataOffset { get; }
         public long Size { get; }
         public uint TimeDateStamp { get; }
@@ -2660,8 +2929,40 @@ namespace PECoff
             bool isImportObject,
             CoffImportObjectInfo importObject,
             bool dataInArchive)
+            : this(
+                name,
+                -1,
+                dataOffset,
+                size,
+                timeDateStamp,
+                userId,
+                groupId,
+                mode,
+                isSymbolTable,
+                isLongNameTable,
+                isImportObject,
+                importObject,
+                dataInArchive)
+        {
+        }
+
+        public CoffArchiveMemberInfo(
+            string name,
+            long headerOffset,
+            long dataOffset,
+            long size,
+            uint timeDateStamp,
+            int userId,
+            int groupId,
+            string mode,
+            bool isSymbolTable,
+            bool isLongNameTable,
+            bool isImportObject,
+            CoffImportObjectInfo importObject,
+            bool dataInArchive)
         {
             Name = name ?? string.Empty;
+            HeaderOffset = headerOffset;
             DataOffset = dataOffset;
             Size = size;
             TimeDateStamp = timeDateStamp;
@@ -2681,6 +2982,7 @@ namespace PECoff
         public string Signature { get; }
         public int MemberCount { get; }
         public CoffArchiveSymbolTableInfo SymbolTable { get; }
+        public IReadOnlyList<CoffArchiveSymbolTableInfo> SymbolTables { get; }
         public IReadOnlyList<CoffArchiveMemberInfo> Members { get; }
         public bool IsThinArchive { get; }
         public bool HasLongNameTable { get; }
@@ -2694,10 +2996,32 @@ namespace PECoff
             bool isThinArchive,
             bool hasLongNameTable,
             int longNameTableSize)
+            : this(
+                signature,
+                memberCount,
+                symbolTable,
+                symbolTable == null ? Array.Empty<CoffArchiveSymbolTableInfo>() : new[] { symbolTable },
+                members,
+                isThinArchive,
+                hasLongNameTable,
+                longNameTableSize)
+        {
+        }
+
+        public CoffArchiveInfo(
+            string signature,
+            int memberCount,
+            CoffArchiveSymbolTableInfo symbolTable,
+            CoffArchiveSymbolTableInfo[] symbolTables,
+            CoffArchiveMemberInfo[] members,
+            bool isThinArchive,
+            bool hasLongNameTable,
+            int longNameTableSize)
         {
             Signature = signature ?? string.Empty;
             MemberCount = memberCount;
-            SymbolTable = symbolTable;
+            SymbolTable = symbolTable ?? symbolTables?.FirstOrDefault();
+            SymbolTables = Array.AsReadOnly(symbolTables ?? Array.Empty<CoffArchiveSymbolTableInfo>());
             Members = Array.AsReadOnly(members ?? Array.Empty<CoffArchiveMemberInfo>());
             IsThinArchive = isThinArchive;
             HasLongNameTable = hasLongNameTable;
@@ -4912,6 +5236,7 @@ namespace PECoff
                     Size = entry.Data?.Length ?? 0,
                     entry.Pkcs7Error,
                     SignerCount = entry.Pkcs7SignerInfos?.Length ?? 0,
+                    entry.TypeMetadata,
                     entry.AuthenticodeStatus
                 }).ToArray();
 

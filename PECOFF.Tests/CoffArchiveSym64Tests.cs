@@ -20,10 +20,16 @@ public class CoffArchiveSym64Tests
             Assert.Equal("COFF-Archive", pe.ImageKind);
             Assert.NotNull(pe.CoffArchive);
             Assert.NotNull(pe.CoffArchive.SymbolTable);
+            Assert.Single(pe.CoffArchive.SymbolTables);
             Assert.True(pe.CoffArchive.SymbolTable.Is64Bit);
             Assert.False(pe.CoffArchive.SymbolTable.IsTruncated);
             Assert.Equal(1, pe.CoffArchive.SymbolTable.SymbolCount);
             Assert.Equal(4, pe.CoffArchive.SymbolTable.NameTableSize);
+            Assert.Equal("FirstLinkerMember64", pe.CoffArchive.SymbolTable.Format);
+            CoffArchiveSymbolReferenceInfo symbol = Assert.Single(pe.CoffArchive.SymbolTable.References);
+            Assert.Equal("sym", symbol.Name);
+            Assert.True(symbol.MemberFound);
+            Assert.Equal("mod.obj", symbol.MemberName);
         }
         finally
         {
@@ -36,16 +42,28 @@ public class CoffArchiveSym64Tests
         using MemoryStream ms = new MemoryStream();
         WriteAscii(ms, "!<arch>\n");
 
-        byte[] symData = BuildSym64Table();
+        byte[] symData = BuildSym64Table(GetNextMemberHeaderOffset(symTableDataLength: 20));
         WriteMember(ms, "/SYM64", symData);
+        WriteMember(ms, "mod.obj", new byte[] { 0x01, 0x02, 0x03, 0x04 });
         return ms.ToArray();
     }
 
-    private static byte[] BuildSym64Table()
+    private static long GetNextMemberHeaderOffset(int symTableDataLength)
+    {
+        long offset = 8 + 60 + symTableDataLength;
+        if ((symTableDataLength & 1) == 1)
+        {
+            offset++;
+        }
+
+        return offset;
+    }
+
+    private static byte[] BuildSym64Table(long memberHeaderOffset)
     {
         byte[] data = new byte[8 + 8 + 4];
         WriteUInt64BigEndian(data, 0, 1);
-        WriteUInt64BigEndian(data, 8, 0x60);
+        WriteUInt64BigEndian(data, 8, (ulong)memberHeaderOffset);
         Encoding.ASCII.GetBytes("sym\0").CopyTo(data, 16);
         return data;
     }
