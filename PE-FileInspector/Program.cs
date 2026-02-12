@@ -1780,7 +1780,14 @@ namespace PE_FileInspector
             {
                 foreach (DebugDirectoryEntry entry in pe.DebugDirectories)
                 {
-                    sb.AppendLine("  - Type: " + entry.Type +
+                    string typeLabel = entry.CanonicalTypeName;
+                    if (!string.IsNullOrWhiteSpace(entry.CompatibilityTypeAlias))
+                    {
+                        typeLabel += " (alias: " + entry.CompatibilityTypeAlias + ")";
+                    }
+
+                    sb.AppendLine("  - Type: " + typeLabel +
+                                  " [0x" + entry.TypeValue.ToString("X8", CultureInfo.InvariantCulture) + "]" +
                                   " | Size: " + entry.SizeOfData.ToString(CultureInfo.InvariantCulture) +
                                   " | Timestamp: 0x" + entry.TimeDateStamp.ToString("X8", CultureInfo.InvariantCulture) +
                                   " | RawPtr: 0x" + entry.PointerToRawData.ToString("X8", CultureInfo.InvariantCulture));

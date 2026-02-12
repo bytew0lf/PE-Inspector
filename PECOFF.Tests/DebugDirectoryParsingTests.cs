@@ -116,7 +116,6 @@ public class DebugDirectoryParsingTests
 
     [Theory]
     [InlineData(0x00000001u, "EX_DLLCHARACTERISTICS_CET_COMPAT")]
-    [InlineData(0x00000002u, "EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE")]
     [InlineData(0x00000040u, "EX_DLLCHARACTERISTICS_FORWARD_CFI_COMPAT")]
     public void ExDllCharacteristics_Parses_Known_Spec_Flags(uint flags, string expectedName)
     {
@@ -135,6 +134,17 @@ public class DebugDirectoryParsingTests
         Assert.True(parsed);
         Assert.Equal(0x80000000u, info.Characteristics);
         Assert.Contains("0x80000000", info.FlagNames);
+    }
+
+    [Fact]
+    public void ExDllCharacteristics_Parses_NonSpec_Bit2_As_Unknown_Hex()
+    {
+        byte[] data = BitConverter.GetBytes(0x00000002u);
+        bool parsed = PECOFF.TryParseExDllCharacteristicsDataForTest(data, out DebugExDllCharacteristicsInfo info);
+        Assert.True(parsed);
+        Assert.Equal(0x00000002u, info.Characteristics);
+        Assert.Contains("0x00000002", info.FlagNames);
+        Assert.DoesNotContain("EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE", info.FlagNames);
     }
 
     [Fact]

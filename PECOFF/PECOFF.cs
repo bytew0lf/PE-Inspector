@@ -16747,7 +16747,6 @@ namespace PECoff
                 case 0x0003: // IMAGE_REL_IA64_IMM64
                 case 0x0009: // IMAGE_REL_IA64_GPREL22
                 case 0x000A: // IMAGE_REL_IA64_LTOFF22
-                case 0x000F: // IMAGE_REL_IA64_LTOFF64 (referenced by ADDEND semantics)
                 case 0x000C: // IMAGE_REL_IA64_SECREL22
                 case 0x000D: // IMAGE_REL_IA64_SECREL64I
                 case 0x000E: // IMAGE_REL_IA64_SECREL32
@@ -16759,7 +16758,7 @@ namespace PECoff
 
         private static string GetIa64AddendOrderingDescription()
         {
-            return "IMM14, IMM22, IMM64, GPREL22, LTOFF22, LTOFF64, SECREL22, SECREL64I, or SECREL32";
+            return "table-based IA64 predecessor set: IMM14, IMM22, IMM64, GPREL22, LTOFF22, SECREL22, SECREL64I, or SECREL32";
         }
 
         private static bool IsPairRelocationOrderingValid(MachineTypes machine, ushort? previousType)
@@ -17019,7 +17018,6 @@ namespace PECoff
                         case 0x000C: return "SECREL22";
                         case 0x000D: return "SECREL64I";
                         case 0x000E: return "SECREL32";
-                        case 0x000F: return "LTOFF64";
                         case 0x0010: return "DIR32NB";
                         case 0x0011: return "SREL14";
                         case 0x0012: return "SREL22";
@@ -19445,11 +19443,9 @@ namespace PECoff
         }
 
         private const uint EX_DLLCHARACTERISTICS_CET_COMPAT = 0x00000001u;
-        private const uint EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE = 0x00000002u;
         private const uint EX_DLLCHARACTERISTICS_FORWARD_CFI_COMPAT = 0x00000040u;
         private const uint EX_DLLCHARACTERISTICS_KNOWN_MASK =
             EX_DLLCHARACTERISTICS_CET_COMPAT |
-            EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE |
             EX_DLLCHARACTERISTICS_FORWARD_CFI_COMPAT;
 
         private static bool TryParseExDllCharacteristicsData(byte[] data, out DebugExDllCharacteristicsInfo info)
@@ -19481,11 +19477,6 @@ namespace PECoff
             if ((flags & EX_DLLCHARACTERISTICS_CET_COMPAT) != 0)
             {
                 names.Add("EX_DLLCHARACTERISTICS_CET_COMPAT");
-            }
-
-            if ((flags & EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE) != 0)
-            {
-                names.Add("EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE");
             }
 
             if ((flags & EX_DLLCHARACTERISTICS_FORWARD_CFI_COMPAT) != 0)

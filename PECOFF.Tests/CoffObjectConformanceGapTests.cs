@@ -168,7 +168,6 @@ public class CoffObjectConformanceGapTests
     [InlineData((ushort)0x000C, "SECREL22")]
     [InlineData((ushort)0x000D, "SECREL64I")]
     [InlineData((ushort)0x000E, "SECREL32")]
-    [InlineData((ushort)0x000F, "LTOFF64")]
     public void CoffRelocation_Ia64Addend_ValidOrdering_UsesPayloadSemantics(ushort leadingType, string leadingTypeName)
     {
         const uint addendPayload = 0xDEADBEEFu;
@@ -198,10 +197,6 @@ public class CoffObjectConformanceGapTests
             Assert.DoesNotContain(
                 parser.ParseResult.Warnings,
                 warning => warning.Contains("invalid SymbolTableIndex", StringComparison.Ordinal));
-            Assert.DoesNotContain(
-                parser.ParseResult.Warnings,
-                warning => warning.Contains("TYPE_0x000F", StringComparison.Ordinal));
-
             PECOFF strict = new PECOFF(path, new PECOFFOptions { StrictMode = true });
             Assert.Equal(2, strict.CoffRelocations.Length);
             Assert.Equal(leadingTypeName, strict.CoffRelocations[0].TypeName);
@@ -215,6 +210,7 @@ public class CoffObjectConformanceGapTests
     [Theory]
     [InlineData(new ushort[] { 0x001F })] // no predecessor
     [InlineData(new ushort[] { 0x0004, 0x001F })] // DIR32 -> ADDEND (invalid)
+    [InlineData(new ushort[] { 0x000F, 0x001F })] // TYPE_0x000F -> ADDEND (table-based invalid)
     public void CoffRelocation_Ia64Addend_InvalidOrdering_EmitsSpecWarning_AndStrictModeFails(ushort[] types)
     {
         byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);

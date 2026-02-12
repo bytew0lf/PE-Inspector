@@ -15,7 +15,7 @@ public class DebugExDllCharacteristicsComplianceTests
         Assert.True(File.Exists(validPath));
 
         byte[] source = File.ReadAllBytes(validPath);
-        byte[] mutated = BuildPeWithExDllCharacteristicsDebugEntry(source, 0x00000043u);
+        byte[] mutated = BuildPeWithExDllCharacteristicsDebugEntry(source, 0x00000041u);
 
         string tempFile = Path.GetTempFileName();
         try
@@ -29,7 +29,6 @@ public class DebugExDllCharacteristicsComplianceTests
 
             Assert.NotNull(debugEntry.ExDllCharacteristics);
             Assert.Contains("EX_DLLCHARACTERISTICS_CET_COMPAT", debugEntry.ExDllCharacteristics!.FlagNames);
-            Assert.Contains("EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE", debugEntry.ExDllCharacteristics.FlagNames);
             Assert.Contains("EX_DLLCHARACTERISTICS_FORWARD_CFI_COMPAT", debugEntry.ExDllCharacteristics.FlagNames);
 
             Assert.DoesNotContain(
@@ -104,6 +103,36 @@ public class DebugExDllCharacteristicsComplianceTests
             Assert.Contains(
                 parser.ParseResult.Warnings,
                 warning => warning.Contains("SPEC violation: IMAGE_DEBUG_TYPE_EX_DLLCHARACTERISTICS contains unsupported flag bits 0x80000000", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void ExDllCharacteristics_NonSpecBit2_EmitSpecViolation_AndStrictModeFails()
+    {
+        string? fixtures = FindFixturesDirectory();
+        Assert.False(string.IsNullOrWhiteSpace(fixtures));
+
+        string validPath = Path.Combine(fixtures!, "minimal", "minimal-x86.exe");
+        Assert.True(File.Exists(validPath));
+
+        byte[] source = File.ReadAllBytes(validPath);
+        byte[] mutated = BuildPeWithExDllCharacteristicsDebugEntry(source, 0x00000002u);
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: IMAGE_DEBUG_TYPE_EX_DLLCHARACTERISTICS contains unsupported flag bits 0x00000002", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
         }
         finally
         {

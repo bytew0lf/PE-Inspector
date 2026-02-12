@@ -802,6 +802,9 @@ namespace PECoff
         public ushort MajorVersion { get; }
         public ushort MinorVersion { get; }
         public DebugDirectoryType Type { get; }
+        public uint TypeValue => (uint)Type;
+        public string CanonicalTypeName => GetCanonicalTypeName(TypeValue);
+        public string CompatibilityTypeAlias => GetCompatibilityTypeAlias(TypeValue);
         public uint SizeOfData { get; }
         public uint AddressOfRawData { get; }
         public uint PointerToRawData { get; }
@@ -893,6 +896,30 @@ namespace PECoff
             Clsid = clsid;
             Other = other;
             Note = note ?? string.Empty;
+        }
+
+        private static string GetCanonicalTypeName(uint typeValue)
+        {
+            return typeValue switch
+            {
+                17 => "UNDEFINED_17",
+                18 => "UNKNOWN_18",
+                19 => "UNDEFINED_19",
+                _ => Enum.IsDefined(typeof(DebugDirectoryType), (DebugDirectoryType)typeValue)
+                    ? ((DebugDirectoryType)typeValue).ToString()
+                    : "UNKNOWN_0x" + typeValue.ToString("X8", System.Globalization.CultureInfo.InvariantCulture)
+            };
+        }
+
+        private static string GetCompatibilityTypeAlias(uint typeValue)
+        {
+            return typeValue switch
+            {
+                17 => "EmbeddedPortablePdb",
+                18 => "Spgo",
+                19 => "PdbHash",
+                _ => string.Empty
+            };
         }
     }
 

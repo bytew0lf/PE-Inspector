@@ -108,7 +108,6 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x000C, "SECREL22")]
     [InlineData((ushort)0x000D, "SECREL64I")]
     [InlineData((ushort)0x000E, "SECREL32")]
-    [InlineData((ushort)0x000F, "LTOFF64")]
     [InlineData((ushort)0x0010, "DIR32NB")]
     [InlineData((ushort)0x0011, "SREL14")]
     [InlineData((ushort)0x0012, "SREL22")]
@@ -246,6 +245,7 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x01C2, (ushort)0x000B)] // ARM non-spec legacy
     [InlineData((ushort)0x01C2, (ushort)0x000C)] // ARM non-spec legacy
     [InlineData((ushort)0x01C2, (ushort)0x000D)] // ARM non-spec legacy
+    [InlineData((ushort)0x0200, (ushort)0x000F)] // IA64 non-documented (table mismatch)
     [InlineData((ushort)0x0200, (ushort)0x001D)] // IA64 non-documented
     [InlineData((ushort)0x0200, (ushort)0x001E)] // IA64 non-documented
     [InlineData((ushort)0x0200, (ushort)0x0020)] // IA64
