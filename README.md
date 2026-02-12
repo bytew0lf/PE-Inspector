@@ -49,7 +49,7 @@ Status legend:
 | --- | --- | --- |
 | DOS header + stub | `full` | Header + relocation table summary. |
 | COFF file header | `full` | Machine/characteristics (including additional documented machine IDs such as `R3000BE`/`TARGET_HOST`/`CHPE_X86`), bigobj header support, image-vs-object COFF deprecation checks. |
-| Optional header (PE32/PE32+) | `full` | Standard fields + checksum/timestamp decoding + reserved-field conformance checks. |
+| Optional header (PE32/PE32+) | `full` | Standard fields + checksum/timestamp decoding + reserved-field conformance checks + full documented subsystem mapping/classification (including `OS2_CUI` and `NATIVE_WINDOWS`). |
 | Sections | `full` | Header decoding (sizes/flags/align), entropy, permissions, padding, overlaps/align checks, directory containment summaries. |
 | Data directories | `full` | Name/section mapping + Architecture/GlobalPtr/IAT deep decode + size/mapping validation. |
 | Imports/Exports | `full` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints. |

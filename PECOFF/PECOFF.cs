@@ -969,7 +969,9 @@ namespace PECoff
             IMAGE_SUBSYSTEM_NATIVE = 1,
             IMAGE_SUBSYSTEM_WINDOWS_GUI = 2,
             IMAGE_SUBSYSTEM_WINDOWS_CUI = 3,
+            IMAGE_SUBSYSTEM_OS2_CUI = 5,
             IMAGE_SUBSYSTEM_POSIX_CUI = 7,
+            IMAGE_SUBSYSTEM_NATIVE_WINDOWS = 8,
             IMAGE_SUBSYSTEM_WINDOWS_CE_GUI = 9,
             IMAGE_SUBSYSTEM_EFI_APPLICATION = 10,
             IMAGE_SUBSYSTEM_EFI_BOOT_SERVICE_DRIVER = 11,
@@ -6778,6 +6780,7 @@ namespace PECoff
             bool isGui = subsystem == Subsystem.IMAGE_SUBSYSTEM_WINDOWS_GUI ||
                          subsystem == Subsystem.IMAGE_SUBSYSTEM_WINDOWS_CE_GUI;
             bool isConsole = subsystem == Subsystem.IMAGE_SUBSYSTEM_WINDOWS_CUI ||
+                             subsystem == Subsystem.IMAGE_SUBSYSTEM_OS2_CUI ||
                              subsystem == Subsystem.IMAGE_SUBSYSTEM_POSIX_CUI;
 
             return new SubsystemInfo(value, name, isGui, isConsole);
