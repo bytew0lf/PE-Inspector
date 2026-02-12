@@ -72,6 +72,90 @@ public class CoffObjectConformanceGapTests
         }
     }
 
+    [Theory]
+    [InlineData((ushort)0x01C2, (ushort)0x0010, (ushort)0x0016)] // ARM_MOV32 -> ARM_PAIR
+    [InlineData((ushort)0x01F0, (ushort)0x0010, (ushort)0x0012)] // PPC REFHI -> PAIR
+    [InlineData((ushort)0x0166, (ushort)0x0004, (ushort)0x0025)] // MIPS REFHI -> PAIR
+    [InlineData((ushort)0x9041, (ushort)0x0009, (ushort)0x000B)] // M32R REFHI -> PAIR
+    [InlineData((ushort)0x01A6, (ushort)0x0016, (ushort)0x0018)] // SHM_RELLO -> SHM_PAIR
+    public void CoffRelocation_PairTypes_ValidOrdering_DoesNotWarn(ushort machine, ushort leadingType, ushort pairType)
+    {
+        const uint displacement = 0x0BADF00Du;
+        byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
+        byte[] data = BuildCoffObject(
+            machine,
+            CreateSectionName(".text"),
+            new[]
+            {
+                (0x20u, 0u, leadingType),
+                (0x24u, displacement, pairType)
+            },
+            new[] { symbol },
+            Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Equal(2, parser.CoffRelocations.Length);
+            Assert.Equal(string.Empty, parser.CoffRelocations[1].SymbolName);
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("must immediately follow", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("invalid SymbolTableIndex", StringComparison.Ordinal));
+
+            PECOFF strict = new PECOFF(path, new PECOFFOptions { StrictMode = true });
+            Assert.Equal(2, strict.CoffRelocations.Length);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData((ushort)0x01C2, (ushort)0x000A, (ushort)0x0016)] // ARM REL32 -> ARM_PAIR (invalid)
+    [InlineData((ushort)0x01F0, (ushort)0x0002, (ushort)0x0012)] // PPC ADDR32 -> PAIR (invalid)
+    [InlineData((ushort)0x0166, (ushort)0x0002, (ushort)0x0025)] // MIPS REFWORD -> PAIR (invalid)
+    [InlineData((ushort)0x9041, (ushort)0x0008, (ushort)0x000B)] // M32R REFHALF -> PAIR (invalid)
+    [InlineData((ushort)0x01A6, (ushort)0x0002, (ushort)0x0018)] // SH DIRECT32 -> SHM_PAIR (invalid)
+    public void CoffRelocation_PairTypes_InvalidOrdering_EmitsSpecWarning_AndStrictModeFails(ushort machine, ushort leadingType, ushort pairType)
+    {
+        const uint displacement = 0x01020304u;
+        byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
+        byte[] data = BuildCoffObject(
+            machine,
+            CreateSectionName(".text"),
+            new[]
+            {
+                (0x20u, 0u, leadingType),
+                (0x24u, displacement, pairType)
+            },
+            new[] { symbol },
+            Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: COFF", StringComparison.Ordinal) &&
+                           warning.Contains("must immediately follow", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("invalid SymbolTableIndex", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public void CoffRelocation_InvalidSymbolTableIndex_EmitsSpecWarning_AndStrictModeFails()
     {

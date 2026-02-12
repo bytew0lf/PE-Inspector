@@ -5036,6 +5036,7 @@ namespace PECoff
                     continue;
                 }
 
+                ushort? previousRelocationType = null;
                 for (int j = startEntry; j < entries; j++)
                 {
                     int entryOffset = j * CoffRelocationSize;
@@ -5045,6 +5046,24 @@ namespace PECoff
                     string typeName = GetCoffRelocationTypeName(_machineType, type);
                     string symbolName = string.Empty;
                     bool usesPairDisplacement = IsPairRelocationDisplacementCarrier(_machineType, type);
+                    if (usesPairDisplacement && !IsPairRelocationOrderingValid(_machineType, previousRelocationType))
+                    {
+                        string sectionLabel = string.IsNullOrWhiteSpace(sectionName) ? "<unnamed>" : sectionName;
+                        string previousTypeName = previousRelocationType.HasValue
+                            ? GetCoffRelocationTypeName(_machineType, previousRelocationType.Value)
+                            : "<none>";
+                        Warn(
+                            ParseIssueCategory.Relocations,
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "SPEC violation: COFF {0} relocation entry #{1} in section {2} must immediately follow {3}; previous relocation was {4}.",
+                                typeName,
+                                j,
+                                sectionLabel,
+                                GetPairRelocationOrderingDescription(_machineType),
+                                previousTypeName));
+                    }
+
                     if (!usesPairDisplacement)
                     {
                         if (symbolIndex <= int.MaxValue &&
@@ -5074,6 +5093,7 @@ namespace PECoff
                         type,
                         typeName,
                         offset + entryOffset));
+                    previousRelocationType = type;
                 }
             }
         }
@@ -16682,6 +16702,86 @@ namespace PECoff
             return false;
         }
 
+        private static bool IsPairRelocationOrderingValid(MachineTypes machine, ushort? previousType)
+        {
+            if (!previousType.HasValue)
+            {
+                return false;
+            }
+
+            ushort previous = previousType.Value;
+            if (IsMipsMachine(machine))
+            {
+                return previous == 0x0004 || previous == 0x000D; // REFHI or SECRELHI
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_M32R)
+            {
+                return previous == 0x0009; // REFHI
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_ARM ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_ARMNT ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_THUMB)
+            {
+                return previous == 0x0010 || previous == 0x0011; // ARM_MOV32 or THUMB_MOV32
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPC ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP)
+            {
+                return previous == 0x0010 || previous == 0x0014; // REFHI or SECRELHI
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_SH3 ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH3DSP ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH3E ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH4 ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH5)
+            {
+                return previous == 0x0015 || previous == 0x0016 || previous == 0x0017; // SHM_REFHALF/SHM_RELLO/SHM_RELHALF
+            }
+
+            return true;
+        }
+
+        private static string GetPairRelocationOrderingDescription(MachineTypes machine)
+        {
+            if (IsMipsMachine(machine))
+            {
+                return "REFHI or SECRELHI";
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_M32R)
+            {
+                return "REFHI";
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_ARM ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_ARMNT ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_THUMB)
+            {
+                return "ARM_MOV32 or THUMB_MOV32";
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPC ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP)
+            {
+                return "REFHI or SECRELHI";
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_SH3 ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH3DSP ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH3E ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH4 ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH5)
+            {
+                return "SHM_REFHALF, SHM_RELLO, or SHM_RELHALF";
+            }
+
+            return "the required predecessor relocation type";
+        }
+
         private static string GetMachineName(ushort machine)
         {
             MachineTypes type = (MachineTypes)machine;
@@ -16872,6 +16972,8 @@ namespace PECoff
                         case 0x001A: return "IMMGPREL64";
                         case 0x001B: return "TOKEN";
                         case 0x001C: return "GPREL32";
+                        case 0x001D: return "PCREL21BI";
+                        case 0x001E: return "PCREL22";
                         case 0x001F: return "ADDEND";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
@@ -16887,16 +16989,20 @@ namespace PECoff
                         case 0x0005: return "ADDR14";
                         case 0x0006: return "REL24";
                         case 0x0007: return "REL14";
+                        case 0x0008: return "TOCREL16";
+                        case 0x0009: return "TOCREL14";
                         case 0x000A: return "ADDR32NB";
                         case 0x000B: return "SECREL";
                         case 0x000C: return "SECTION";
+                        case 0x000D: return "ADDR14BRTAKEN";
+                        case 0x000E: return "ADDR14BRNTAKEN";
                         case 0x000F: return "SECREL16";
                         case 0x0010: return "REFHI";
                         case 0x0011: return "REFLO";
                         case 0x0012: return "PAIR";
                         case 0x0013: return "SECRELLO";
-                        case 0x0015: return "GPREL";
-                        case 0x0016: return "TOKEN";
+                        case 0x0014: return "GPREL";
+                        case 0x0015: return "TOKEN";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_R3000BE:
