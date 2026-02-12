@@ -7,6 +7,7 @@ using Xunit;
 public class CoffRelocationMachineCoverageTests
 {
     [Theory]
+    [InlineData((ushort)0x01C2, (ushort)0x000E, "BLX23T")] // THUMB
     [InlineData((ushort)0x0200, (ushort)0x000A, "LTOFF22")] // IA64
     [InlineData((ushort)0x01F0, (ushort)0x0012, "PAIR")] // POWERPC
     [InlineData((ushort)0x0166, (ushort)0x0010, "JMPADDR16")] // R4000 (MIPS family)

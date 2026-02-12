@@ -8,18 +8,19 @@ public class CoffAuxSymbolTests
     [Fact]
     public void CoffAuxSymbol_ClrToken_Decodes()
     {
-        const uint token = 0x02000001;
+        const uint symbolIndex = 0x02000001;
         byte[] data = new byte[18];
-        using (MemoryStream stream = new MemoryStream(data))
-        using (BinaryWriter writer = new BinaryWriter(stream))
-        {
-            writer.Write(token);
-        }
+        data[0] = CoffAuxSymbolInfo.ClrTokenAuxTypeDefinition;
+        data[1] = 0x00;
+        WriteUInt32(data, 2, symbolIndex);
 
         CoffAuxSymbolInfo[] aux = PECOFF.DecodeCoffAuxSymbolsForTest("CLR", 0, 0x6B, 1, data);
         Assert.Single(aux);
         Assert.Equal("ClrToken", aux[0].Kind);
-        Assert.Equal(token, aux[0].TagIndex);
+        Assert.Equal(symbolIndex, aux[0].TagIndex);
+        Assert.Equal(CoffAuxSymbolInfo.ClrTokenAuxTypeDefinition, aux[0].ClrAuxType);
+        Assert.Equal(symbolIndex, aux[0].ClrSymbolTableIndex);
+        Assert.True(aux[0].ClrReservedFieldsValid);
     }
 
     [Fact]
@@ -43,17 +44,36 @@ public class CoffAuxSymbolTests
         using (MemoryStream stream = new MemoryStream(data))
         using (BinaryWriter writer = new BinaryWriter(stream))
         {
+            writer.Write(0u); // TagIndex
             writer.Write((ushort)42); // line
-            writer.Write((ushort)0); // pad
+            writer.Write((ushort)0); // size/pad
+            writer.Write(0x11111111u); // pointer to line number
             writer.Write(0x12345678u); // next function
         }
 
-        CoffAuxSymbolInfo[] aux = PECOFF.DecodeCoffAuxSymbolsForTest("func", 0, 0x14, 1, data);
+        CoffAuxSymbolInfo[] aux = PECOFF.DecodeCoffAuxSymbolsForTest("func", 0, 0x65, 1, data);
 
         Assert.Single(aux);
         Assert.Equal("FunctionLineInfo", aux[0].Kind);
         Assert.Equal((ushort)42, aux[0].FunctionLineNumber);
+        Assert.Equal(0x11111111u, aux[0].PointerToLineNumber);
         Assert.Equal(0x12345678u, aux[0].PointerToNextFunction);
+    }
+
+    [Fact]
+    public void CoffAuxSymbol_FunctionBegin_Decodes_Using_Spec_Offsets()
+    {
+        byte[] data = new byte[18];
+        WriteUInt16(data, 4, 12);
+        WriteUInt32(data, 8, 0x0A0B0C0Du);
+        WriteUInt32(data, 12, 0x01020304u);
+
+        CoffAuxSymbolInfo[] aux = PECOFF.DecodeCoffAuxSymbolsForTest(".bf", 0, 0x65, 1, data);
+        Assert.Single(aux);
+        Assert.Equal("FunctionBegin", aux[0].Kind);
+        Assert.Equal((ushort)12, aux[0].FunctionLineNumber);
+        Assert.Equal(0x0A0B0C0Du, aux[0].PointerToLineNumber);
+        Assert.Equal(0x01020304u, aux[0].PointerToNextFunction);
     }
 
     [Fact]
@@ -103,5 +123,19 @@ public class CoffAuxSymbolTests
         Assert.Equal(0x40u, aux[0].SectionLength);
         Assert.Equal((ushort)2, aux[0].RelocationCount);
         Assert.Equal((ushort)1, aux[0].LineNumberCount);
+    }
+
+    private static void WriteUInt16(byte[] data, int offset, ushort value)
+    {
+        data[offset] = (byte)(value & 0xFF);
+        data[offset + 1] = (byte)((value >> 8) & 0xFF);
+    }
+
+    private static void WriteUInt32(byte[] data, int offset, uint value)
+    {
+        data[offset] = (byte)(value & 0xFF);
+        data[offset + 1] = (byte)((value >> 8) & 0xFF);
+        data[offset + 2] = (byte)((value >> 16) & 0xFF);
+        data[offset + 3] = (byte)((value >> 24) & 0xFF);
     }
 }

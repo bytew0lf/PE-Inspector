@@ -7,12 +7,26 @@ public class CoffSymbolSemanticsTests
     [Theory]
     [InlineData((byte)0x02, "EXTERNAL")]
     [InlineData((byte)0x03, "STATIC")]
+    [InlineData((byte)0x64, "BLOCK")]
+    [InlineData((byte)0x65, "FUNCTION")]
+    [InlineData((byte)0x66, "END_OF_STRUCT")]
     [InlineData((byte)0x67, "FILE")]
     [InlineData((byte)0x69, "WEAK_EXTERNAL")]
+    [InlineData((byte)0xFF, "END_OF_FUNCTION")]
     public void CoffStorageClassName_Maps(byte storageClass, string expected)
     {
         string name = PECOFF.GetCoffStorageClassNameForTest(storageClass);
         Assert.Equal(expected, name);
+    }
+
+    [Theory]
+    [InlineData((byte)0x13)]
+    [InlineData((byte)0x14)]
+    [InlineData((byte)0x15)]
+    public void CoffStorageClassName_Legacy_FunctionClassValues_AreNot_Mapped(byte storageClass)
+    {
+        string name = PECOFF.GetCoffStorageClassNameForTest(storageClass);
+        Assert.Equal("0x" + storageClass.ToString("X2"), name);
     }
 
     [Theory]

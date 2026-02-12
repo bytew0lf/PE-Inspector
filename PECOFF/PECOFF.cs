@@ -4571,6 +4571,7 @@ namespace PECoff
                 }
 
                 CoffAuxSymbolInfo[] auxSymbols = DecodeCoffAuxSymbols(name, type, storageClass, auxCount, auxData);
+                ValidateCoffAuxSymbolConformance(index, name, storageClass, auxCount, auxData, auxSymbols);
 
                 _coffSymbols.Add(new CoffSymbolInfo(
                     index,
@@ -4664,6 +4665,111 @@ namespace PECoff
                         isFunction,
                         offset + entryOffset));
                 }
+            }
+        }
+
+        private void ValidateCoffAuxSymbolConformance(
+            int symbolIndex,
+            string symbolName,
+            byte storageClass,
+            byte auxCount,
+            byte[] auxData,
+            CoffAuxSymbolInfo[] auxSymbols)
+        {
+            if (auxCount == 0)
+            {
+                return;
+            }
+
+            int expectedBytes = auxCount * CoffSymbolSize;
+            int actualBytes = auxData?.Length ?? 0;
+            if (actualBytes < expectedBytes)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "SPEC violation: COFF auxiliary records for symbol #{0} ({1}) are truncated (expected {2} bytes, got {3}).",
+                        symbolIndex,
+                        string.IsNullOrWhiteSpace(symbolName) ? "<unnamed>" : symbolName,
+                        expectedBytes,
+                        actualBytes));
+            }
+
+            bool functionLayoutExpected =
+                storageClass == 0x65 ||
+                string.Equals(symbolName, ".bf", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(symbolName, ".ef", StringComparison.OrdinalIgnoreCase);
+            bool functionLayoutRecognized = false;
+
+            if (auxSymbols == null || auxSymbols.Length == 0)
+            {
+                if (functionLayoutExpected)
+                {
+                    Warn(
+                        ParseIssueCategory.Header,
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "SPEC violation: COFF function auxiliary layout for symbol #{0} ({1}) is malformed.",
+                            symbolIndex,
+                            string.IsNullOrWhiteSpace(symbolName) ? "<unnamed>" : symbolName));
+                }
+                return;
+            }
+
+            for (int i = 0; i < auxSymbols.Length; i++)
+            {
+                CoffAuxSymbolInfo aux = auxSymbols[i];
+                if (aux == null)
+                {
+                    continue;
+                }
+
+                if (string.Equals(aux.Kind, "ClrToken", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (aux.ClrAuxType != CoffAuxSymbolInfo.ClrTokenAuxTypeDefinition)
+                    {
+                        Warn(
+                            ParseIssueCategory.Header,
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "SPEC violation: COFF CLR token aux record for symbol #{0} ({1}) has invalid AuxType 0x{2:X2} (expected 0x{3:X2}).",
+                                symbolIndex,
+                                string.IsNullOrWhiteSpace(symbolName) ? "<unnamed>" : symbolName,
+                                aux.ClrAuxType,
+                                CoffAuxSymbolInfo.ClrTokenAuxTypeDefinition));
+                    }
+
+                    if (!aux.ClrReservedFieldsValid)
+                    {
+                        Warn(
+                            ParseIssueCategory.Header,
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "SPEC violation: COFF CLR token aux record for symbol #{0} ({1}) has non-zero reserved fields.",
+                                symbolIndex,
+                                string.IsNullOrWhiteSpace(symbolName) ? "<unnamed>" : symbolName));
+                    }
+                }
+
+                if (string.Equals(aux.Kind, "FunctionDefinition", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(aux.Kind, "FunctionLineInfo", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(aux.Kind, "FunctionBegin", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(aux.Kind, "FunctionEnd", StringComparison.OrdinalIgnoreCase))
+                {
+                    functionLayoutRecognized = true;
+                }
+            }
+
+            if (functionLayoutExpected && !functionLayoutRecognized)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "SPEC violation: COFF function auxiliary layout for symbol #{0} ({1}) is malformed.",
+                        symbolIndex,
+                        string.IsNullOrWhiteSpace(symbolName) ? "<unnamed>" : symbolName));
             }
         }
 
@@ -4821,14 +4927,15 @@ namespace PECoff
                  string.Equals(name, ".ef", StringComparison.OrdinalIgnoreCase)) &&
                 auxData.Length >= CoffSymbolSize)
             {
-                ushort lineNumber = ReadUInt16(auxData, 0);
-                uint nextFn = ReadUInt32(auxData, 4);
+                ushort lineNumber = ReadUInt16(auxData, 4);
+                uint pointerToLine = ReadUInt32(auxData, 8);
+                uint nextFn = ReadUInt32(auxData, 12);
                 results.Add(new CoffAuxSymbolInfo(
                     string.Equals(name, ".bf", StringComparison.OrdinalIgnoreCase) ? "FunctionBegin" : "FunctionEnd",
                     string.Empty,
                     0,
                     0,
-                    0,
+                    pointerToLine,
                     nextFn,
                     lineNumber,
                     0,
@@ -4850,16 +4957,17 @@ namespace PECoff
                 return results.ToArray();
             }
 
-            if (storageClass == 0x14 && auxData.Length >= CoffSymbolSize) // FUNCTION
+            if (storageClass == 0x65 && auxData.Length >= CoffSymbolSize) // FUNCTION
             {
-                ushort lineNumber = ReadUInt16(auxData, 0);
-                uint nextFn = ReadUInt32(auxData, 4);
+                ushort lineNumber = ReadUInt16(auxData, 4);
+                uint pointerToLine = ReadUInt32(auxData, 8);
+                uint nextFn = ReadUInt32(auxData, 12);
                 results.Add(new CoffAuxSymbolInfo(
                     "FunctionLineInfo",
                     string.Empty,
                     0,
                     0,
-                    0,
+                    pointerToLine,
                     nextFn,
                     lineNumber,
                     0,
@@ -4960,11 +5068,16 @@ namespace PECoff
 
             if (storageClass == 0x6B && auxData.Length >= CoffSymbolSize) // CLR_TOKEN
             {
-                uint token = ReadUInt32(auxData, 0);
+                byte auxType = auxData[0];
+                byte reserved = auxData[1];
+                uint symbolIndex = ReadUInt32(auxData, 2);
+                byte[] reservedTail = new byte[12];
+                Array.Copy(auxData, 6, reservedTail, 0, reservedTail.Length);
+                bool reservedValid = reserved == 0 && reservedTail.All(b => b == 0);
                 results.Add(new CoffAuxSymbolInfo(
                     "ClrToken",
                     string.Empty,
-                    token,
+                    symbolIndex,
                     0,
                     0,
                     0,
@@ -4979,12 +5092,17 @@ namespace PECoff
                     string.Empty,
                     false,
                     true,
-                    string.Empty,
+                    reservedValid ? string.Empty : "Reserved CLR token fields must be zero.",
                     0,
                     0,
                     string.Empty,
                     string.Empty,
-                    BuildHexPreview(auxData, 32)));
+                    BuildHexPreview(auxData, 32),
+                    auxType,
+                    reserved,
+                    symbolIndex,
+                    BuildHexPreview(reservedTail, reservedTail.Length),
+                    reservedValid));
                 return results.ToArray();
             }
 
@@ -5154,7 +5272,12 @@ namespace PECoff
                                 info.WeakCharacteristics,
                                 info.WeakCharacteristicsName,
                                 targetName,
-                                info.RawPreview);
+                                info.RawPreview,
+                                info.ClrAuxType,
+                                info.ClrReservedByte,
+                                info.ClrSymbolTableIndex,
+                                info.ClrReservedBytesPreview,
+                                info.ClrReservedFieldsValid);
                             updated = true;
                         }
                         else
@@ -5184,7 +5307,12 @@ namespace PECoff
                                     info.WeakCharacteristics,
                                     info.WeakCharacteristicsName,
                                     info.WeakDefaultSymbol,
-                                    info.RawPreview);
+                                    info.RawPreview,
+                                    info.ClrAuxType,
+                                    info.ClrReservedByte,
+                                    info.ClrSymbolTableIndex,
+                                    info.ClrReservedBytesPreview,
+                                    info.ClrReservedFieldsValid);
                                 updated = true;
                             }
                             else
@@ -5220,7 +5348,12 @@ namespace PECoff
                                 info.WeakCharacteristics,
                                 info.WeakCharacteristicsName,
                                 info.WeakDefaultSymbol,
-                                info.RawPreview);
+                                info.RawPreview,
+                                info.ClrAuxType,
+                                info.ClrReservedByte,
+                                info.ClrSymbolTableIndex,
+                                info.ClrReservedBytesPreview,
+                                info.ClrReservedFieldsValid);
                             updated = true;
                         }
                         else
@@ -6169,6 +6302,12 @@ namespace PECoff
         private static bool IsPowerOfTwo(uint value)
         {
             return value != 0 && (value & (value - 1)) == 0;
+        }
+
+        private bool IsStrictCertificateUniquenessModeEnabled()
+        {
+            return _options != null &&
+                   (_options.StrictMode || _options.ValidationProfile == ValidationProfile.Strict);
         }
 
         private static CertificateTypeMetadataInfo BuildCertificateTypeMetadata(CertificateTypeKind typeKind, byte[] certData)
@@ -16149,14 +16288,11 @@ namespace PECoff
                         case 0x0007: return "BLX11";
                         case 0x0008: return "SECTION";
                         case 0x0009: return "SECREL";
-                        case 0x000A: return "MOV32";
-                        case 0x000B: return "THUMB_MOV32";
-                        case 0x000C: return "THUMB_BRANCH20";
-                        case 0x000D: return "THUMB_BRANCH24";
-                        case 0x000E: return "THUMB_BLX23";
-                        case 0x0010: return "THUMB_CODE";
-                        case 0x0011: return "THUMB_BRANCH11";
-                        case 0x0012: return "THUMB_BRANCH8";
+                        case 0x000A: return "MOV32A";
+                        case 0x000B: return "MOV32T";
+                        case 0x000C: return "BRANCH20T";
+                        case 0x000D: return "BRANCH24T";
+                        case 0x000E: return "BLX23T";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_ARM64:
@@ -16348,13 +16484,14 @@ namespace PECoff
                 case 0x10: return "MEMBER_OF_ENUM";
                 case 0x11: return "REGISTER_PARAM";
                 case 0x12: return "BIT_FIELD";
-                case 0x13: return "BLOCK";
-                case 0x14: return "FUNCTION";
-                case 0x15: return "END_OF_STRUCT";
+                case 0x64: return "BLOCK";
+                case 0x65: return "FUNCTION";
+                case 0x66: return "END_OF_STRUCT";
                 case 0x67: return "FILE";
                 case 0x68: return "SECTION";
                 case 0x69: return "WEAK_EXTERNAL";
                 case 0x6B: return "CLR_TOKEN";
+                case 0xFF: return "END_OF_FUNCTION";
                 default: return string.Format(CultureInfo.InvariantCulture, "0x{0:X2}", storageClass);
             }
         }
@@ -25474,6 +25611,9 @@ namespace PECoff
                                 int offset = 0;
                                 Dictionary<string, string> authenticodeHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                                 HashSet<uint> seenRevisionTypePairs = new HashSet<uint>();
+                                HashSet<ushort> seenRevisionValues = new HashSet<ushort>();
+                                HashSet<ushort> seenTypeValues = new HashSet<ushort>();
+                                bool strictCertificateUniqueness = IsStrictCertificateUniquenessModeEnabled();
                                 while (offset + headerSize <= buffer.Length)
                                 {
                                     byte[] tmp = new byte[headerSize];
@@ -25524,6 +25664,21 @@ namespace PECoff
                                         Warn(
                                             ParseIssueCategory.Certificates,
                                             $"SPEC violation: Duplicate WIN_CERTIFICATE (wRevision=0x{revisionValue:X4}, wCertificateType=0x{typeValue:X4}) entry detected.");
+                                    }
+
+                                    bool duplicateRevision = !seenRevisionValues.Add(revisionValue);
+                                    bool duplicateType = !seenTypeValues.Add(typeValue);
+                                    if (strictCertificateUniqueness && duplicateRevision)
+                                    {
+                                        Fail(
+                                            ParseIssueCategory.Certificates,
+                                            $"SPEC strict violation: Duplicate WIN_CERTIFICATE wRevision 0x{revisionValue:X4} detected.");
+                                    }
+                                    if (strictCertificateUniqueness && duplicateType)
+                                    {
+                                        Fail(
+                                            ParseIssueCategory.Certificates,
+                                            $"SPEC strict violation: Duplicate WIN_CERTIFICATE wCertificateType 0x{typeValue:X4} detected.");
                                     }
 
                                     int aligned = Align8(entryLength);

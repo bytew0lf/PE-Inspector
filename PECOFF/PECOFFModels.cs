@@ -3447,6 +3447,8 @@ namespace PECoff
 
     public sealed class CoffAuxSymbolInfo
     {
+        public const byte ClrTokenAuxTypeDefinition = 0x01;
+
         public string Kind { get; }
         public string FileName { get; }
         public uint TagIndex { get; }
@@ -3469,6 +3471,11 @@ namespace PECoff
         public uint WeakCharacteristics { get; }
         public string WeakCharacteristicsName { get; }
         public string WeakDefaultSymbol { get; }
+        public byte ClrAuxType { get; }
+        public byte ClrReservedByte { get; }
+        public uint ClrSymbolTableIndex { get; }
+        public string ClrReservedBytesPreview { get; }
+        public bool ClrReservedFieldsValid { get; }
         public string RawPreview { get; }
 
         public CoffAuxSymbolInfo(
@@ -3494,7 +3501,12 @@ namespace PECoff
             uint weakCharacteristics,
             string weakCharacteristicsName,
             string weakDefaultSymbol,
-            string rawPreview)
+            string rawPreview,
+            byte clrAuxType = 0,
+            byte clrReservedByte = 0,
+            uint clrSymbolTableIndex = 0,
+            string clrReservedBytesPreview = "",
+            bool clrReservedFieldsValid = true)
         {
             Kind = kind ?? string.Empty;
             FileName = fileName ?? string.Empty;
@@ -3518,6 +3530,11 @@ namespace PECoff
             WeakCharacteristics = weakCharacteristics;
             WeakCharacteristicsName = weakCharacteristicsName ?? string.Empty;
             WeakDefaultSymbol = weakDefaultSymbol ?? string.Empty;
+            ClrAuxType = clrAuxType;
+            ClrReservedByte = clrReservedByte;
+            ClrSymbolTableIndex = clrSymbolTableIndex;
+            ClrReservedBytesPreview = clrReservedBytesPreview ?? string.Empty;
+            ClrReservedFieldsValid = clrReservedFieldsValid;
             RawPreview = rawPreview ?? string.Empty;
         }
     }
@@ -4863,7 +4880,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 32;
+        public const int CurrentSchemaVersion = 33;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }

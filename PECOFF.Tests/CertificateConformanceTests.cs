@@ -39,6 +39,97 @@ public class CertificateConformanceTests
     }
 
     [Fact]
+    public void CertificateTable_StrictProfile_Rejects_DuplicateRevision_WithDifferentType()
+    {
+        string? fixtures = FindFixturesDirectory();
+        Assert.False(string.IsNullOrWhiteSpace(fixtures));
+        string validPath = Path.Combine(fixtures!, "minimal", "minimal-x86.exe");
+        Assert.True(File.Exists(validPath));
+
+        byte[] source = File.ReadAllBytes(validPath);
+        byte[] mutated = BuildPeWithCertificateTable(
+            source,
+            new CertificateRecord(0x0200, 0x0001, new byte[] { 0x30, 0x82, 0x01, 0x11 }),
+            new CertificateRecord(0x0200, 0x0004, new byte[] { 0x54, 0x53, 0x53, 0x54 }));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF strictProfileParser = new PECOFF(tempFile, new PECOFFOptions { ValidationProfile = ValidationProfile.Strict });
+
+            Assert.Contains(
+                strictProfileParser.ParseResult.Errors,
+                message => message.Contains("SPEC strict violation: Duplicate WIN_CERTIFICATE wRevision", StringComparison.Ordinal));
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { ValidationProfile = ValidationProfile.Strict, StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void CertificateTable_StrictProfile_Rejects_DuplicateType_WithDifferentRevision()
+    {
+        string? fixtures = FindFixturesDirectory();
+        Assert.False(string.IsNullOrWhiteSpace(fixtures));
+        string validPath = Path.Combine(fixtures!, "minimal", "minimal-x86.exe");
+        Assert.True(File.Exists(validPath));
+
+        byte[] source = File.ReadAllBytes(validPath);
+        byte[] mutated = BuildPeWithCertificateTable(
+            source,
+            new CertificateRecord(0x0100, 0x0001, new byte[] { 0x30, 0x82, 0x01, 0x21 }),
+            new CertificateRecord(0x0200, 0x0001, new byte[] { 0x30, 0x82, 0x01, 0x22 }));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF strictProfileParser = new PECOFF(tempFile, new PECOFFOptions { ValidationProfile = ValidationProfile.Strict });
+
+            Assert.Contains(
+                strictProfileParser.ParseResult.Errors,
+                message => message.Contains("SPEC strict violation: Duplicate WIN_CERTIFICATE wCertificateType", StringComparison.Ordinal));
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { ValidationProfile = ValidationProfile.Strict, StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void CertificateTable_DefaultProfile_DoesNotEnforce_PerFieldUniqueness()
+    {
+        string? fixtures = FindFixturesDirectory();
+        Assert.False(string.IsNullOrWhiteSpace(fixtures));
+        string validPath = Path.Combine(fixtures!, "minimal", "minimal-x86.exe");
+        Assert.True(File.Exists(validPath));
+
+        byte[] source = File.ReadAllBytes(validPath);
+        byte[] mutated = BuildPeWithCertificateTable(
+            source,
+            new CertificateRecord(0x0200, 0x0001, new byte[] { 0x30, 0x82, 0x01, 0x31 }),
+            new CertificateRecord(0x0200, 0x0004, new byte[] { 0x54, 0x53, 0x53, 0x54 }));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+            Assert.DoesNotContain(
+                parser.ParseResult.Errors,
+                message => message.Contains("SPEC strict violation: Duplicate WIN_CERTIFICATE", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
     public void CertificateTable_Reports_X509_And_TsStack_Metadata()
     {
         string? fixtures = FindFixturesDirectory();
