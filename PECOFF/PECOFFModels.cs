@@ -3476,6 +3476,9 @@ namespace PECoff
         public uint ClrSymbolTableIndex { get; }
         public string ClrReservedBytesPreview { get; }
         public bool ClrReservedFieldsValid { get; }
+        public bool FunctionAuxReservedFieldsValid { get; }
+        public string FunctionAuxReservedBytesPreview { get; }
+        public bool FunctionAuxPointerToNextFunctionValid { get; }
         public string RawPreview { get; }
 
         public CoffAuxSymbolInfo(
@@ -3506,7 +3509,10 @@ namespace PECoff
             byte clrReservedByte = 0,
             uint clrSymbolTableIndex = 0,
             string clrReservedBytesPreview = "",
-            bool clrReservedFieldsValid = true)
+            bool clrReservedFieldsValid = true,
+            bool functionAuxReservedFieldsValid = true,
+            string functionAuxReservedBytesPreview = "",
+            bool functionAuxPointerToNextFunctionValid = true)
         {
             Kind = kind ?? string.Empty;
             FileName = fileName ?? string.Empty;
@@ -3535,6 +3541,9 @@ namespace PECoff
             ClrSymbolTableIndex = clrSymbolTableIndex;
             ClrReservedBytesPreview = clrReservedBytesPreview ?? string.Empty;
             ClrReservedFieldsValid = clrReservedFieldsValid;
+            FunctionAuxReservedFieldsValid = functionAuxReservedFieldsValid;
+            FunctionAuxReservedBytesPreview = functionAuxReservedBytesPreview ?? string.Empty;
+            FunctionAuxPointerToNextFunctionValid = functionAuxPointerToNextFunctionValid;
             RawPreview = rawPreview ?? string.Empty;
         }
     }
@@ -4880,7 +4889,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 33;
+        public const int CurrentSchemaVersion = 34;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }

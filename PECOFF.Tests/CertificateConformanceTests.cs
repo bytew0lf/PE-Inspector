@@ -101,7 +101,7 @@ public class CertificateConformanceTests
     }
 
     [Fact]
-    public void CertificateTable_DefaultProfile_DoesNotEnforce_PerFieldUniqueness()
+    public void CertificateTable_DefaultProfile_Emits_PerFieldUniqueness_Warnings()
     {
         string? fixtures = FindFixturesDirectory();
         Assert.False(string.IsNullOrWhiteSpace(fixtures));
@@ -122,6 +122,38 @@ public class CertificateConformanceTests
             Assert.DoesNotContain(
                 parser.ParseResult.Errors,
                 message => message.Contains("SPEC strict violation: Duplicate WIN_CERTIFICATE", StringComparison.Ordinal));
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                message => message.Contains("SPEC violation: Duplicate WIN_CERTIFICATE wRevision", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void CertificateTable_DefaultProfile_Emits_DuplicateType_Warning()
+    {
+        string? fixtures = FindFixturesDirectory();
+        Assert.False(string.IsNullOrWhiteSpace(fixtures));
+        string validPath = Path.Combine(fixtures!, "minimal", "minimal-x86.exe");
+        Assert.True(File.Exists(validPath));
+
+        byte[] source = File.ReadAllBytes(validPath);
+        byte[] mutated = BuildPeWithCertificateTable(
+            source,
+            new CertificateRecord(0x0100, 0x0001, new byte[] { 0x30, 0x82, 0x01, 0x41 }),
+            new CertificateRecord(0x0200, 0x0001, new byte[] { 0x30, 0x82, 0x01, 0x42 }));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                message => message.Contains("SPEC violation: Duplicate WIN_CERTIFICATE wCertificateType", StringComparison.Ordinal));
         }
         finally
         {

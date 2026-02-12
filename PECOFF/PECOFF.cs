@@ -4570,7 +4570,7 @@ namespace PECoff
                     }
                 }
 
-                CoffAuxSymbolInfo[] auxSymbols = DecodeCoffAuxSymbols(name, type, storageClass, auxCount, auxData);
+                CoffAuxSymbolInfo[] auxSymbols = DecodeCoffAuxSymbols(name, type, storageClass, auxCount, auxData, sectionNumber, value);
                 ValidateCoffAuxSymbolConformance(index, name, storageClass, auxCount, auxData, auxSymbols);
 
                 _coffSymbols.Add(new CoffSymbolInfo(
@@ -4758,6 +4758,28 @@ namespace PECoff
                     string.Equals(aux.Kind, "FunctionEnd", StringComparison.OrdinalIgnoreCase))
                 {
                     functionLayoutRecognized = true;
+
+                    if (!aux.FunctionAuxReservedFieldsValid)
+                    {
+                        Warn(
+                            ParseIssueCategory.Header,
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "SPEC violation: COFF function auxiliary reserved fields are non-zero for symbol #{0} ({1}).",
+                                symbolIndex,
+                                string.IsNullOrWhiteSpace(symbolName) ? "<unnamed>" : symbolName));
+                    }
+
+                    if (!aux.FunctionAuxPointerToNextFunctionValid)
+                    {
+                        Warn(
+                            ParseIssueCategory.Header,
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "SPEC violation: COFF .ef auxiliary record should not define PointerToNextFunction for symbol #{0} ({1}).",
+                                symbolIndex,
+                                string.IsNullOrWhiteSpace(symbolName) ? "<unnamed>" : symbolName));
+                    }
                 }
             }
 
@@ -4844,7 +4866,14 @@ namespace PECoff
             }
         }
 
-        private static CoffAuxSymbolInfo[] DecodeCoffAuxSymbols(string name, ushort type, byte storageClass, byte auxCount, byte[] auxData)
+        private static CoffAuxSymbolInfo[] DecodeCoffAuxSymbols(
+            string name,
+            ushort type,
+            byte storageClass,
+            byte auxCount,
+            byte[] auxData,
+            short sectionNumber = 0,
+            uint symbolValue = 0)
         {
             if (auxCount == 0 || auxData == null || auxData.Length == 0)
             {
@@ -4928,14 +4957,19 @@ namespace PECoff
                 auxData.Length >= CoffSymbolSize)
             {
                 ushort lineNumber = ReadUInt16(auxData, 4);
-                uint pointerToLine = ReadUInt32(auxData, 8);
+                bool isBegin = string.Equals(name, ".bf", StringComparison.OrdinalIgnoreCase);
                 uint nextFn = ReadUInt32(auxData, 12);
+                byte[] reservedBytes = new byte[12];
+                Array.Copy(auxData, 0, reservedBytes, 0, 6);
+                Array.Copy(auxData, 6, reservedBytes, 6, 6);
+                bool reservedValid = reservedBytes.All(b => b == 0) && auxData[16] == 0 && auxData[17] == 0;
+                bool nextPointerValid = isBegin || nextFn == 0;
                 results.Add(new CoffAuxSymbolInfo(
-                    string.Equals(name, ".bf", StringComparison.OrdinalIgnoreCase) ? "FunctionBegin" : "FunctionEnd",
+                    isBegin ? "FunctionBegin" : "FunctionEnd",
                     string.Empty,
                     0,
                     0,
-                    pointerToLine,
+                    0,
                     nextFn,
                     lineNumber,
                     0,
@@ -4953,21 +4987,27 @@ namespace PECoff
                     0,
                     string.Empty,
                     string.Empty,
-                    BuildHexPreview(auxData, 32)));
+                    BuildHexPreview(auxData, 32),
+                    functionAuxReservedFieldsValid: reservedValid,
+                    functionAuxReservedBytesPreview: BuildHexPreview(reservedBytes, reservedBytes.Length),
+                    functionAuxPointerToNextFunctionValid: nextPointerValid));
                 return results.ToArray();
             }
 
             if (storageClass == 0x65 && auxData.Length >= CoffSymbolSize) // FUNCTION
             {
                 ushort lineNumber = ReadUInt16(auxData, 4);
-                uint pointerToLine = ReadUInt32(auxData, 8);
                 uint nextFn = ReadUInt32(auxData, 12);
+                byte[] reservedBytes = new byte[12];
+                Array.Copy(auxData, 0, reservedBytes, 0, 6);
+                Array.Copy(auxData, 6, reservedBytes, 6, 6);
+                bool reservedValid = reservedBytes.All(b => b == 0) && auxData[16] == 0 && auxData[17] == 0;
                 results.Add(new CoffAuxSymbolInfo(
                     "FunctionLineInfo",
                     string.Empty,
                     0,
                     0,
-                    pointerToLine,
+                    0,
                     nextFn,
                     lineNumber,
                     0,
@@ -4985,7 +5025,10 @@ namespace PECoff
                     0,
                     string.Empty,
                     string.Empty,
-                    BuildHexPreview(auxData, 32)));
+                    BuildHexPreview(auxData, 32),
+                    functionAuxReservedFieldsValid: reservedValid,
+                    functionAuxReservedBytesPreview: BuildHexPreview(reservedBytes, reservedBytes.Length),
+                    functionAuxPointerToNextFunctionValid: true));
                 return results.ToArray();
             }
 
@@ -4995,7 +5038,7 @@ namespace PECoff
                 ushort relocations = ReadUInt16(auxData, 4);
                 ushort lineNumbers = ReadUInt16(auxData, 6);
                 uint checksum = ReadUInt32(auxData, 8);
-                ushort sectionNumber = ReadUInt16(auxData, 12);
+                ushort associatedSectionNumber = ReadUInt16(auxData, 12);
                 byte selection = auxData[14];
                 bool isComdat = selection != 0;
                 bool comdatSelectionValid = selection <= 7;
@@ -5004,7 +5047,7 @@ namespace PECoff
                 {
                     comdatNote = "Invalid COMDAT selection.";
                 }
-                else if (selection == 5 && sectionNumber == 0)
+                else if (selection == 5 && associatedSectionNumber == 0)
                 {
                     comdatNote = "Associative COMDAT missing section index.";
                 }
@@ -5020,7 +5063,7 @@ namespace PECoff
                     relocations,
                     lineNumbers,
                     checksum,
-                    sectionNumber,
+                    associatedSectionNumber,
                     selection,
                     GetComdatSelectionName(selection),
                     string.Empty,
@@ -5035,7 +5078,8 @@ namespace PECoff
                 return results.ToArray();
             }
 
-            if (storageClass == 0x69 && auxData.Length >= CoffSymbolSize) // WEAK_EXTERNAL
+            bool weakExternalSpecForm = storageClass == 0x02 && sectionNumber == 0 && symbolValue == 0;
+            if ((storageClass == 0x69 || weakExternalSpecForm) && auxData.Length >= CoffSymbolSize) // WEAK_EXTERNAL
             {
                 uint tagIndex = ReadUInt32(auxData, 0);
                 uint characteristics = ReadUInt32(auxData, 4);
@@ -5568,7 +5612,7 @@ namespace PECoff
 
                 string storageClassName = GetCoffStorageClassName(storageClass);
                 string scopeName = GetCoffSymbolScopeName(sectionNumber, storageClass);
-                CoffAuxSymbolInfo[] auxSymbols = DecodeCoffAuxSymbols(name, type, storageClass, auxCount, auxData);
+                CoffAuxSymbolInfo[] auxSymbols = DecodeCoffAuxSymbols(name, type, storageClass, auxCount, auxData, sectionNumber, value);
 
                 parsed.Add(new CoffSymbolInfo(
                     index,
@@ -12334,9 +12378,11 @@ namespace PECoff
             ushort type,
             byte storageClass,
             byte auxCount,
-            byte[] auxData)
+            byte[] auxData,
+            short sectionNumber = 0,
+            uint symbolValue = 0)
         {
-            return DecodeCoffAuxSymbols(name ?? string.Empty, type, storageClass, auxCount, auxData);
+            return DecodeCoffAuxSymbols(name ?? string.Empty, type, storageClass, auxCount, auxData, sectionNumber, symbolValue);
         }
 
         internal static string GetCoffStorageClassNameForTest(byte storageClass)
@@ -16283,16 +16329,19 @@ namespace PECoff
                         case 0x0002: return "ADDR32NB";
                         case 0x0003: return "BRANCH24";
                         case 0x0004: return "BRANCH11";
-                        case 0x0005: return "TOKEN";
-                        case 0x0006: return "BLX24";
-                        case 0x0007: return "BLX11";
-                        case 0x0008: return "SECTION";
-                        case 0x0009: return "SECREL";
-                        case 0x000A: return "MOV32A";
-                        case 0x000B: return "MOV32T";
-                        case 0x000C: return "BRANCH20T";
-                        case 0x000D: return "BRANCH24T";
-                        case 0x000E: return "BLX23T";
+                        case 0x000A: return "REL32";
+                        case 0x000B: return "BLX24";
+                        case 0x000C: return "BLX11";
+                        case 0x000D: return "TOKEN";
+                        case 0x000E: return "SECTION";
+                        case 0x000F: return "SECREL";
+                        case 0x0010: return "ARM_MOV32";
+                        case 0x0011: return "THUMB_MOV32";
+                        case 0x0012: return "THUMB_BRANCH20";
+                        case 0x0013: return "UNUSED";
+                        case 0x0014: return "THUMB_BRANCH24";
+                        case 0x0015: return "THUMB_BLX23";
+                        case 0x0016: return "PAIR";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_ARM64:
@@ -25668,6 +25717,18 @@ namespace PECoff
 
                                     bool duplicateRevision = !seenRevisionValues.Add(revisionValue);
                                     bool duplicateType = !seenTypeValues.Add(typeValue);
+                                    if (duplicateRevision)
+                                    {
+                                        Warn(
+                                            ParseIssueCategory.Certificates,
+                                            $"SPEC violation: Duplicate WIN_CERTIFICATE wRevision 0x{revisionValue:X4} detected.");
+                                    }
+                                    if (duplicateType)
+                                    {
+                                        Warn(
+                                            ParseIssueCategory.Certificates,
+                                            $"SPEC violation: Duplicate WIN_CERTIFICATE wCertificateType 0x{typeValue:X4} detected.");
+                                    }
                                     if (strictCertificateUniqueness && duplicateRevision)
                                     {
                                         Fail(

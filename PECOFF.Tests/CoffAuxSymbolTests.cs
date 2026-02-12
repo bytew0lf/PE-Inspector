@@ -47,7 +47,7 @@ public class CoffAuxSymbolTests
             writer.Write(0u); // TagIndex
             writer.Write((ushort)42); // line
             writer.Write((ushort)0); // size/pad
-            writer.Write(0x11111111u); // pointer to line number
+            writer.Write(0x11111111u); // unused/reserved
             writer.Write(0x12345678u); // next function
         }
 
@@ -56,8 +56,9 @@ public class CoffAuxSymbolTests
         Assert.Single(aux);
         Assert.Equal("FunctionLineInfo", aux[0].Kind);
         Assert.Equal((ushort)42, aux[0].FunctionLineNumber);
-        Assert.Equal(0x11111111u, aux[0].PointerToLineNumber);
+        Assert.Equal(0u, aux[0].PointerToLineNumber);
         Assert.Equal(0x12345678u, aux[0].PointerToNextFunction);
+        Assert.False(aux[0].FunctionAuxReservedFieldsValid);
     }
 
     [Fact]
@@ -65,15 +66,29 @@ public class CoffAuxSymbolTests
     {
         byte[] data = new byte[18];
         WriteUInt16(data, 4, 12);
-        WriteUInt32(data, 8, 0x0A0B0C0Du);
+        WriteUInt32(data, 8, 0x0A0B0C0Du); // unused/reserved
         WriteUInt32(data, 12, 0x01020304u);
 
         CoffAuxSymbolInfo[] aux = PECOFF.DecodeCoffAuxSymbolsForTest(".bf", 0, 0x65, 1, data);
         Assert.Single(aux);
         Assert.Equal("FunctionBegin", aux[0].Kind);
         Assert.Equal((ushort)12, aux[0].FunctionLineNumber);
-        Assert.Equal(0x0A0B0C0Du, aux[0].PointerToLineNumber);
+        Assert.Equal(0u, aux[0].PointerToLineNumber);
         Assert.Equal(0x01020304u, aux[0].PointerToNextFunction);
+        Assert.False(aux[0].FunctionAuxReservedFieldsValid);
+    }
+
+    [Fact]
+    public void CoffAuxSymbol_WeakExternal_Decodes_From_ExternalUndefined_Form()
+    {
+        byte[] data = new byte[18];
+        WriteUInt32(data, 0, 3u); // tag index/default symbol index
+        WriteUInt32(data, 4, 2u); // characteristics
+
+        CoffAuxSymbolInfo[] aux = PECOFF.DecodeCoffAuxSymbolsForTest("sym", 0, 0x02, 1, data, sectionNumber: 0, symbolValue: 0);
+        Assert.Single(aux);
+        Assert.Equal("WeakExternal", aux[0].Kind);
+        Assert.Equal(3u, aux[0].WeakTagIndex);
     }
 
     [Fact]
@@ -90,7 +105,7 @@ public class CoffAuxSymbolTests
             writer.Write((ushort)3); // tv index
         }
 
-        CoffAuxSymbolInfo[] aux = PECOFF.DecodeCoffAuxSymbolsForTest("sym", 0, 0x02, 1, data);
+        CoffAuxSymbolInfo[] aux = PECOFF.DecodeCoffAuxSymbolsForTest("sym", 0, 0x02, 1, data, sectionNumber: 1, symbolValue: 0);
 
         Assert.Single(aux);
         Assert.Equal("SymbolDefinition", aux[0].Kind);
