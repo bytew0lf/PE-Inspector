@@ -208,4 +208,31 @@ public class CoffSymbolTests
         Assert.Single(symbols);
         Assert.Equal("Ã(", symbols[0].Name);
     }
+
+    [Fact]
+    public void Coff_Symbols_Parse_InvalidUtf8_StringTableName_UsesLatin1Fallback()
+    {
+        byte[] symbol = new byte[18];
+        BitConverter.GetBytes(0u).CopyTo(symbol, 0);
+        BitConverter.GetBytes(4u).CopyTo(symbol, 4);
+        BitConverter.GetBytes(0u).CopyTo(symbol, 8);
+        BitConverter.GetBytes((short)1).CopyTo(symbol, 12);
+        BitConverter.GetBytes((ushort)0).CopyTo(symbol, 14);
+        symbol[16] = 2;
+        symbol[17] = 0;
+
+        byte[] stringTable = new byte[] { 0xC3, 0x28, 0x00 };
+        bool parsed = PECOFF.TryParseCoffSymbolTableForTest(
+            symbol,
+            stringTable,
+            new[] { ".text" },
+            out CoffSymbolInfo[] symbols,
+            out CoffStringTableEntry[] stringEntries);
+
+        Assert.True(parsed);
+        Assert.Single(symbols);
+        Assert.Equal("Ã(", symbols[0].Name);
+        Assert.Single(stringEntries);
+        Assert.Equal("Ã(", stringEntries[0].Value);
+    }
 }

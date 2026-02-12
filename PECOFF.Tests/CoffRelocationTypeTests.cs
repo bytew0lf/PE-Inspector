@@ -159,6 +159,7 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x0200, (ushort)0x001D)] // IA64 gap
     [InlineData((ushort)0x01F0, (ushort)0x0008)] // PPC
     [InlineData((ushort)0x01F0, (ushort)0x0020)] // PPC
+    [InlineData((ushort)0x01A4, (ushort)0x0019)] // SH3E
     [InlineData((ushort)0x01A6, (ushort)0x0019)] // SH4
     [InlineData((ushort)0x9041, (ushort)0x000F)] // M32R
     public void CoffRelocationTypeName_UsesUnknownFallback_ForUndefinedValues(ushort machine, ushort type)

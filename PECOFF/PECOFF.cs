@@ -4008,6 +4008,20 @@ namespace PECoff
             return "Directory" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        private static string DecodeUtf8WithLatin1Fallback(ReadOnlySpan<byte> bytes, out bool usedFallback)
+        {
+            try
+            {
+                usedFallback = false;
+                return StrictUtf8.GetString(bytes);
+            }
+            catch (DecoderFallbackException)
+            {
+                usedFallback = true;
+                return Encoding.Latin1.GetString(bytes);
+            }
+        }
+
         private static string DecodeCoffShortNameUtf8WithFallback(ReadOnlySpan<byte> bytes, out bool usedFallback)
         {
             int length = bytes.Length;
@@ -4023,16 +4037,7 @@ namespace PECoff
             }
 
             ReadOnlySpan<byte> slice = bytes.Slice(0, length);
-            try
-            {
-                usedFallback = false;
-                return StrictUtf8.GetString(slice);
-            }
-            catch (DecoderFallbackException)
-            {
-                usedFallback = true;
-                return Encoding.Latin1.GetString(slice);
-            }
+            return DecodeUtf8WithLatin1Fallback(slice, out usedFallback);
         }
 
         private static string NormalizeSectionName(IMAGE_SECTION_HEADER section)
@@ -4922,10 +4927,12 @@ namespace PECoff
             }
 
             _coffRelocations.Clear();
+            Dictionary<int, CoffSymbolInfo> symbolsByTableIndex = BuildCoffSymbolsByTableIndex(_coffSymbols);
             long fileLength = PEFileStream.Length;
             for (int i = 0; i < sections.Count; i++)
             {
                 IMAGE_SECTION_HEADER section = sections[i];
+                string sectionName = NormalizeSectionName(section);
                 if (section.NumberOfRelocations == 0)
                 {
                     continue;
@@ -4933,7 +4940,7 @@ namespace PECoff
 
                 if (section.PointerToRelocations == 0)
                 {
-                    Warn(ParseIssueCategory.Header, $"Section {NormalizeSectionName(section)} has relocations but no pointer.");
+                    Warn(ParseIssueCategory.Header, $"Section {sectionName} has relocations but no pointer.");
                     continue;
                 }
 
@@ -4941,7 +4948,7 @@ namespace PECoff
                 long totalSize = (long)section.NumberOfRelocations * CoffRelocationSize;
                 if (offset + totalSize > fileLength)
                 {
-                    Warn(ParseIssueCategory.Header, $"Relocation table for section {NormalizeSectionName(section)} exceeds file size.");
+                    Warn(ParseIssueCategory.Header, $"Relocation table for section {sectionName} exceeds file size.");
                     totalSize = Math.Max(0, fileLength - offset);
                 }
 
@@ -4952,7 +4959,7 @@ namespace PECoff
 
                 if (!TrySetPosition(offset, (int)totalSize))
                 {
-                    Warn(ParseIssueCategory.Header, $"Relocation table for section {NormalizeSectionName(section)} outside file bounds.");
+                    Warn(ParseIssueCategory.Header, $"Relocation table for section {sectionName} outside file bounds.");
                     continue;
                 }
 
@@ -4967,13 +4974,29 @@ namespace PECoff
                     ushort type = ReadUInt16(buffer, entryOffset + 8);
                     string typeName = GetCoffRelocationTypeName(_machineType, type);
                     string symbolName = string.Empty;
-                    if (symbolIndex < _coffSymbols.Count)
+                    bool usesPairDisplacement = IsPairRelocationDisplacementCarrier(_machineType, type);
+                    if (!usesPairDisplacement)
                     {
-                        symbolName = _coffSymbols[(int)symbolIndex].Name;
+                        if (symbolIndex <= int.MaxValue &&
+                            symbolsByTableIndex.TryGetValue((int)symbolIndex, out CoffSymbolInfo symbol))
+                        {
+                            symbolName = symbol?.Name ?? string.Empty;
+                        }
+                        else
+                        {
+                            Warn(
+                                ParseIssueCategory.Relocations,
+                                string.Format(
+                                    CultureInfo.InvariantCulture,
+                                    "SPEC violation: COFF relocation entry #{0} in section {1} references invalid SymbolTableIndex {2}.",
+                                    j,
+                                    string.IsNullOrWhiteSpace(sectionName) ? "<unnamed>" : sectionName,
+                                    symbolIndex));
+                        }
                     }
 
                     _coffRelocations.Add(new CoffRelocationInfo(
-                        NormalizeSectionName(section),
+                        sectionName,
                         i + 1,
                         virtualAddress,
                         symbolIndex,
@@ -5693,8 +5716,18 @@ namespace PECoff
                 int length = index - start;
                 if (length > 0)
                 {
-                    string value = Encoding.UTF8.GetString(data, start, length);
                     uint offset = (uint)(start + 4);
+                    string value = DecodeUtf8WithLatin1Fallback(new ReadOnlySpan<byte>(data, start, length), out bool usedFallback);
+                    if (usedFallback)
+                    {
+                        Warn(
+                            ParseIssueCategory.Header,
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "SPEC violation: COFF string-table entry at offset {0} is not valid UTF-8 and was decoded using Latin-1 fallback.",
+                                offset));
+                    }
+
                     if (!table.ContainsKey(offset))
                     {
                         table[offset] = value;
@@ -5737,7 +5770,7 @@ namespace PECoff
                     int length = index - start;
                     if (length > 0)
                     {
-                        string value = Encoding.UTF8.GetString(stringTableData, start, length);
+                        string value = DecodeUtf8WithLatin1Fallback(new ReadOnlySpan<byte>(stringTableData, start, length), out bool _);
                         uint offset = (uint)(start + 4);
                         if (!stringTable.ContainsKey(offset))
                         {
@@ -15005,6 +15038,107 @@ namespace PECoff
             return ResolveSectionName(section, BuildCoffStringTableMap());
         }
 
+        private void ResolveCoffObjectSectionLongNames(List<IMAGE_SECTION_HEADER> sections)
+        {
+            if (sections == null || sections.Count == 0)
+            {
+                return;
+            }
+
+            Dictionary<uint, string> coffStringTable = BuildCoffStringTableMap();
+            for (int i = 0; i < sections.Count; i++)
+            {
+                IMAGE_SECTION_HEADER section = sections[i];
+                string currentName = NormalizeSectionName(section);
+                if (string.IsNullOrEmpty(currentName) || currentName[0] != '/')
+                {
+                    continue;
+                }
+
+                if (currentName.Length == 1 ||
+                    !uint.TryParse(currentName.Substring(1), NumberStyles.None, CultureInfo.InvariantCulture, out uint offset))
+                {
+                    Warn(
+                        ParseIssueCategory.Header,
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "SPEC violation: COFF section header name for section #{0} uses non-numeric long-name offset ({1}).",
+                            i + 1,
+                            currentName));
+                    continue;
+                }
+
+                if (offset == 0 || !coffStringTable.TryGetValue(offset, out string resolvedName) || string.IsNullOrWhiteSpace(resolvedName))
+                {
+                    Warn(
+                        ParseIssueCategory.Header,
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "SPEC violation: COFF section header long-name offset /{0} for section #{1} is not present in the COFF string table.",
+                            offset,
+                            i + 1));
+                    continue;
+                }
+
+                section.Name = Encoding.UTF8.GetBytes(resolvedName);
+                sections[i] = section;
+            }
+
+            RefreshCoffSymbolSectionNames(sections);
+        }
+
+        private void RefreshCoffSymbolSectionNames(IReadOnlyList<IMAGE_SECTION_HEADER> sections)
+        {
+            if (sections == null || sections.Count == 0 || _coffSymbols.Count == 0)
+            {
+                return;
+            }
+
+            string[] sectionNames = sections.Select(section => NormalizeSectionName(section)).ToArray();
+            CoffSymbolInfo[] updated = new CoffSymbolInfo[_coffSymbols.Count];
+            bool anyUpdated = false;
+            for (int i = 0; i < _coffSymbols.Count; i++)
+            {
+                CoffSymbolInfo symbol = _coffSymbols[i];
+                string sectionName = symbol.SectionName;
+                if (symbol.SectionNumber > 0 && symbol.SectionNumber <= sectionNames.Length)
+                {
+                    sectionName = sectionNames[symbol.SectionNumber - 1] ?? string.Empty;
+                }
+
+                if (!string.Equals(symbol.SectionName, sectionName, StringComparison.Ordinal))
+                {
+                    updated[i] = new CoffSymbolInfo(
+                        symbol.Index,
+                        symbol.Name,
+                        symbol.Value,
+                        symbol.SectionNumber,
+                        sectionName,
+                        symbol.Type,
+                        symbol.TypeName,
+                        symbol.StorageClass,
+                        symbol.StorageClassName,
+                        symbol.ScopeName,
+                        symbol.AuxSymbolCount,
+                        symbol.AuxData,
+                        symbol.AuxSymbols?.ToArray() ?? Array.Empty<CoffAuxSymbolInfo>());
+                    anyUpdated = true;
+                }
+                else
+                {
+                    updated[i] = symbol;
+                }
+            }
+
+            if (!anyUpdated)
+            {
+                return;
+            }
+
+            _coffSymbols.Clear();
+            _coffSymbols.AddRange(updated);
+        }
+
         private string ResolveSectionName(IMAGE_SECTION_HEADER section, Dictionary<uint, string> coffStringTable)
         {
             string name = NormalizeSectionName(section);
@@ -15013,9 +15147,11 @@ namespace PECoff
                 return string.Empty;
             }
 
-            if (name.Length > 1 && name[0] == '/' && int.TryParse(name.Substring(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out int offset))
+            if (name.Length > 1 &&
+                name[0] == '/' &&
+                uint.TryParse(name.Substring(1), NumberStyles.None, CultureInfo.InvariantCulture, out uint offset))
             {
-                if (offset > 0 && coffStringTable != null && coffStringTable.TryGetValue((uint)offset, out string resolved))
+                if (offset > 0 && coffStringTable != null && coffStringTable.TryGetValue(offset, out string resolved))
                 {
                     return resolved;
                 }
@@ -16417,6 +16553,30 @@ namespace PECoff
             }
         }
 
+        private static bool IsPairRelocationDisplacementCarrier(MachineTypes machine, ushort type)
+        {
+            if (IsMipsMachine(machine))
+            {
+                return type == 0x0025; // IMAGE_REL_MIPS_PAIR
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_M32R)
+            {
+                return type == 0x000B; // IMAGE_REL_M32R_PAIR
+            }
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_SH3 ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH3DSP ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH3E ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH4 ||
+                machine == MachineTypes.IMAGE_FILE_MACHINE_SH5)
+            {
+                return type == 0x0018; // IMAGE_REL_SHM_PAIR
+            }
+
+            return false;
+        }
+
         private static string GetMachineName(ushort machine)
         {
             MachineTypes type = (MachineTypes)machine;
@@ -16666,6 +16826,7 @@ namespace PECoff
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_SH3:
                 case MachineTypes.IMAGE_FILE_MACHINE_SH3DSP:
+                case MachineTypes.IMAGE_FILE_MACHINE_SH3E:
                 case MachineTypes.IMAGE_FILE_MACHINE_SH4:
                 case MachineTypes.IMAGE_FILE_MACHINE_SH5:
                     switch (type)
@@ -25260,6 +25421,7 @@ namespace PECoff
             _sections = sections;
             ValidateSectionNameEncoding(sections);
             ParseCoffSymbolTable(pointerToSymbolTable, numberOfSymbols, sections);
+            ResolveCoffObjectSectionLongNames(sections);
             BuildSectionPermissionInfos(sections);
             ParseCoffLineNumbers(sections);
             ParseCoffRelocations(sections);
