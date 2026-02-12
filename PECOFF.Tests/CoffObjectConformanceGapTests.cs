@@ -242,6 +242,108 @@ public class CoffObjectConformanceGapTests
     }
 
     [Fact]
+    public void CoffRelocation_Ia64Addend_CompatibilityProfile_Allows_Ltoff64Predecessor()
+    {
+        const uint addendPayload = 0x11223344u;
+        byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
+        byte[] data = BuildCoffObject(
+            machine: 0x0200,
+            sectionName: CreateSectionName(".text"),
+            relocations: new[]
+            {
+                (0x20u, 0u, (ushort)0x000F), // non-documented predecessor, prose compatibility
+                (0x24u, addendPayload, (ushort)0x001F)
+            },
+            symbols: new[] { symbol },
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF compatibility = new PECOFF(path, new PECOFFOptions { ValidationProfile = ValidationProfile.Compatibility });
+            Assert.Equal(2, compatibility.CoffRelocations.Length);
+            Assert.Equal("TYPE_0x000F", compatibility.CoffRelocations[0].TypeName);
+            Assert.DoesNotContain(
+                compatibility.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: COFF IA64 ADDEND relocation entry", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffRelocation_Ia64Addend_ExplicitTablePolicy_OverridesCompatibilityProfile()
+    {
+        const uint addendPayload = 0x55667788u;
+        byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
+        byte[] data = BuildCoffObject(
+            machine: 0x0200,
+            sectionName: CreateSectionName(".text"),
+            relocations: new[]
+            {
+                (0x20u, 0u, (ushort)0x000F), // non-documented predecessor
+                (0x24u, addendPayload, (ushort)0x001F)
+            },
+            symbols: new[] { symbol },
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF tableOnly = new PECOFF(path, new PECOFFOptions
+            {
+                ValidationProfile = ValidationProfile.Compatibility,
+                Ia64AddendOrderingPolicy = Ia64AddendOrderingPolicy.TableOnly
+            });
+
+            Assert.Contains(
+                tableOnly.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: COFF IA64 ADDEND relocation entry", StringComparison.Ordinal) &&
+                           warning.Contains("table-based IA64 predecessor set", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffRelocation_Ia64Addend_ExplicitCompatibilityPolicy_Allows_Ltoff64Predecessor_InDefaultProfile()
+    {
+        const uint addendPayload = 0xAABBCCDDu;
+        byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
+        byte[] data = BuildCoffObject(
+            machine: 0x0200,
+            sectionName: CreateSectionName(".text"),
+            relocations: new[]
+            {
+                (0x20u, 0u, (ushort)0x000F),
+                (0x24u, addendPayload, (ushort)0x001F)
+            },
+            symbols: new[] { symbol },
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF compatibility = new PECOFF(path, new PECOFFOptions
+            {
+                Ia64AddendOrderingPolicy = Ia64AddendOrderingPolicy.CompatibilityProse
+            });
+
+            Assert.DoesNotContain(
+                compatibility.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: COFF IA64 ADDEND relocation entry", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void CoffRelocation_InvalidSymbolTableIndex_EmitsSpecWarning_AndStrictModeFails()
     {
         byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);

@@ -44,6 +44,13 @@ namespace PECoff
         Forensic = 3
     }
 
+    public enum Ia64AddendOrderingPolicy
+    {
+        ProfileDefault = 0,
+        TableOnly = 1,
+        CompatibilityProse = 2
+    }
+
     public sealed class ParseIssue
     {
         public ParseIssueCategory Category { get; }
@@ -73,6 +80,7 @@ namespace PECoff
         public bool EnableDeepResourceTreeParsing { get; init; }
         public bool UseMemoryMappedFile { get; init; }
         public bool LazyParseDataDirectories { get; init; }
+        public Ia64AddendOrderingPolicy Ia64AddendOrderingPolicy { get; init; } = Ia64AddendOrderingPolicy.ProfileDefault;
         public string ApiSetSchemaPath { get; init; } = string.Empty;
         public AuthenticodePolicy AuthenticodePolicy { get; init; } = new AuthenticodePolicy();
         public Dictionary<ParseIssueCategory, ParseIssueSeverity> IssuePolicy { get; init; } = new Dictionary<ParseIssueCategory, ParseIssueSeverity>();
@@ -186,9 +194,12 @@ namespace PECoff
         ILTCG = 14,
         MPX = 15,
         Repro = 16,
-        EmbeddedPortablePdb = 17,
-        Spgo = 18,
-        PdbHash = 19,
+        Undefined17 = 17,
+        Unknown18 = 18,
+        Undefined19 = 19,
+        EmbeddedPortablePdb = Undefined17,
+        Spgo = Unknown18,
+        PdbHash = Undefined19,
         ExDllCharacteristics = 20
     }
 
@@ -902,9 +913,9 @@ namespace PECoff
         {
             return typeValue switch
             {
-                17 => "UNDEFINED_17",
-                18 => "UNKNOWN_18",
-                19 => "UNDEFINED_19",
+                17 => "Undefined17",
+                18 => "Unknown18",
+                19 => "Undefined19",
                 _ => Enum.IsDefined(typeof(DebugDirectoryType), (DebugDirectoryType)typeValue)
                     ? ((DebugDirectoryType)typeValue).ToString()
                     : "UNKNOWN_0x" + typeValue.ToString("X8", System.Globalization.CultureInfo.InvariantCulture)

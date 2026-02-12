@@ -5042,6 +5042,7 @@ namespace PECoff
                     continue;
                 }
 
+                Ia64AddendOrderingPolicy ia64AddendPolicy = ResolveIa64AddendOrderingPolicy();
                 ushort? previousRelocationType = null;
                 for (int j = startEntry; j < entries; j++)
                 {
@@ -5071,7 +5072,7 @@ namespace PECoff
                                 previousTypeName));
                     }
 
-                    if (usesIa64AddendPayload && !IsIa64AddendOrderingValid(_machineType, previousRelocationType))
+                    if (usesIa64AddendPayload && !IsIa64AddendOrderingValid(_machineType, previousRelocationType, ia64AddendPolicy))
                     {
                         string sectionLabel = string.IsNullOrWhiteSpace(sectionName) ? "<unnamed>" : sectionName;
                         string previousTypeName = previousRelocationType.HasValue
@@ -5084,7 +5085,7 @@ namespace PECoff
                                 "SPEC violation: COFF IA64 ADDEND relocation entry #{0} in section {1} must immediately follow {2}; previous relocation was {3}.",
                                 j,
                                 sectionLabel,
-                                GetIa64AddendOrderingDescription(),
+                                GetIa64AddendOrderingDescription(ia64AddendPolicy),
                                 previousTypeName));
                     }
 
@@ -16733,7 +16734,7 @@ namespace PECoff
             return machine == MachineTypes.IMAGE_FILE_MACHINE_IA64 && type == 0x001F; // IMAGE_REL_IA64_ADDEND
         }
 
-        private static bool IsIa64AddendOrderingValid(MachineTypes machine, ushort? previousType)
+        private static bool IsIa64AddendOrderingValid(MachineTypes machine, ushort? previousType, Ia64AddendOrderingPolicy policy)
         {
             if (machine != MachineTypes.IMAGE_FILE_MACHINE_IA64 || !previousType.HasValue)
             {
@@ -16751,14 +16752,38 @@ namespace PECoff
                 case 0x000D: // IMAGE_REL_IA64_SECREL64I
                 case 0x000E: // IMAGE_REL_IA64_SECREL32
                     return true;
+                case 0x000F: // IMAGE_REL_IA64_LTOFF64 (prose compatibility path)
+                    return policy == Ia64AddendOrderingPolicy.CompatibilityProse;
                 default:
                     return false;
             }
         }
 
-        private static string GetIa64AddendOrderingDescription()
+        private static string GetIa64AddendOrderingDescription(Ia64AddendOrderingPolicy policy)
         {
+            if (policy == Ia64AddendOrderingPolicy.CompatibilityProse)
+            {
+                return "compatibility/prose IA64 predecessor set: IMM14, IMM22, IMM64, GPREL22, LTOFF22, LTOFF64, SECREL22, SECREL64I, or SECREL32";
+            }
+
             return "table-based IA64 predecessor set: IMM14, IMM22, IMM64, GPREL22, LTOFF22, SECREL22, SECREL64I, or SECREL32";
+        }
+
+        private Ia64AddendOrderingPolicy ResolveIa64AddendOrderingPolicy()
+        {
+            Ia64AddendOrderingPolicy configured = _options?.Ia64AddendOrderingPolicy ?? Ia64AddendOrderingPolicy.ProfileDefault;
+            if (configured == Ia64AddendOrderingPolicy.TableOnly || configured == Ia64AddendOrderingPolicy.CompatibilityProse)
+            {
+                return configured;
+            }
+
+            ValidationProfile profile = _options?.ValidationProfile ?? ValidationProfile.Default;
+            if (profile == ValidationProfile.Compatibility || profile == ValidationProfile.Forensic)
+            {
+                return Ia64AddendOrderingPolicy.CompatibilityProse;
+            }
+
+            return Ia64AddendOrderingPolicy.TableOnly;
         }
 
         private static bool IsPairRelocationOrderingValid(MachineTypes machine, ushort? previousType)
@@ -18876,6 +18901,7 @@ namespace PECoff
                 byte[] buffer = new byte[entrySize];
                 ReadExactly(PEFileStream, buffer, 0, buffer.Length);
                 IMAGE_DEBUG_DIRECTORY entry = ByteArrayToStructure<IMAGE_DEBUG_DIRECTORY>(buffer);
+                DebugDirectoryType debugType = (DebugDirectoryType)entry.Type;
 
                 DebugCodeViewInfo codeView = null;
                 PdbInfo pdbInfo = null;
@@ -18900,7 +18926,20 @@ namespace PECoff
                 DebugClsidInfo clsid = null;
                 DebugRawInfo other = null;
                 string note = string.Empty;
-                if ((DebugDirectoryType)entry.Type == DebugDirectoryType.CodeView && entry.SizeOfData > 0)
+                if (entry.Characteristics != 0)
+                {
+                    Warn(
+                        ParseIssueCategory.Debug,
+                        $"SPEC violation: IMAGE_DEBUG_DIRECTORY.Characteristics is reserved and must be 0 (found 0x{entry.Characteristics:X8}).");
+                }
+
+                if (debugType == DebugDirectoryType.Reserved10)
+                {
+                    Warn(ParseIssueCategory.Debug, "SPEC violation: IMAGE_DEBUG_TYPE_RESERVED10 is reserved and should not be used.");
+                    note = AppendNote(note, "Non-standard: reserved debug type 10 parsed for compatibility.");
+                }
+
+                if (debugType == DebugDirectoryType.CodeView && entry.SizeOfData > 0)
                 {
                     long dataOffset = entry.PointerToRawData;
                     if (dataOffset == 0 && entry.AddressOfRawData != 0)
@@ -18952,7 +18991,7 @@ namespace PECoff
                         }
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Coff)
+                else if (debugType == DebugDirectoryType.Coff)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseDebugCoffData(data, out DebugCoffInfo parsed))
@@ -18964,7 +19003,7 @@ namespace PECoff
                         note = "COFF debug info (likely /Z7).";
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Pogo && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.Pogo && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParsePogoData(data, out DebugPogoInfo parsed))
@@ -18972,7 +19011,7 @@ namespace PECoff
                         pogo = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.VCFeature && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.VCFeature && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseVcFeatureData(data, out DebugVcFeatureInfo parsed))
@@ -18980,7 +19019,7 @@ namespace PECoff
                         vcFeature = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.ExDllCharacteristics && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.ExDllCharacteristics && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseExDllCharacteristicsData(data, out DebugExDllCharacteristicsInfo parsed))
@@ -18995,7 +19034,7 @@ namespace PECoff
                         }
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Fpo && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.Fpo && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseFpoData(data, out DebugFpoInfo parsed))
@@ -19003,7 +19042,7 @@ namespace PECoff
                         fpo = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Borland && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.Borland && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseDebugBorlandData(data, out DebugBorlandInfo parsed))
@@ -19011,7 +19050,7 @@ namespace PECoff
                         borland = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Reserved10 && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.Reserved10 && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseDebugReservedData(data, out DebugReservedInfo parsed))
@@ -19019,14 +19058,14 @@ namespace PECoff
                         reserved = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Fixup && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.Fixup && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data))
                     {
                         fixup = BuildDebugRawInfo(data);
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Exception && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.Exception && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseDebugExceptionData(data, out DebugExceptionInfo parsed))
@@ -19034,7 +19073,7 @@ namespace PECoff
                         exceptionInfo = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Misc && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.Misc && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseDebugMiscData(data, out DebugMiscInfo parsed))
@@ -19042,7 +19081,7 @@ namespace PECoff
                         misc = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.OmapToSrc && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.OmapToSrc && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseOmapData(data, out DebugOmapInfo parsed))
@@ -19050,7 +19089,7 @@ namespace PECoff
                         omapToSource = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.OmapFromSrc && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.OmapFromSrc && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseOmapData(data, out DebugOmapInfo parsed))
@@ -19058,7 +19097,7 @@ namespace PECoff
                         omapFromSource = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Repro && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.Repro && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseReproData(data, out DebugReproInfo parsed))
@@ -19066,7 +19105,7 @@ namespace PECoff
                         repro = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.EmbeddedPortablePdb && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.EmbeddedPortablePdb && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseDebugEmbeddedPortablePdbData(data, out DebugEmbeddedPortablePdbInfo parsed))
@@ -19074,7 +19113,7 @@ namespace PECoff
                         embeddedPortablePdb = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Spgo && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.Spgo && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseDebugSpgoData(data, out DebugSpgoInfo parsed))
@@ -19082,7 +19121,7 @@ namespace PECoff
                         spgo = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.PdbHash && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.PdbHash && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseDebugPdbHashData(data, out DebugPdbHashInfo parsed))
@@ -19090,21 +19129,21 @@ namespace PECoff
                         pdbHash = parsed;
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.ILTCG && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.ILTCG && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data))
                     {
                         iltcg = BuildDebugRawInfo(data);
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.MPX && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.MPX && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data))
                     {
                         mpx = BuildDebugRawInfo(data);
                     }
                 }
-                else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Clsid && entry.SizeOfData > 0)
+                else if (debugType == DebugDirectoryType.Clsid && entry.SizeOfData > 0)
                 {
                     if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
                         TryParseDebugClsidData(data, out DebugClsidInfo parsed))
@@ -19152,7 +19191,7 @@ namespace PECoff
                     entry.TimeDateStamp,
                     entry.MajorVersion,
                     entry.MinorVersion,
-                    (DebugDirectoryType)entry.Type,
+                    debugType,
                     entry.SizeOfData,
                     entry.AddressOfRawData,
                     entry.PointerToRawData,

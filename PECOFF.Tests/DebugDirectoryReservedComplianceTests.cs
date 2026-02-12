@@ -3,13 +3,120 @@ using System.IO;
 using PECoff;
 using Xunit;
 
-public class DebugDirectoryCanonicalTypeTests
+public class DebugDirectoryReservedComplianceTests
 {
-    [Theory]
-    [InlineData(17u, "Undefined17", "EmbeddedPortablePdb")]
-    [InlineData(18u, "Unknown18", "Spgo")]
-    [InlineData(19u, "Undefined19", "PdbHash")]
-    public void DebugDirectoryType_ExposesCanonicalAndAliasMetadata_InModelAndJson(uint debugType, string expectedCanonical, string expectedAlias)
+    [Fact]
+    public void DebugDirectory_ZeroCharacteristics_DoesNotEmitReservedFieldViolation()
+    {
+        byte[] mutated = BuildDebugFixture(
+            debugType: (uint)DebugDirectoryType.ExDllCharacteristics,
+            characteristics: 0u,
+            payload: BitConverter.GetBytes(0x00000001u));
+
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, mutated);
+            PECOFF parser = new PECOFF(path);
+
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: IMAGE_DEBUG_DIRECTORY.Characteristics", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DebugDirectory_NonZeroCharacteristics_EmitSpecViolation_AndStrictModeFails()
+    {
+        byte[] mutated = BuildDebugFixture(
+            debugType: (uint)DebugDirectoryType.ExDllCharacteristics,
+            characteristics: 0x11223344u,
+            payload: BitConverter.GetBytes(0x00000001u));
+
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, mutated);
+            PECOFF parser = new PECOFF(path);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: IMAGE_DEBUG_DIRECTORY.Characteristics is reserved and must be 0", StringComparison.Ordinal));
+
+            string json = parser.Result.ToJsonReport(includeBinary: false, indented: false);
+            Assert.Contains("SPEC violation: IMAGE_DEBUG_DIRECTORY.Characteristics is reserved and must be 0", json, StringComparison.Ordinal);
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DebugDirectory_ReservedType10_WithPayload_EmitSpecViolation_AndKeepCompatibilityDecode()
+    {
+        byte[] payload = new byte[8];
+        WriteUInt32(payload, 0, 1u);
+        WriteUInt32(payload, 4, 2u);
+        byte[] mutated = BuildDebugFixture(
+            debugType: (uint)DebugDirectoryType.Reserved10,
+            characteristics: 0u,
+            payload: payload);
+
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, mutated);
+            PECOFF parser = new PECOFF(path);
+
+            DebugDirectoryEntry entry = Assert.Single(parser.DebugDirectories);
+            Assert.Equal(DebugDirectoryType.Reserved10, entry.Type);
+            Assert.NotNull(entry.Reserved);
+            Assert.Contains("Non-standard", entry.Note, StringComparison.Ordinal);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: IMAGE_DEBUG_TYPE_RESERVED10 is reserved and should not be used", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void DebugDirectory_ReservedType10_ZeroSize_StillEmitsSpecViolation()
+    {
+        byte[] mutated = BuildDebugFixture(
+            debugType: (uint)DebugDirectoryType.Reserved10,
+            characteristics: 0u,
+            payload: Array.Empty<byte>());
+
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, mutated);
+            PECOFF parser = new PECOFF(path);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: IMAGE_DEBUG_TYPE_RESERVED10 is reserved and should not be used", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static byte[] BuildDebugFixture(uint debugType, uint characteristics, byte[] payload)
     {
         string? fixtures = FindFixturesDirectory();
         Assert.False(string.IsNullOrWhiteSpace(fixtures));
@@ -18,97 +125,11 @@ public class DebugDirectoryCanonicalTypeTests
         Assert.True(File.Exists(validPath));
 
         byte[] source = File.ReadAllBytes(validPath);
-        byte[] payload = BuildPayloadForType(debugType);
-        byte[] mutated = BuildPeWithDebugDirectoryEntry(source, debugType, payload);
-
-        string tempFile = Path.GetTempFileName();
-        try
-        {
-            File.WriteAllBytes(tempFile, mutated);
-            PECOFF parser = new PECOFF(tempFile);
-
-            DebugDirectoryEntry entry = Assert.Single(parser.DebugDirectories);
-            Assert.Equal(debugType, entry.TypeValue);
-            Assert.Equal(expectedCanonical, entry.Type.ToString());
-            Assert.Equal(expectedCanonical, entry.CanonicalTypeName);
-            Assert.Equal(expectedAlias, entry.CompatibilityTypeAlias);
-
-            string json = parser.Result.ToJsonReport(includeBinary: false, indented: false);
-            Assert.Contains($"\"CanonicalTypeName\":\"{expectedCanonical}\"", json, StringComparison.Ordinal);
-            Assert.Contains($"\"CompatibilityTypeAlias\":\"{expectedAlias}\"", json, StringComparison.Ordinal);
-        }
-        finally
-        {
-            File.Delete(tempFile);
-        }
-    }
-
-    [Fact]
-    public void DebugDirectoryType_StandardType_HasNoCompatibilityAlias()
-    {
-        DebugDirectoryEntry entry = new DebugDirectoryEntry(
-            characteristics: 0,
-            timeDateStamp: 0,
-            majorVersion: 0,
-            minorVersion: 0,
-            type: DebugDirectoryType.CodeView,
-            sizeOfData: 0,
-            addressOfRawData: 0,
-            pointerToRawData: 0,
-            codeView: null,
-            pdb: null,
-            coff: null,
-            pogo: null,
-            vcFeature: null,
-            exDllCharacteristics: null,
-            fpo: null,
-            borland: null,
-            reserved: null,
-            fixup: null,
-            exception: null,
-            misc: null,
-            omapToSource: null,
-            omapFromSource: null,
-            repro: null,
-            embeddedPortablePdb: null,
-            spgo: null,
-            pdbHash: null,
-            iltcg: null,
-            mpx: null,
-            clsid: null,
-            other: null,
-            note: string.Empty);
-
-        Assert.Equal("CodeView", entry.CanonicalTypeName);
-        Assert.Equal(string.Empty, entry.CompatibilityTypeAlias);
-    }
-
-    private static byte[] BuildPayloadForType(uint debugType)
-    {
-        return debugType switch
-        {
-            17u => new byte[] { (byte)'M', (byte)'P', (byte)'D', (byte)'B', 0x10, 0x00, 0x00, 0x00 },
-            18u => new byte[] { 0x01, 0x02, 0x03, 0x04 },
-            19u => new byte[] { 0x02, 0x00, 0x00, 0x00, 0xAA, 0xBB },
-            _ => new byte[] { 0x00 }
-        };
-    }
-
-    private static byte[] BuildPeWithDebugDirectoryEntry(byte[] source, uint debugType, byte[] payload)
-    {
-        Assert.NotNull(source);
-        Assert.NotNull(payload);
-        Assert.True(TryGetPeLayout(
-            source,
-            out _,
-            out int numberOfSections,
-            out int dataDirectoryStart,
-            out int sectionTableStart));
+        Assert.True(TryGetPeLayout(source, out _, out int numberOfSections, out int dataDirectoryStart, out int sectionTableStart));
         Assert.True(numberOfSections > 0);
 
         byte[] mutated = (byte[])source.Clone();
         int firstSectionOffset = sectionTableStart;
-        Assert.True(firstSectionOffset + 40 <= mutated.Length);
 
         uint firstSectionRva = ReadUInt32(mutated, firstSectionOffset + 12);
         uint firstSectionRawSize = ReadUInt32(mutated, firstSectionOffset + 16);
@@ -116,8 +137,8 @@ public class DebugDirectoryCanonicalTypeTests
 
         int debugEntryRaw = checked((int)firstSectionRawPointer + 0x40);
         int debugDataRaw = debugEntryRaw + 0x20;
-        Assert.True(debugDataRaw + payload.Length <= mutated.Length);
         Assert.True(firstSectionRawSize >= (uint)(0x40 + 0x20 + payload.Length));
+        Assert.True(debugDataRaw + payload.Length <= mutated.Length);
 
         uint debugEntryRva = firstSectionRva + 0x40u;
         uint debugDataRva = debugEntryRva + 0x20u;
@@ -126,7 +147,7 @@ public class DebugDirectoryCanonicalTypeTests
         WriteUInt32(mutated, debugDirectoryOffset, debugEntryRva);
         WriteUInt32(mutated, debugDirectoryOffset + 4, 28u);
 
-        WriteUInt32(mutated, debugEntryRaw + 0, 0u);
+        WriteUInt32(mutated, debugEntryRaw + 0, characteristics);
         WriteUInt32(mutated, debugEntryRaw + 4, 0u);
         WriteUInt16(mutated, debugEntryRaw + 8, 0);
         WriteUInt16(mutated, debugEntryRaw + 10, 0);
