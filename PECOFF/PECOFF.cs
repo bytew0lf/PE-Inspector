@@ -17012,6 +17012,7 @@ namespace PECoff
                         case 0x000C: return "SECREL22";
                         case 0x000D: return "SECREL64I";
                         case 0x000E: return "SECREL32";
+                        case 0x000F: return "LTOFF64";
                         case 0x0010: return "DIR32NB";
                         case 0x0011: return "SREL14";
                         case 0x0012: return "SREL22";
@@ -17048,6 +17049,7 @@ namespace PECoff
                         case 0x0011: return "REFLO";
                         case 0x0012: return "PAIR";
                         case 0x0013: return "SECRELLO";
+                        case 0x0014: return "SECRELHI";
                         case 0x0015: return "GPREL";
                         case 0x0016: return "TOKEN";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);

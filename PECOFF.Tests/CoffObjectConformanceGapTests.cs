@@ -160,16 +160,16 @@ public class CoffObjectConformanceGapTests
     }
 
     [Theory]
-    [InlineData((ushort)0x0001)] // IMM14
-    [InlineData((ushort)0x0002)] // IMM22
-    [InlineData((ushort)0x0003)] // IMM64
-    [InlineData((ushort)0x0009)] // GPREL22
-    [InlineData((ushort)0x000A)] // LTOFF22
-    [InlineData((ushort)0x000C)] // SECREL22
-    [InlineData((ushort)0x000D)] // SECREL64I
-    [InlineData((ushort)0x000E)] // SECREL32
-    [InlineData((ushort)0x000F)] // LTOFF64 (referenced by ADDEND semantics)
-    public void CoffRelocation_Ia64Addend_ValidOrdering_UsesPayloadSemantics(ushort leadingType)
+    [InlineData((ushort)0x0001, "IMM14")]
+    [InlineData((ushort)0x0002, "IMM22")]
+    [InlineData((ushort)0x0003, "IMM64")]
+    [InlineData((ushort)0x0009, "GPREL22")]
+    [InlineData((ushort)0x000A, "LTOFF22")]
+    [InlineData((ushort)0x000C, "SECREL22")]
+    [InlineData((ushort)0x000D, "SECREL64I")]
+    [InlineData((ushort)0x000E, "SECREL32")]
+    [InlineData((ushort)0x000F, "LTOFF64")]
+    public void CoffRelocation_Ia64Addend_ValidOrdering_UsesPayloadSemantics(ushort leadingType, string leadingTypeName)
     {
         const uint addendPayload = 0xDEADBEEFu;
         byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
@@ -189,6 +189,7 @@ public class CoffObjectConformanceGapTests
         {
             PECOFF parser = new PECOFF(path);
             Assert.Equal(2, parser.CoffRelocations.Length);
+            Assert.Equal(leadingTypeName, parser.CoffRelocations[0].TypeName);
             Assert.Equal(addendPayload, parser.CoffRelocations[1].SymbolIndex);
             Assert.Equal(string.Empty, parser.CoffRelocations[1].SymbolName);
             Assert.DoesNotContain(
@@ -197,9 +198,13 @@ public class CoffObjectConformanceGapTests
             Assert.DoesNotContain(
                 parser.ParseResult.Warnings,
                 warning => warning.Contains("invalid SymbolTableIndex", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("TYPE_0x000F", StringComparison.Ordinal));
 
             PECOFF strict = new PECOFF(path, new PECOFFOptions { StrictMode = true });
             Assert.Equal(2, strict.CoffRelocations.Length);
+            Assert.Equal(leadingTypeName, strict.CoffRelocations[0].TypeName);
         }
         finally
         {

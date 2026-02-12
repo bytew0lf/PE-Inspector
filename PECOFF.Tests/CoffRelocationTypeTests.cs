@@ -108,6 +108,7 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x000C, "SECREL22")]
     [InlineData((ushort)0x000D, "SECREL64I")]
     [InlineData((ushort)0x000E, "SECREL32")]
+    [InlineData((ushort)0x000F, "LTOFF64")]
     [InlineData((ushort)0x0010, "DIR32NB")]
     [InlineData((ushort)0x0011, "SREL14")]
     [InlineData((ushort)0x0012, "SREL22")]
@@ -145,6 +146,7 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x0011, "REFLO")]
     [InlineData((ushort)0x0012, "PAIR")]
     [InlineData((ushort)0x0013, "SECRELLO")]
+    [InlineData((ushort)0x0014, "SECRELHI")]
     [InlineData((ushort)0x0015, "GPREL")]
     [InlineData((ushort)0x0016, "TOKEN")]
     public void CoffRelocationTypeName_PowerPcTable_MatchesSpec(ushort type, string expected)
@@ -244,7 +246,6 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x01C2, (ushort)0x000B)] // ARM non-spec legacy
     [InlineData((ushort)0x01C2, (ushort)0x000C)] // ARM non-spec legacy
     [InlineData((ushort)0x01C2, (ushort)0x000D)] // ARM non-spec legacy
-    [InlineData((ushort)0x0200, (ushort)0x000F)] // IA64
     [InlineData((ushort)0x0200, (ushort)0x001D)] // IA64 non-documented
     [InlineData((ushort)0x0200, (ushort)0x001E)] // IA64 non-documented
     [InlineData((ushort)0x0200, (ushort)0x0020)] // IA64
@@ -252,7 +253,6 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x01F0, (ushort)0x0009)] // PPC non-documented
     [InlineData((ushort)0x01F0, (ushort)0x000D)] // PPC non-documented
     [InlineData((ushort)0x01F0, (ushort)0x000E)] // PPC non-documented
-    [InlineData((ushort)0x01F0, (ushort)0x0014)] // PPC non-documented
     [InlineData((ushort)0x01F0, (ushort)0x0020)] // PPC
     [InlineData((ushort)0x01A4, (ushort)0x0019)] // SH3E
     [InlineData((ushort)0x01A6, (ushort)0x0019)] // SH4
