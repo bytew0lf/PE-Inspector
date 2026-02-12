@@ -160,4 +160,52 @@ public class CoffSymbolTests
         Assert.Equal("SectionDefinition", symbols[0].AuxSymbols[0].Kind);
         Assert.Equal(".rdata", symbols[0].AuxSymbols[0].AssociatedSectionName);
     }
+
+    [Fact]
+    public void Coff_Symbols_Parse_Utf8_ShortName()
+    {
+        byte[] symbol = new byte[18];
+        byte[] utf8 = Encoding.UTF8.GetBytes("äx");
+        Array.Copy(utf8, 0, symbol, 0, utf8.Length);
+        BitConverter.GetBytes(0u).CopyTo(symbol, 8);
+        BitConverter.GetBytes((short)1).CopyTo(symbol, 12);
+        BitConverter.GetBytes((ushort)0).CopyTo(symbol, 14);
+        symbol[16] = 2;
+        symbol[17] = 0;
+
+        bool parsed = PECOFF.TryParseCoffSymbolTableForTest(
+            symbol,
+            Array.Empty<byte>(),
+            new[] { ".text" },
+            out CoffSymbolInfo[] symbols,
+            out CoffStringTableEntry[] _);
+
+        Assert.True(parsed);
+        Assert.Single(symbols);
+        Assert.Equal("äx", symbols[0].Name);
+    }
+
+    [Fact]
+    public void Coff_Symbols_Parse_InvalidUtf8_ShortName_UsesLatin1Fallback()
+    {
+        byte[] symbol = new byte[18];
+        symbol[0] = 0xC3;
+        symbol[1] = 0x28;
+        BitConverter.GetBytes(0u).CopyTo(symbol, 8);
+        BitConverter.GetBytes((short)1).CopyTo(symbol, 12);
+        BitConverter.GetBytes((ushort)0).CopyTo(symbol, 14);
+        symbol[16] = 2;
+        symbol[17] = 0;
+
+        bool parsed = PECOFF.TryParseCoffSymbolTableForTest(
+            symbol,
+            Array.Empty<byte>(),
+            new[] { ".text" },
+            out CoffSymbolInfo[] symbols,
+            out CoffStringTableEntry[] _);
+
+        Assert.True(parsed);
+        Assert.Single(symbols);
+        Assert.Equal("Ã(", symbols[0].Name);
+    }
 }

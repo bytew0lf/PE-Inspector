@@ -638,6 +638,7 @@ namespace PECoff
         private TeImageInfo _teImageInfo;
         private CatalogSignatureInfo _catalogSignatureInfo;
         private DosRelocationInfo _dosRelocationInfo;
+        private static readonly UTF8Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
         private static readonly Dictionary<ushort, string> RichProductNameMap = new Dictionary<ushort, string>
         {
@@ -863,6 +864,7 @@ namespace PECoff
         private enum MachineTypes : ushort
         {
             IMAGE_FILE_MACHINE_UNKNOWN = 0x0,
+            IMAGE_FILE_MACHINE_TARGET_HOST = 0x0001,
 
             IMAGE_FILE_MACHINE_AM33 = 0x1d3,
             
@@ -893,7 +895,10 @@ namespace PECoff
             IMAGE_FILE_MACHINE_MIPSFPU16 = 0x466,
 
             IMAGE_FILE_MACHINE_MOTOROLA_68000 = 0x268,
+            IMAGE_FILE_MACHINE_TRICORE = 0x520,
+            IMAGE_FILE_MACHINE_CEF = 0x0CEF,
 
+            IMAGE_FILE_MACHINE_R3000BE = 0x160,
             IMAGE_FILE_MACHINE_R3000 = 0x162,
             IMAGE_FILE_MACHINE_R4000 = 0x166,
             IMAGE_FILE_MACHINE_R10000 = 0x168,
@@ -901,9 +906,11 @@ namespace PECoff
             
             IMAGE_FILE_MACHINE_SH3 = 0x1a2,
             IMAGE_FILE_MACHINE_SH3DSP = 0x1a3,
+            IMAGE_FILE_MACHINE_SH3E = 0x1a4,
             IMAGE_FILE_MACHINE_SH4 = 0x1a6,
             IMAGE_FILE_MACHINE_SH5 = 0x1a8,
             IMAGE_FILE_MACHINE_THUMB = 0x1c2,
+            IMAGE_FILE_MACHINE_CHPE_X86 = 0x3A64,
 
             IMAGE_FILE_MACHINE_LOONGARCH32 = 0x6232,
             IMAGE_FILE_MACHINE_LOONGARCH64 = 0x6264,
@@ -1516,7 +1523,7 @@ namespace PECoff
         private struct IMAGE_SECTION_HEADER
         {
             [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
-            public char[] Name;
+            public byte[] Name;
             public UInt32 VirtualSize;
             public UInt32 VirtualAddress;
             public UInt32 SizeOfRawData;
@@ -1540,7 +1547,7 @@ namespace PECoff
 
             public string Section
             {
-                get { return Name == null ? string.Empty : new string(Name); }
+                get { return Name == null ? string.Empty : DecodeCoffShortNameUtf8WithFallback(Name, out bool _); }
             }
         }
         
@@ -4001,9 +4008,41 @@ namespace PECoff
             return "Directory" + index.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
+        private static string DecodeCoffShortNameUtf8WithFallback(ReadOnlySpan<byte> bytes, out bool usedFallback)
+        {
+            int length = bytes.Length;
+            while (length > 0 && bytes[length - 1] == 0)
+            {
+                length--;
+            }
+
+            if (length <= 0)
+            {
+                usedFallback = false;
+                return string.Empty;
+            }
+
+            ReadOnlySpan<byte> slice = bytes.Slice(0, length);
+            try
+            {
+                usedFallback = false;
+                return StrictUtf8.GetString(slice);
+            }
+            catch (DecoderFallbackException)
+            {
+                usedFallback = true;
+                return Encoding.Latin1.GetString(slice);
+            }
+        }
+
         private static string NormalizeSectionName(IMAGE_SECTION_HEADER section)
         {
-            return section.Section.TrimEnd('\0');
+            if (section.Name == null || section.Name.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            return DecodeCoffShortNameUtf8WithFallback(section.Name, out bool _);
         }
 
         private void BuildDataDirectoryInfos(IMAGE_DATA_DIRECTORY[] directories, List<IMAGE_SECTION_HEADER> sections, bool isPe32Plus)
@@ -4540,7 +4579,17 @@ namespace PECoff
                 }
 
                 ReadOnlySpan<byte> entry = new ReadOnlySpan<byte>(symbolData, symbolOffset, CoffSymbolSize);
-                string name = ResolveCoffSymbolName(entry, stringTable);
+                string name = ResolveCoffSymbolName(entry, stringTable, out bool shortNameUsedFallback);
+                if (shortNameUsedFallback)
+                {
+                    Warn(
+                        ParseIssueCategory.Header,
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "SPEC violation: COFF short symbol name for symbol #{0} is not valid UTF-8 and was decoded using Latin-1 fallback (value=\"{1}\").",
+                            index,
+                            name));
+                }
                 uint value = BitConverter.ToUInt32(entry.Slice(8, 4));
                 short sectionNumber = BitConverter.ToInt16(entry.Slice(12, 2));
                 ushort type = BitConverter.ToUInt16(entry.Slice(14, 2));
@@ -4838,6 +4887,33 @@ namespace PECoff
             }
         }
 
+        private void ValidateSectionNameEncoding(IReadOnlyList<IMAGE_SECTION_HEADER> sections)
+        {
+            if (sections == null || sections.Count == 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < sections.Count; i++)
+            {
+                IMAGE_SECTION_HEADER section = sections[i];
+                bool usedFallback = false;
+                string name = DecodeCoffShortNameUtf8WithFallback(section.Name ?? Array.Empty<byte>(), out usedFallback);
+                if (!usedFallback)
+                {
+                    continue;
+                }
+
+                Warn(
+                    ParseIssueCategory.Sections,
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "SPEC violation: Section header short name #{0} is not valid UTF-8 and was decoded using Latin-1 fallback (value=\"{1}\").",
+                        i + 1,
+                        name));
+            }
+        }
+
         private void ParseCoffRelocations(List<IMAGE_SECTION_HEADER> sections)
         {
             if (PEFileStream == null || sections == null || sections.Count == 0)
@@ -4928,10 +5004,10 @@ namespace PECoff
             if (storageClass == 0x67) // FILE
             {
                 int bytes = Math.Min(totalAux * CoffSymbolSize, auxData.Length);
-                string fileName = ReadNullTerminatedAscii(auxData, 0, out int _);
+                string fileName = ReadNullTerminatedLatin1(auxData, 0, out int _);
                 if (string.IsNullOrWhiteSpace(fileName) && bytes > 0)
                 {
-                    fileName = Encoding.ASCII.GetString(auxData, 0, bytes).TrimEnd('\0', ' ');
+                    fileName = Encoding.Latin1.GetString(auxData, 0, bytes).TrimEnd('\0', ' ');
                 }
 
                 results.Add(new CoffAuxSymbolInfo(
@@ -5680,7 +5756,7 @@ namespace PECoff
             {
                 int symbolOffset = index * CoffSymbolSize;
                 ReadOnlySpan<byte> entry = new ReadOnlySpan<byte>(symbolData, symbolOffset, CoffSymbolSize);
-                string name = ResolveCoffSymbolName(entry, stringTable);
+                string name = ResolveCoffSymbolName(entry, stringTable, out bool _);
                 uint value = BitConverter.ToUInt32(entry.Slice(8, 4));
                 short sectionNumber = BitConverter.ToInt16(entry.Slice(12, 2));
                 ushort type = BitConverter.ToUInt16(entry.Slice(14, 2));
@@ -5738,8 +5814,9 @@ namespace PECoff
             return true;
         }
 
-        private static string ResolveCoffSymbolName(ReadOnlySpan<byte> entry, Dictionary<uint, string> stringTable)
+        private static string ResolveCoffSymbolName(ReadOnlySpan<byte> entry, Dictionary<uint, string> stringTable, out bool shortNameUsedFallback)
         {
+            shortNameUsedFallback = false;
             if (entry.Length < CoffSymbolSize)
             {
                 return string.Empty;
@@ -5767,7 +5844,12 @@ namespace PECoff
                 length++;
             }
 
-            return length == 0 ? string.Empty : Encoding.ASCII.GetString(entry.Slice(0, length));
+            if (length == 0)
+            {
+                return string.Empty;
+            }
+
+            return DecodeCoffShortNameUtf8WithFallback(entry.Slice(0, length), out shortNameUsedFallback);
         }
 
         private static uint GetSectionSpan(IMAGE_SECTION_HEADER section)
@@ -9552,6 +9634,24 @@ namespace PECoff
             return Encoding.ASCII.GetString(buffer, start, length);
         }
 
+        private static string ReadNullTerminatedLatin1(byte[] buffer, int offset, out int bytesRead)
+        {
+            int start = offset;
+            while (offset < buffer.Length && buffer[offset] != 0)
+            {
+                offset++;
+            }
+
+            bytesRead = offset - start + 1;
+            if (start >= buffer.Length)
+            {
+                return string.Empty;
+            }
+
+            int length = Math.Min(offset - start, buffer.Length - start);
+            return Encoding.Latin1.GetString(buffer, start, length);
+        }
+
         private static string ReadNullTerminatedAscii(ReadOnlySpan<byte> buffer, int offset, out int bytesRead)
         {
             int start = offset;
@@ -12424,6 +12524,11 @@ namespace PECoff
             return GetCoffRelocationTypeName((MachineTypes)machine, type);
         }
 
+        internal static string GetMachineNameForTest(ushort machine)
+        {
+            return GetMachineName(machine);
+        }
+
         internal static bool IsRelocationTypeReservedForTest(ushort machine, int type)
         {
             return IsRelocationTypeReserved((MachineTypes)machine, type);
@@ -14902,7 +15007,7 @@ namespace PECoff
 
         private string ResolveSectionName(IMAGE_SECTION_HEADER section, Dictionary<uint, string> coffStringTable)
         {
-            string name = NormalizeSectionName(section.Section);
+            string name = NormalizeSectionName(section);
             if (string.IsNullOrWhiteSpace(name))
             {
                 return string.Empty;
@@ -16298,6 +16403,7 @@ namespace PECoff
         {
             switch (machine)
             {
+                case MachineTypes.IMAGE_FILE_MACHINE_R3000BE:
                 case MachineTypes.IMAGE_FILE_MACHINE_R3000:
                 case MachineTypes.IMAGE_FILE_MACHINE_R4000:
                 case MachineTypes.IMAGE_FILE_MACHINE_R10000:
@@ -16318,22 +16424,28 @@ namespace PECoff
             {
                 switch (type)
                 {
+                    case MachineTypes.IMAGE_FILE_MACHINE_TARGET_HOST: return "TARGET_HOST";
                     case MachineTypes.IMAGE_FILE_MACHINE_I386: return "x86";
                     case MachineTypes.IMAGE_FILE_MACHINE_AMD64: return "x64";
                     case MachineTypes.IMAGE_FILE_MACHINE_ARM: return "ARM";
                     case MachineTypes.IMAGE_FILE_MACHINE_ARMNT: return "ARMNT";
+                    case MachineTypes.IMAGE_FILE_MACHINE_CHPE_X86: return "CHPE_X86";
                     case MachineTypes.IMAGE_FILE_MACHINE_ARM64: return "ARM64";
                     case MachineTypes.IMAGE_FILE_MACHINE_ARM64EC: return "ARM64EC";
                     case MachineTypes.IMAGE_FILE_MACHINE_ARM64X: return "ARM64X";
                     case MachineTypes.IMAGE_FILE_MACHINE_IA64: return "IA64";
                     case MachineTypes.IMAGE_FILE_MACHINE_EBC: return "EBC";
+                    case MachineTypes.IMAGE_FILE_MACHINE_CEF: return "CEF";
                     case MachineTypes.IMAGE_FILE_MACHINE_POWERPC: return "PowerPC";
                     case MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP: return "PowerPCFP";
+                    case MachineTypes.IMAGE_FILE_MACHINE_R3000BE: return "R3000BE";
                     case MachineTypes.IMAGE_FILE_MACHINE_R3000: return "R3000";
                     case MachineTypes.IMAGE_FILE_MACHINE_R4000: return "R4000";
                     case MachineTypes.IMAGE_FILE_MACHINE_R10000: return "R10000";
                     case MachineTypes.IMAGE_FILE_MACHINE_ALPHA_AXP: return "Alpha AXP";
                     case MachineTypes.IMAGE_FILE_MACHINE_ALPHA_AXP64: return "Alpha AXP64";
+                    case MachineTypes.IMAGE_FILE_MACHINE_SH3E: return "SH3E";
+                    case MachineTypes.IMAGE_FILE_MACHINE_TRICORE: return "TRICORE";
                     case MachineTypes.IMAGE_FILE_MACHINE_MIPS16: return "MIPS16";
                     case MachineTypes.IMAGE_FILE_MACHINE_MIPSFPU: return "MIPSFPU";
                     case MachineTypes.IMAGE_FILE_MACHINE_MIPSFPU16: return "MIPSFPU16";
@@ -16525,6 +16637,7 @@ namespace PECoff
                         case 0x0016: return "TOKEN";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
+                case MachineTypes.IMAGE_FILE_MACHINE_R3000BE:
                 case MachineTypes.IMAGE_FILE_MACHINE_R3000:
                 case MachineTypes.IMAGE_FILE_MACHINE_R4000:
                 case MachineTypes.IMAGE_FILE_MACHINE_R10000:
@@ -24177,6 +24290,7 @@ namespace PECoff
             }
 
             _sections = sections;
+            ValidateSectionNameEncoding(sections);
             if (sections.Count > 0)
             {
                 uint maxEnd = 0;
@@ -25144,6 +25258,7 @@ namespace PECoff
             }
 
             _sections = sections;
+            ValidateSectionNameEncoding(sections);
             ParseCoffSymbolTable(pointerToSymbolTable, numberOfSymbols, sections);
             BuildSectionPermissionInfos(sections);
             ParseCoffLineNumbers(sections);
@@ -25458,6 +25573,7 @@ namespace PECoff
                     }
 
                     _sections = sections;
+                    ValidateSectionNameEncoding(sections);
 
                     ValidateSections(header, peHeader, sections, dataDirectory);
                     ValidateImageCoffDeprecation(peHeader.FileHeader, sections);

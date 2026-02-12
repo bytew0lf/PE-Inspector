@@ -32,7 +32,7 @@ Executable outputs land in the project `bin/<Configuration>/net9.0/` folders.
 - PDB/MSF stream parsing + symbol record decoding
 - CLR/.NET metadata deep-dive (tables, token refs, signature decode, IL/EH summaries, ReadyToRun)
 - Authenticode/certificates (PKCS7 signers/timestamps, X509/TS-stack metadata, tuple-uniqueness checks + per-field uniqueness warnings with strict-profile escalation, CT hints, WinTrust on Windows, policy summaries)
-- COFF objects/archives + UEFI TE images (expanded relocation families, linker-member mapping, import header reserved-bit validation, spec-aligned storage-class constants, richer aux symbol decode including CLR-token structured fields, Aux Format 1/2 reserved-field conformance checks, and weak-external symbol-table-index resolution)
+- COFF objects/archives + UEFI TE images (expanded relocation families, linker-member mapping, import header reserved-bit validation, broader machine-type constant coverage including `R3000BE`/`TARGET_HOST`/`CHPE_X86`, spec-aligned storage-class constants, richer aux symbol decode including CLR-token structured fields, Aux Format 1/2 reserved-field conformance checks, weak-external symbol-table-index resolution, and UTF-8 short-name decode with deterministic Latin-1 fallback)
 - Overlay container parsing (ZIP/RAR/7z NextHeader + EncodedHeader notes)
 - JSON report snapshotting (stable schema versioning)
 
@@ -48,12 +48,12 @@ Status legend:
 | Area | Status | Current coverage |
 | --- | --- | --- |
 | DOS header + stub | `full` | Header + relocation table summary. |
-| COFF file header | `full` | Machine/characteristics, bigobj header support, image-vs-object COFF deprecation checks. |
+| COFF file header | `full` | Machine/characteristics (including additional documented machine IDs such as `R3000BE`/`TARGET_HOST`/`CHPE_X86`), bigobj header support, image-vs-object COFF deprecation checks. |
 | Optional header (PE32/PE32+) | `full` | Standard fields + checksum/timestamp decoding + reserved-field conformance checks. |
 | Sections | `full` | Header decoding (sizes/flags/align), entropy, permissions, padding, overlaps/align checks, directory containment summaries. |
 | Data directories | `full` | Name/section mapping + Architecture/GlobalPtr/IAT deep decode + size/mapping validation. |
 | Imports/Exports | `full` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints. |
-| Relocations | `partial` | Summaries + anomaly totals, machine-aware COFF relocation mapping with spec-matrix tests for ARM/IA64/PPC/SH/M32R and undefined-value fallback handling; remaining machine-specific matrices can be expanded further. |
+| Relocations | `partial` | Summaries + anomaly totals, machine-aware COFF relocation mapping with spec-matrix tests for ARM/IA64/PPC/SH/M32R plus `R3000BE` (MIPS-family behavior) and undefined-value fallback handling; remaining machine-specific matrices can be expanded further. |
 | TLS | `full` | Callbacks + raw data mapping, hash/preview, template sizing + index mapping. |
 | Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation, structured decode for dynamic-reloc/CHPE/volatile pointed metadata with deterministic malformed issues. |
 | Exception directory | `full` | AMD64/ARM64/ARM32/IA64 decode + range validation, x86 SEH. |
@@ -64,7 +64,7 @@ Status legend:
 | PDB/MSF streams | `full` | MSF directory + PDB signature/age, DBI/TPI/GSI/publics + symbol record parsing. |
 | CLR/.NET | `full` | Metadata tables, token cross-refs, signature decode, method body IL sizes + EH clauses, R2R header. |
 | Certificates/Authenticode | `full` | PKCS7 signers/timestamps, CT hints/logs, WinTrust (Windows), trust-store status + policy evaluation, tuple uniqueness for `(wRevision,wCertificateType)` plus per-field uniqueness warnings (strict-profile escalates to errors), X509/TS-stack typed metadata reporting. |
-| COFF objects | `full` | Symbols/aux/relocs/line numbers, COMDAT selection hints, expanded aux formats (file multi-record, spec-aligned function/.bf/.ef line info with reserved-field checks, function-definition reserved-tail validation, weak-external EXTERNAL+undefined compatibility plus symbol-table-index resolution, symbol definition, section class decoding), structured CLR-token aux decode + reserved-field validation, malformed aux-layout conformance checks. |
+| COFF objects | `full` | Symbols/aux/relocs/line numbers, COMDAT selection hints, expanded aux formats (file multi-record with deterministic Latin-1 `.file` decode fidelity, spec-aligned function/.bf/.ef line info with reserved-field checks, function-definition reserved-tail validation, weak-external EXTERNAL+undefined compatibility plus symbol-table-index resolution, symbol definition, section class decoding), UTF-8 short symbol/section name handling with deterministic fallback warnings, structured CLR-token aux decode + reserved-field validation, malformed aux-layout conformance checks. |
 | COFF archives/import libs | `full` | Archive headers, longnames, thin/SYM64 support, first/second linker member symbol-to-member mapping, import object variants + reserved-bit validation. |
 | UEFI TE images | `full` | Header/sections, base relocations, entrypoint/base-of-code file offsets + mapping checks. |
 | Overlay containers | `full` | ZIP/RAR4/5/7z container parsing + encoded-header method notes. |

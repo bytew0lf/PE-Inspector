@@ -38,6 +38,20 @@ public class CoffAuxSymbolTests
     }
 
     [Fact]
+    public void CoffAuxSymbol_File_UsesDeterministicLatin1Decode_ForExtendedBytes()
+    {
+        byte[] data = new byte[18];
+        byte[] latin1Name = new byte[] { (byte)'f', (byte)'i', (byte)'l', 0xE9, (byte)'.', (byte)'c', 0x00 };
+        Array.Copy(latin1Name, 0, data, 0, latin1Name.Length);
+
+        CoffAuxSymbolInfo[] aux = PECOFF.DecodeCoffAuxSymbolsForTest(".file", 0, 0x67, 1, data);
+
+        Assert.Single(aux);
+        Assert.Equal("File", aux[0].Kind);
+        Assert.Equal("filé.c", aux[0].FileName);
+    }
+
+    [Fact]
     public void CoffAuxSymbol_FunctionStorage_Decodes_LineInfo()
     {
         byte[] data = new byte[18];
