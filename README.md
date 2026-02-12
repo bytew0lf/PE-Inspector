@@ -28,7 +28,7 @@ Executable outputs land in the project `bin/<Configuration>/net9.0/` folders.
 - TLS/load-config metadata (guard flags, CHPE/XFG, dynamic-reloc/volatile pointed-structure decode, callback mapping, raw data hash/preview)
 - Exception/unwind decoding (x64/ARM64/ARM32/IA64 + x86 SEH)
 - Resources (strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, RT_VERSION extensions, ordering/depth/cycle compliance checks)
-- Debug directory decoding (CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, raw fallback)
+- Debug directory decoding (CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, EX_DLLCHARACTERISTICS symbolic flag decode + unsupported-bit conformance checks, raw fallback)
 - PDB/MSF stream parsing + symbol record decoding
 - CLR/.NET metadata deep-dive (tables, token refs, signature decode, IL/EH summaries, ReadyToRun)
 - Authenticode/certificates (PKCS7 signers/timestamps, X509/TS-stack metadata, tuple-uniqueness checks + per-field uniqueness warnings with strict-profile escalation, CT hints, WinTrust on Windows, policy summaries)
@@ -60,7 +60,7 @@ Status legend:
 | Resources | `full` | Strings, dialogs/menus/toolbars, manifests/MUI edge fields, icons/cursors/bitmaps, message tables, RT_VERSION extensions, ordering and malformed-tree checks. |
 | Resources (tree compliance) | `full` | Named/ID ordering checks, circular-reference detection, malformed entry bounds checks, optional safe deep-tree validation beyond 3 levels. |
 | Resources (extended) | `full` | Fonts/fontdir, rcdata format detection, dlginit, animated cursor/icon. |
-| Debug directory | `full` | CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, embedded PDB, SPGO, PDB hash + exception summaries + raw fallback. |
+| Debug directory | `full` | CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, EX_DLLCHARACTERISTICS symbolic flag mapping (`CET_COMPAT`/`CET_COMPAT_STRICT_MODE`/`FORWARD_CFI_COMPAT`) with explicit unsupported-bit SPEC violations (strict-mode escalation), embedded PDB, SPGO, PDB hash + exception summaries + raw fallback. |
 | PDB/MSF streams | `full` | MSF directory + PDB signature/age, DBI/TPI/GSI/publics + symbol record parsing. |
 | CLR/.NET | `full` | Metadata tables, token cross-refs, signature decode, method body IL sizes + EH clauses, R2R header. |
 | Certificates/Authenticode | `full` | PKCS7 signers/timestamps, CT hints/logs, WinTrust (Windows), trust-store status + policy evaluation, tuple uniqueness for `(wRevision,wCertificateType)` plus per-field uniqueness warnings (strict-profile escalates to errors), X509/TS-stack typed metadata reporting. |

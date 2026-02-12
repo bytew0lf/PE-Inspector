@@ -18988,6 +18988,13 @@ namespace PECoff
                         TryParseExDllCharacteristicsData(data, out DebugExDllCharacteristicsInfo parsed))
                     {
                         exDll = parsed;
+                        uint unknownFlags = GetUnknownExDllCharacteristicsFlags(parsed.Characteristics);
+                        if (unknownFlags != 0)
+                        {
+                            Warn(
+                                ParseIssueCategory.Debug,
+                                $"SPEC violation: IMAGE_DEBUG_TYPE_EX_DLLCHARACTERISTICS contains unsupported flag bits 0x{unknownFlags:X8}.");
+                        }
                     }
                 }
                 else if ((DebugDirectoryType)entry.Type == DebugDirectoryType.Fpo && entry.SizeOfData > 0)
@@ -19437,6 +19444,14 @@ namespace PECoff
             return true;
         }
 
+        private const uint EX_DLLCHARACTERISTICS_CET_COMPAT = 0x00000001u;
+        private const uint EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE = 0x00000002u;
+        private const uint EX_DLLCHARACTERISTICS_FORWARD_CFI_COMPAT = 0x00000040u;
+        private const uint EX_DLLCHARACTERISTICS_KNOWN_MASK =
+            EX_DLLCHARACTERISTICS_CET_COMPAT |
+            EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE |
+            EX_DLLCHARACTERISTICS_FORWARD_CFI_COMPAT;
+
         private static bool TryParseExDllCharacteristicsData(byte[] data, out DebugExDllCharacteristicsInfo info)
         {
             info = null;
@@ -19446,8 +19461,52 @@ namespace PECoff
             }
 
             uint flags = ReadUInt32(data, 0);
-            info = new DebugExDllCharacteristicsInfo(flags, DecodeBitFlags(flags));
+            info = new DebugExDllCharacteristicsInfo(flags, DecodeExDllCharacteristicsFlags(flags));
             return true;
+        }
+
+        private static uint GetUnknownExDllCharacteristicsFlags(uint flags)
+        {
+            return flags & ~EX_DLLCHARACTERISTICS_KNOWN_MASK;
+        }
+
+        private static string[] DecodeExDllCharacteristicsFlags(uint flags)
+        {
+            if (flags == 0)
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> names = new List<string>();
+            if ((flags & EX_DLLCHARACTERISTICS_CET_COMPAT) != 0)
+            {
+                names.Add("EX_DLLCHARACTERISTICS_CET_COMPAT");
+            }
+
+            if ((flags & EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE) != 0)
+            {
+                names.Add("EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE");
+            }
+
+            if ((flags & EX_DLLCHARACTERISTICS_FORWARD_CFI_COMPAT) != 0)
+            {
+                names.Add("EX_DLLCHARACTERISTICS_FORWARD_CFI_COMPAT");
+            }
+
+            uint unknown = GetUnknownExDllCharacteristicsFlags(flags);
+            if (unknown != 0)
+            {
+                for (int bit = 0; bit < 32; bit++)
+                {
+                    uint mask = 1u << bit;
+                    if ((unknown & mask) != 0)
+                    {
+                        names.Add("0x" + mask.ToString("X8", CultureInfo.InvariantCulture));
+                    }
+                }
+            }
+
+            return names.ToArray();
         }
 
         private static bool TryParseFpoData(byte[] data, out DebugFpoInfo info)

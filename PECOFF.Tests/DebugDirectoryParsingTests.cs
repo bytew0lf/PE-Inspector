@@ -114,14 +114,38 @@ public class DebugDirectoryParsingTests
         Assert.Contains("0x00000004", info.FlagNames);
     }
 
-    [Fact]
-    public void ExDllCharacteristics_Parses_Flags()
+    [Theory]
+    [InlineData(0x00000001u, "EX_DLLCHARACTERISTICS_CET_COMPAT")]
+    [InlineData(0x00000002u, "EX_DLLCHARACTERISTICS_CET_COMPAT_STRICT_MODE")]
+    [InlineData(0x00000040u, "EX_DLLCHARACTERISTICS_FORWARD_CFI_COMPAT")]
+    public void ExDllCharacteristics_Parses_Known_Spec_Flags(uint flags, string expectedName)
     {
-        byte[] data = BitConverter.GetBytes(0x2u);
+        byte[] data = BitConverter.GetBytes(flags);
         bool parsed = PECOFF.TryParseExDllCharacteristicsDataForTest(data, out DebugExDllCharacteristicsInfo info);
         Assert.True(parsed);
-        Assert.Equal(0x2u, info.Characteristics);
-        Assert.Contains("0x00000002", info.FlagNames);
+        Assert.Equal(flags, info.Characteristics);
+        Assert.Contains(expectedName, info.FlagNames);
+    }
+
+    [Fact]
+    public void ExDllCharacteristics_Parses_Unknown_Flags_As_Hex()
+    {
+        byte[] data = BitConverter.GetBytes(0x80000000u);
+        bool parsed = PECOFF.TryParseExDllCharacteristicsDataForTest(data, out DebugExDllCharacteristicsInfo info);
+        Assert.True(parsed);
+        Assert.Equal(0x80000000u, info.Characteristics);
+        Assert.Contains("0x80000000", info.FlagNames);
+    }
+
+    [Fact]
+    public void ExDllCharacteristics_Parses_MixedKnownAndUnknown_Flags()
+    {
+        byte[] data = BitConverter.GetBytes(0x00000081u);
+        bool parsed = PECOFF.TryParseExDllCharacteristicsDataForTest(data, out DebugExDllCharacteristicsInfo info);
+        Assert.True(parsed);
+        Assert.Equal(0x00000081u, info.Characteristics);
+        Assert.Contains("EX_DLLCHARACTERISTICS_CET_COMPAT", info.FlagNames);
+        Assert.Contains("0x00000080", info.FlagNames);
     }
 
     [Fact]
