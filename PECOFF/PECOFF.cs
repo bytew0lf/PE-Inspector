@@ -5046,6 +5046,7 @@ namespace PECoff
                     string typeName = GetCoffRelocationTypeName(_machineType, type);
                     string symbolName = string.Empty;
                     bool usesPairDisplacement = IsPairRelocationDisplacementCarrier(_machineType, type);
+                    bool usesIa64AddendPayload = IsIa64AddendPayloadCarrier(_machineType, type);
                     if (usesPairDisplacement && !IsPairRelocationOrderingValid(_machineType, previousRelocationType))
                     {
                         string sectionLabel = string.IsNullOrWhiteSpace(sectionName) ? "<unnamed>" : sectionName;
@@ -5064,7 +5065,25 @@ namespace PECoff
                                 previousTypeName));
                     }
 
-                    if (!usesPairDisplacement)
+                    if (usesIa64AddendPayload && !IsIa64AddendOrderingValid(_machineType, previousRelocationType))
+                    {
+                        string sectionLabel = string.IsNullOrWhiteSpace(sectionName) ? "<unnamed>" : sectionName;
+                        string previousTypeName = previousRelocationType.HasValue
+                            ? GetCoffRelocationTypeName(_machineType, previousRelocationType.Value)
+                            : "<none>";
+                        Warn(
+                            ParseIssueCategory.Relocations,
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "SPEC violation: COFF IA64 ADDEND relocation entry #{0} in section {1} must immediately follow {2}; previous relocation was {3}.",
+                                j,
+                                sectionLabel,
+                                GetIa64AddendOrderingDescription(),
+                                previousTypeName));
+                    }
+
+                    bool usesPayloadInsteadOfSymbolIndex = usesPairDisplacement || usesIa64AddendPayload;
+                    if (!usesPayloadInsteadOfSymbolIndex)
                     {
                         if (symbolIndex <= int.MaxValue &&
                             symbolsByTableIndex.TryGetValue((int)symbolIndex, out CoffSymbolInfo symbol))
@@ -16702,6 +16721,40 @@ namespace PECoff
             return false;
         }
 
+        private static bool IsIa64AddendPayloadCarrier(MachineTypes machine, ushort type)
+        {
+            return machine == MachineTypes.IMAGE_FILE_MACHINE_IA64 && type == 0x001F; // IMAGE_REL_IA64_ADDEND
+        }
+
+        private static bool IsIa64AddendOrderingValid(MachineTypes machine, ushort? previousType)
+        {
+            if (machine != MachineTypes.IMAGE_FILE_MACHINE_IA64 || !previousType.HasValue)
+            {
+                return false;
+            }
+
+            switch (previousType.Value)
+            {
+                case 0x0001: // IMAGE_REL_IA64_IMM14
+                case 0x0002: // IMAGE_REL_IA64_IMM22
+                case 0x0003: // IMAGE_REL_IA64_IMM64
+                case 0x0009: // IMAGE_REL_IA64_GPREL22
+                case 0x000A: // IMAGE_REL_IA64_LTOFF22
+                case 0x000F: // IMAGE_REL_IA64_LTOFF64 (referenced by ADDEND semantics)
+                case 0x000C: // IMAGE_REL_IA64_SECREL22
+                case 0x000D: // IMAGE_REL_IA64_SECREL64I
+                case 0x000E: // IMAGE_REL_IA64_SECREL32
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static string GetIa64AddendOrderingDescription()
+        {
+            return "IMM14, IMM22, IMM64, GPREL22, LTOFF22, LTOFF64, SECREL22, SECREL64I, or SECREL32";
+        }
+
         private static bool IsPairRelocationOrderingValid(MachineTypes machine, ushort? previousType)
         {
             if (!previousType.HasValue)
@@ -16972,8 +17025,6 @@ namespace PECoff
                         case 0x001A: return "IMMGPREL64";
                         case 0x001B: return "TOKEN";
                         case 0x001C: return "GPREL32";
-                        case 0x001D: return "PCREL21BI";
-                        case 0x001E: return "PCREL22";
                         case 0x001F: return "ADDEND";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
@@ -16989,20 +17040,16 @@ namespace PECoff
                         case 0x0005: return "ADDR14";
                         case 0x0006: return "REL24";
                         case 0x0007: return "REL14";
-                        case 0x0008: return "TOCREL16";
-                        case 0x0009: return "TOCREL14";
                         case 0x000A: return "ADDR32NB";
                         case 0x000B: return "SECREL";
                         case 0x000C: return "SECTION";
-                        case 0x000D: return "ADDR14BRTAKEN";
-                        case 0x000E: return "ADDR14BRNTAKEN";
                         case 0x000F: return "SECREL16";
                         case 0x0010: return "REFHI";
                         case 0x0011: return "REFLO";
                         case 0x0012: return "PAIR";
                         case 0x0013: return "SECRELLO";
-                        case 0x0014: return "GPREL";
-                        case 0x0015: return "TOKEN";
+                        case 0x0015: return "GPREL";
+                        case 0x0016: return "TOKEN";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_R3000BE:
