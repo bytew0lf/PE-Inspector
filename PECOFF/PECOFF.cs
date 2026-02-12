@@ -4601,6 +4601,8 @@ namespace PECoff
                 _coffSymbols.Clear();
                 _coffSymbols.AddRange(resolved);
             }
+
+            ValidateCoffWeakExternalConformance(_coffSymbols);
         }
 
         private void ParseCoffLineNumbers(List<IMAGE_SECTION_HEADER> sections)
@@ -4795,6 +4797,47 @@ namespace PECoff
             }
         }
 
+        private void ValidateCoffWeakExternalConformance(IReadOnlyList<CoffSymbolInfo> symbols)
+        {
+            if (symbols == null || symbols.Count == 0)
+            {
+                return;
+            }
+
+            Dictionary<int, CoffSymbolInfo> symbolsByTableIndex = BuildCoffSymbolsByTableIndex(symbols);
+            for (int i = 0; i < symbols.Count; i++)
+            {
+                CoffSymbolInfo symbol = symbols[i];
+                if (symbol?.AuxSymbols == null || symbol.AuxSymbols.Count == 0)
+                {
+                    continue;
+                }
+
+                for (int j = 0; j < symbol.AuxSymbols.Count; j++)
+                {
+                    CoffAuxSymbolInfo aux = symbol.AuxSymbols[j];
+                    if (aux == null || !string.Equals(aux.Kind, "WeakExternal", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (TryResolveWeakExternalTargetName(symbols, symbolsByTableIndex, aux.WeakTagIndex, out string _))
+                    {
+                        continue;
+                    }
+
+                    Warn(
+                        ParseIssueCategory.Header,
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "SPEC violation: COFF weak external aux record for symbol #{0} ({1}) references unresolved TagIndex {2}.",
+                            symbol.Index,
+                            string.IsNullOrWhiteSpace(symbol.Name) ? "<unnamed>" : symbol.Name,
+                            aux.WeakTagIndex));
+                }
+            }
+        }
+
         private void ParseCoffRelocations(List<IMAGE_SECTION_HEADER> sections)
         {
             if (PEFileStream == null || sections == null || sections.Count == 0)
@@ -4925,6 +4968,10 @@ namespace PECoff
                 uint totalSize = ReadUInt32(auxData, 4);
                 uint linePtr = ReadUInt32(auxData, 8);
                 uint nextFn = ReadUInt32(auxData, 12);
+                byte[] reservedTail = new byte[2];
+                reservedTail[0] = auxData[16];
+                reservedTail[1] = auxData[17];
+                bool reservedTailValid = reservedTail[0] == 0 && reservedTail[1] == 0;
                 results.Add(new CoffAuxSymbolInfo(
                     "FunctionDefinition",
                     string.Empty,
@@ -4948,7 +4995,10 @@ namespace PECoff
                     0,
                     string.Empty,
                     string.Empty,
-                    BuildHexPreview(auxData, 32)));
+                    BuildHexPreview(auxData, 32),
+                    functionAuxReservedFieldsValid: reservedTailValid,
+                    functionAuxReservedBytesPreview: BuildHexPreview(reservedTail, reservedTail.Length),
+                    functionAuxPointerToNextFunctionValid: true));
                 return results.ToArray();
             }
 
@@ -5243,6 +5293,7 @@ namespace PECoff
                 return Array.Empty<CoffSymbolInfo>();
             }
 
+            Dictionary<int, CoffSymbolInfo> symbolsByTableIndex = BuildCoffSymbolsByTableIndex(symbols);
             bool anyUpdated = false;
             CoffSymbolInfo[] resolved = new CoffSymbolInfo[symbols.Count];
             for (int i = 0; i < symbols.Count; i++)
@@ -5288,9 +5339,8 @@ namespace PECoff
 
                     if (info != null &&
                         string.Equals(info.Kind, "WeakExternal", StringComparison.OrdinalIgnoreCase) &&
-                        info.WeakTagIndex < symbols.Count)
+                        TryResolveWeakExternalTargetName(symbols, symbolsByTableIndex, info.WeakTagIndex, out string targetName))
                     {
-                        string targetName = symbols[(int)info.WeakTagIndex].Name;
                         if (!string.Equals(info.WeakDefaultSymbol, targetName, StringComparison.Ordinal))
                         {
                             aux[j] = new CoffAuxSymbolInfo(
@@ -5432,6 +5482,54 @@ namespace PECoff
             }
 
             return anyUpdated ? resolved : symbols.ToArray();
+        }
+
+        private static Dictionary<int, CoffSymbolInfo> BuildCoffSymbolsByTableIndex(IReadOnlyList<CoffSymbolInfo> symbols)
+        {
+            Dictionary<int, CoffSymbolInfo> map = new Dictionary<int, CoffSymbolInfo>();
+            if (symbols == null)
+            {
+                return map;
+            }
+
+            for (int i = 0; i < symbols.Count; i++)
+            {
+                CoffSymbolInfo symbol = symbols[i];
+                if (symbol == null || map.ContainsKey(symbol.Index))
+                {
+                    continue;
+                }
+
+                map[symbol.Index] = symbol;
+            }
+
+            return map;
+        }
+
+        private static bool TryResolveWeakExternalTargetName(
+            IReadOnlyList<CoffSymbolInfo> symbols,
+            Dictionary<int, CoffSymbolInfo> symbolsByTableIndex,
+            uint weakTagIndex,
+            out string targetName)
+        {
+            targetName = string.Empty;
+
+            if (symbolsByTableIndex != null &&
+                weakTagIndex <= int.MaxValue &&
+                symbolsByTableIndex.TryGetValue((int)weakTagIndex, out CoffSymbolInfo byTableIndex))
+            {
+                targetName = byTableIndex?.Name ?? string.Empty;
+                return true;
+            }
+
+            // Compatibility fallback for producers that encoded compact-symbol indices.
+            if (symbols != null && weakTagIndex < symbols.Count)
+            {
+                targetName = symbols[(int)weakTagIndex].Name;
+                return true;
+            }
+
+            return false;
         }
 
         private static string DecodeCoffSymbolTypeName(ushort type)
@@ -16387,20 +16485,20 @@ namespace PECoff
                         case 0x000C: return "SECREL22";
                         case 0x000D: return "SECREL64I";
                         case 0x000E: return "SECREL32";
-                        case 0x000F: return "DIR32NB";
-                        case 0x0010: return "SREL14";
-                        case 0x0011: return "SREL22";
-                        case 0x0012: return "SREL32";
-                        case 0x0013: return "UREL32";
-                        case 0x0014: return "PCREL60X";
-                        case 0x0015: return "PCREL60B";
-                        case 0x0016: return "PCREL60F";
-                        case 0x0017: return "PCREL60I";
-                        case 0x0018: return "PCREL60M";
-                        case 0x0019: return "IMMGPREL64";
-                        case 0x001A: return "TOKEN";
-                        case 0x001B: return "GPREL32";
-                        case 0x001C: return "ADDEND";
+                        case 0x0010: return "DIR32NB";
+                        case 0x0011: return "SREL14";
+                        case 0x0012: return "SREL22";
+                        case 0x0013: return "SREL32";
+                        case 0x0014: return "UREL32";
+                        case 0x0015: return "PCREL60X";
+                        case 0x0016: return "PCREL60B";
+                        case 0x0017: return "PCREL60F";
+                        case 0x0018: return "PCREL60I";
+                        case 0x0019: return "PCREL60M";
+                        case 0x001A: return "IMMGPREL64";
+                        case 0x001B: return "TOKEN";
+                        case 0x001C: return "GPREL32";
+                        case 0x001F: return "ADDEND";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_POWERPC:
@@ -16415,25 +16513,16 @@ namespace PECoff
                         case 0x0005: return "ADDR14";
                         case 0x0006: return "REL24";
                         case 0x0007: return "REL14";
-                        case 0x0008: return "TOCREL16";
-                        case 0x0009: return "TOCREL14";
                         case 0x000A: return "ADDR32NB";
                         case 0x000B: return "SECREL";
                         case 0x000C: return "SECTION";
-                        case 0x000D: return "IFGLUE";
-                        case 0x000E: return "IMGLUE";
                         case 0x000F: return "SECREL16";
                         case 0x0010: return "REFHI";
                         case 0x0011: return "REFLO";
                         case 0x0012: return "PAIR";
                         case 0x0013: return "SECRELLO";
-                        case 0x0014: return "SECRELHI";
                         case 0x0015: return "GPREL";
-                        case 0x0100: return "TYPEMASK";
-                        case 0x0800: return "NEG";
-                        case 0x1000: return "BRTAKEN";
-                        case 0x2000: return "BRNTAKEN";
-                        case 0x4000: return "TOCDEFN";
+                        case 0x0016: return "TOKEN";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_R3000:
@@ -16480,13 +16569,40 @@ namespace PECoff
                         case 0x0009: return "PCREL8_WORD";
                         case 0x000A: return "PCREL8_LONG";
                         case 0x000B: return "PCREL12_WORD";
-                        case 0x000D: return "STARTOF_SECTION";
-                        case 0x000E: return "SIZEOF_SECTION";
-                        case 0x000F: return "SECTION";
-                        case 0x0010: return "SECREL";
-                        case 0x0011: return "DIRECT32_NB";
-                        case 0x0012: return "GPREL4_LONG";
-                        case 0x0013: return "TOKEN";
+                        case 0x000C: return "STARTOF_SECTION";
+                        case 0x000D: return "SIZEOF_SECTION";
+                        case 0x000E: return "SECTION";
+                        case 0x000F: return "SECREL";
+                        case 0x0010: return "DIRECT32_NB";
+                        case 0x0011: return "GPREL4_LONG";
+                        case 0x0012: return "TOKEN";
+                        case 0x0013: return "SHM_PCRELPT";
+                        case 0x0014: return "SHM_REFLO";
+                        case 0x0015: return "SHM_REFHALF";
+                        case 0x0016: return "SHM_RELLO";
+                        case 0x0017: return "SHM_RELHALF";
+                        case 0x0018: return "SHM_PAIR";
+                        case 0x8000: return "SHM_NOMODE";
+                        default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
+                    }
+                case MachineTypes.IMAGE_FILE_MACHINE_M32R:
+                    switch (type)
+                    {
+                        case 0x0000: return "ABSOLUTE";
+                        case 0x0001: return "ADDR32";
+                        case 0x0002: return "ADDR32NB";
+                        case 0x0003: return "ADDR24";
+                        case 0x0004: return "GPREL16";
+                        case 0x0005: return "PCREL24";
+                        case 0x0006: return "PCREL16";
+                        case 0x0007: return "PCREL8";
+                        case 0x0008: return "REFHALF";
+                        case 0x0009: return "REFHI";
+                        case 0x000A: return "REFLO";
+                        case 0x000B: return "PAIR";
+                        case 0x000C: return "SECTION";
+                        case 0x000D: return "SECREL";
+                        case 0x000E: return "TOKEN";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 default:

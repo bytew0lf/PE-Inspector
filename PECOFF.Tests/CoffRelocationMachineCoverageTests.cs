@@ -11,7 +11,8 @@ public class CoffRelocationMachineCoverageTests
     [InlineData((ushort)0x0200, (ushort)0x000A, "LTOFF22")] // IA64
     [InlineData((ushort)0x01F0, (ushort)0x0012, "PAIR")] // POWERPC
     [InlineData((ushort)0x0166, (ushort)0x0010, "JMPADDR16")] // R4000 (MIPS family)
-    [InlineData((ushort)0x01A6, (ushort)0x0010, "SECREL")] // SH4
+    [InlineData((ushort)0x01A6, (ushort)0x0010, "DIRECT32_NB")] // SH4
+    [InlineData((ushort)0x9041, (ushort)0x000D, "SECREL")] // M32R
     public void CoffObject_RelocationTypeName_Maps_Additional_Machines(ushort machine, ushort relocationType, string expectedName)
     {
         byte[] data = BuildCoffObjectWithRelocation(machine, relocationType);

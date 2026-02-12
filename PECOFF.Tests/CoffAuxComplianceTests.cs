@@ -108,6 +108,39 @@ public class CoffAuxComplianceTests
     }
 
     [Fact]
+    public void CoffFunctionDefinitionAux_ReservedTail_EmitSpecWarning_AndStrictModeFails()
+    {
+        byte[] aux = new byte[18];
+        WriteUInt32(aux, 0, 1u);
+        WriteUInt32(aux, 4, 0x20u);
+        WriteUInt32(aux, 8, 0u);
+        WriteUInt32(aux, 12, 0u);
+        aux[16] = 0xAB; // reserved tail bytes must be zero
+
+        string path = WriteTempCoffObject(aux, storageClass: 0x02, symbolName: "func", symbolType: 0x20);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: COFF function auxiliary reserved fields are non-zero", StringComparison.Ordinal));
+
+            CoffAuxSymbolInfo parsedAux = Assert.Single(Assert.Single(parser.CoffSymbols).AuxSymbols);
+            Assert.Equal("FunctionDefinition", parsedAux.Kind);
+            Assert.False(parsedAux.FunctionAuxReservedFieldsValid);
+
+            string json = parser.Result.ToJsonReport(includeBinary: false, indented: false);
+            Assert.Contains("\"FunctionAuxReservedFieldsValid\":false", json, StringComparison.Ordinal);
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void CoffFunctionAux_EndRecord_WithPointer_EmitsSpecWarning()
     {
         byte[] aux = new byte[18];
@@ -130,7 +163,7 @@ public class CoffAuxComplianceTests
     [Fact]
     public void CoffWeakExternal_ExternalUndefinedForm_ParsesAndResolvesDefaultSymbol()
     {
-        string path = WriteTempWeakExternalObject();
+        string path = WriteTempWeakExternalObject(weakTagIndex: 4u, includeLeadingFileAux: true);
         try
         {
             PECOFF parser = new PECOFF(path);
@@ -138,6 +171,43 @@ public class CoffAuxComplianceTests
             CoffAuxSymbolInfo aux = Assert.Single(weakSymbol.AuxSymbols);
             Assert.Equal("WeakExternal", aux.Kind);
             Assert.Equal("target", aux.WeakDefaultSymbol);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffWeakExternal_LegacyCompactIndex_FallbackStillResolves()
+    {
+        string path = WriteTempWeakExternalObject(weakTagIndex: 1u, includeLeadingFileAux: false);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            CoffSymbolInfo weakSymbol = Assert.Single(parser.CoffSymbols, s => string.Equals(s.Name, "weak", StringComparison.Ordinal));
+            CoffAuxSymbolInfo aux = Assert.Single(weakSymbol.AuxSymbols);
+            Assert.Equal("WeakExternal", aux.Kind);
+            Assert.Equal("target", aux.WeakDefaultSymbol);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffWeakExternal_UnresolvableTagIndex_EmitsSpecWarning_AndStrictModeFails()
+    {
+        string path = WriteTempWeakExternalObject(weakTagIndex: 99u, includeLeadingFileAux: true);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: COFF weak external aux record", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
         }
         finally
         {
@@ -158,9 +228,9 @@ public class CoffAuxComplianceTests
         return data;
     }
 
-    private static string WriteTempCoffObject(byte[] auxData, byte storageClass, string symbolName)
+    private static string WriteTempCoffObject(byte[] auxData, byte storageClass, string symbolName, ushort symbolType = 0)
     {
-        byte[] data = BuildCoffObjectWithAux(auxData, storageClass, symbolName);
+        byte[] data = BuildCoffObjectWithAux(auxData, storageClass, symbolName, symbolType: symbolType);
         string path = Path.GetTempFileName();
         File.WriteAllBytes(path, data);
         return path;
@@ -174,15 +244,21 @@ public class CoffAuxComplianceTests
         return path;
     }
 
-    private static string WriteTempWeakExternalObject()
+    private static string WriteTempWeakExternalObject(uint weakTagIndex, bool includeLeadingFileAux)
     {
-        byte[] data = BuildWeakExternalObject();
+        byte[] data = BuildWeakExternalObject(weakTagIndex, includeLeadingFileAux);
         string path = Path.GetTempFileName();
         File.WriteAllBytes(path, data);
         return path;
     }
 
-    private static byte[] BuildCoffObjectWithAux(byte[] auxData, byte storageClass, string symbolName, uint numberOfSymbols = 2, byte symbolAuxCount = 1)
+    private static byte[] BuildCoffObjectWithAux(
+        byte[] auxData,
+        byte storageClass,
+        string symbolName,
+        uint numberOfSymbols = 2,
+        byte symbolAuxCount = 1,
+        ushort symbolType = 0)
     {
         const int coffHeaderSize = 20;
         const int sectionHeaderSize = 40;
@@ -216,7 +292,7 @@ public class CoffAuxComplianceTests
         Encoding.ASCII.GetBytes(symbolName ?? string.Empty).CopyTo(symbol, 0);
         WriteUInt32(symbol, 8, 0u); // value
         WriteInt16(symbol, 12, 1); // section number
-        WriteUInt16(symbol, 14, 0); // type
+        WriteUInt16(symbol, 14, symbolType); // type
         symbol[16] = storageClass;
         symbol[17] = symbolAuxCount;
         writer.Write(symbol);
@@ -227,7 +303,7 @@ public class CoffAuxComplianceTests
         return ms.ToArray();
     }
 
-    private static byte[] BuildWeakExternalObject()
+    private static byte[] BuildWeakExternalObject(uint weakTagIndex, bool includeLeadingFileAux)
     {
         const int coffHeaderSize = 20;
         const int sectionHeaderSize = 40;
@@ -240,7 +316,7 @@ public class CoffAuxComplianceTests
         writer.Write((ushort)1); // NumberOfSections
         writer.Write(0x5E2B1234u); // TimeDateStamp
         writer.Write(symbolTableOffset);
-        writer.Write(3u); // weak symbol + aux + target symbol
+        writer.Write(includeLeadingFileAux ? 5u : 3u); // file+aux,weak+aux,target OR weak+aux,target
         writer.Write((ushort)0); // SizeOfOptionalHeader
         writer.Write((ushort)0); // Characteristics
 
@@ -257,6 +333,22 @@ public class CoffAuxComplianceTests
         writer.Write((ushort)0);
         writer.Write(0u);
 
+        if (includeLeadingFileAux)
+        {
+            byte[] fileSymbol = new byte[18];
+            Encoding.ASCII.GetBytes(".file").CopyTo(fileSymbol, 0);
+            WriteUInt32(fileSymbol, 8, 0u);
+            WriteInt16(fileSymbol, 12, 0);
+            WriteUInt16(fileSymbol, 14, 0);
+            fileSymbol[16] = 0x67;
+            fileSymbol[17] = 1;
+            writer.Write(fileSymbol);
+
+            byte[] fileAux = new byte[18];
+            Encoding.ASCII.GetBytes("unit.c").CopyTo(fileAux, 0);
+            writer.Write(fileAux);
+        }
+
         byte[] weakSymbol = new byte[18];
         Encoding.ASCII.GetBytes("weak").CopyTo(weakSymbol, 0);
         WriteUInt32(weakSymbol, 8, 0u); // value
@@ -267,7 +359,7 @@ public class CoffAuxComplianceTests
         writer.Write(weakSymbol);
 
         byte[] weakAux = new byte[18];
-        WriteUInt32(weakAux, 0, 1u); // default symbol index (resolved symbol-list index)
+        WriteUInt32(weakAux, 0, weakTagIndex); // default symbol index
         WriteUInt32(weakAux, 4, 2u); // SEARCH_LIBRARY
         writer.Write(weakAux);
 
