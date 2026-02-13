@@ -14945,6 +14945,20 @@ namespace PECoff
 
         private void ValidateImageCoffDeprecation(IMAGE_FILE_HEADER fileHeader, IReadOnlyList<IMAGE_SECTION_HEADER> sections)
         {
+            bool relocsStripped = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_RELOCS_STRIPPED) != 0;
+            bool lineNumsStripped = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_LINE_NUMS_STRIPPED) != 0;
+            bool localSymsStripped = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_LOCAL_SYMS_STRIPPED) != 0;
+            bool debugStripped = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_DEBUG_STRIPPED) != 0;
+            bool hasCoffSymbolTable = fileHeader.PointerToSymbolTable != 0 || fileHeader.NumberOfSymbols != 0;
+            bool hasBaseRelocationDirectory = _dataDirectories != null &&
+                                              _dataDirectories.Length > 5 &&
+                                              (_dataDirectories[5].VirtualAddress != 0 || _dataDirectories[5].Size != 0);
+            bool hasDebugDirectory = _dataDirectories != null &&
+                                     _dataDirectories.Length > 6 &&
+                                     (_dataDirectories[6].VirtualAddress != 0 || _dataDirectories[6].Size != 0);
+            bool dynamicBaseEnabled = _dllCharacteristicsInfo != null &&
+                                      (_dllCharacteristicsInfo.Value & (ushort)DllCharacteristics.IMAGE_DLL_CHARACTERISTICS_DYNAMIC_BASE) != 0;
+
             if (fileHeader.PointerToSymbolTable != 0 || fileHeader.NumberOfSymbols != 0)
             {
                 Warn(
@@ -14952,20 +14966,66 @@ namespace PECoff
                     $"SPEC violation: PE images should have COFF symbol table pointers cleared (PointerToSymbolTable=0x{fileHeader.PointerToSymbolTable:X8}, NumberOfSymbols={fileHeader.NumberOfSymbols}).");
             }
 
-            if (sections == null || sections.Count == 0)
+            if (localSymsStripped && hasCoffSymbolTable)
             {
-                return;
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: IMAGE_FILE_LOCAL_SYMS_STRIPPED is set but COFF symbol table data is present (PointerToSymbolTable=0x{fileHeader.PointerToSymbolTable:X8}, NumberOfSymbols={fileHeader.NumberOfSymbols}).");
             }
 
-            for (int i = 0; i < sections.Count; i++)
+            if (debugStripped && hasDebugDirectory)
             {
-                IMAGE_SECTION_HEADER section = sections[i];
-                if (section.PointerToLinenumbers != 0 || section.NumberOfLinenumbers != 0)
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_DEBUG_STRIPPED is set but a debug directory is still present.");
+            }
+
+            bool hasImageSectionRelocations = false;
+            bool hasImageSectionLineNumbers = false;
+            if (sections != null && sections.Count > 0)
+            {
+                for (int i = 0; i < sections.Count; i++)
+                {
+                    IMAGE_SECTION_HEADER section = sections[i];
+                    if (section.PointerToRelocations != 0 || section.NumberOfRelocations != 0)
+                    {
+                        hasImageSectionRelocations = true;
+                        Warn(
+                            ParseIssueCategory.Header,
+                            $"SPEC violation: PE image section {NormalizeSectionName(section)} should not use COFF relocations (PointerToRelocations=0x{section.PointerToRelocations:X8}, NumberOfRelocations={section.NumberOfRelocations}).");
+                    }
+
+                    if (section.PointerToLinenumbers != 0 || section.NumberOfLinenumbers != 0)
+                    {
+                        hasImageSectionLineNumbers = true;
+                        Warn(
+                            ParseIssueCategory.Header,
+                            $"SPEC violation: PE image section {NormalizeSectionName(section)} should not use COFF line numbers (PointerToLinenumbers=0x{section.PointerToLinenumbers:X8}, NumberOfLinenumbers={section.NumberOfLinenumbers}).");
+                    }
+                }
+            }
+
+            if (lineNumsStripped && hasImageSectionLineNumbers)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_LINE_NUMS_STRIPPED is set but COFF line-number data is still present.");
+            }
+
+            if (relocsStripped)
+            {
+                if (hasBaseRelocationDirectory || hasImageSectionRelocations)
                 {
                     Warn(
                         ParseIssueCategory.Header,
-                        $"SPEC violation: PE image section {NormalizeSectionName(section)} should not use COFF line numbers (PointerToLinenumbers=0x{section.PointerToLinenumbers:X8}, NumberOfLinenumbers={section.NumberOfLinenumbers}).");
+                        $"SPEC violation: IMAGE_FILE_RELOCS_STRIPPED is set but relocation information is still present (BaseRelocDirectoryPresent={hasBaseRelocationDirectory}, SectionRelocationsPresent={hasImageSectionRelocations}).");
                 }
+            }
+            else if (!hasBaseRelocationDirectory && !hasImageSectionRelocations && dynamicBaseEnabled)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_RELOCS_STRIPPED is clear while no relocation information is present and DYNAMIC_BASE is enabled.");
             }
         }
 
