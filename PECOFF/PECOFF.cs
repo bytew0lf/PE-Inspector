@@ -5508,6 +5508,13 @@ namespace PECoff
         private void ValidateCoffObjectSectionCharacteristics(IMAGE_SECTION_HEADER section, string sectionName)
         {
             uint characteristics = (uint)section.Characteristics;
+            if (section.VirtualSize != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: COFF object section {sectionName} should set VirtualSize to 0 (found 0x{section.VirtualSize:X8}).");
+            }
+
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_GPREL) != 0 &&
                 _machineType != MachineTypes.IMAGE_FILE_MACHINE_IA64)
             {

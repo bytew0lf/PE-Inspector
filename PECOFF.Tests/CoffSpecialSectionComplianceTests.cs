@@ -323,6 +323,64 @@ public class CoffSpecialSectionComplianceTests
     }
 
     [Fact]
+    public void CoffObject_NonZeroVirtualSize_Emits_SpecWarning_AndStrictModeFails()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".text", Array.Empty<byte>(), 0x60000020u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        const int coffHeaderSize = 20;
+        const int virtualSizeOffsetInSectionHeader = 8;
+        WriteUInt32(data, coffHeaderSize + virtualSizeOffsetInSectionHeader, 0x10u);
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("COFF object section .text should set VirtualSize to 0", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_ZeroVirtualSize_DoesNotEmit_VirtualSizeConformanceWarning()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".text", Array.Empty<byte>(), 0x60000020u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("should set VirtualSize to 0", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void CoffObject_VsDataSection_On_NonArmSh4Thumb_Emits_SpecWarning()
     {
         byte[] data = BuildCoffObject(
