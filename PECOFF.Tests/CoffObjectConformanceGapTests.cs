@@ -76,7 +76,6 @@ public class CoffObjectConformanceGapTests
     [Theory]
     [InlineData((ushort)0x01C2, (ushort)0x0010, (ushort)0x0016)] // ARM_MOV32 -> ARM_PAIR
     [InlineData((ushort)0x01F0, (ushort)0x0010, (ushort)0x0012)] // PPC REFHI -> PAIR
-    [InlineData((ushort)0x01F0, (ushort)0x0014, (ushort)0x0012)] // PPC SECRELHI -> PAIR
     [InlineData((ushort)0x0166, (ushort)0x0004, (ushort)0x0025)] // MIPS REFHI -> PAIR
     [InlineData((ushort)0x9041, (ushort)0x0009, (ushort)0x000B)] // M32R REFHI -> PAIR
     [InlineData((ushort)0x01A6, (ushort)0x0016, (ushort)0x0018)] // SHM_RELLO -> SHM_PAIR
@@ -120,7 +119,7 @@ public class CoffObjectConformanceGapTests
     [Theory]
     [InlineData((ushort)0x01C2, (ushort)0x000A, (ushort)0x0016)] // ARM REL32 -> ARM_PAIR (invalid)
     [InlineData((ushort)0x01F0, (ushort)0x0002, (ushort)0x0012)] // PPC ADDR32 -> PAIR (invalid)
-    [InlineData((ushort)0x01F0, (ushort)0x0015, (ushort)0x0012)] // PPC GPREL -> PAIR (invalid)
+    [InlineData((ushort)0x01F0, (ushort)0x0015, (ushort)0x0012)] // PPC TOKEN -> PAIR (invalid)
     [InlineData((ushort)0x0166, (ushort)0x0002, (ushort)0x0025)] // MIPS REFWORD -> PAIR (invalid)
     [InlineData((ushort)0x9041, (ushort)0x0008, (ushort)0x000B)] // M32R REFHALF -> PAIR (invalid)
     [InlineData((ushort)0x01A6, (ushort)0x0002, (ushort)0x0018)] // SH DIRECT32 -> SHM_PAIR (invalid)
@@ -168,6 +167,7 @@ public class CoffObjectConformanceGapTests
     [InlineData((ushort)0x000C, "SECREL22")]
     [InlineData((ushort)0x000D, "SECREL64I")]
     [InlineData((ushort)0x000E, "SECREL32")]
+    [InlineData((ushort)0x000F, "LTOFF64")]
     public void CoffRelocation_Ia64Addend_ValidOrdering_UsesPayloadSemantics(ushort leadingType, string leadingTypeName)
     {
         const uint addendPayload = 0xDEADBEEFu;
@@ -210,7 +210,7 @@ public class CoffObjectConformanceGapTests
     [Theory]
     [InlineData(new ushort[] { 0x001F })] // no predecessor
     [InlineData(new ushort[] { 0x0004, 0x001F })] // DIR32 -> ADDEND (invalid)
-    [InlineData(new ushort[] { 0x000F, 0x001F })] // TYPE_0x000F -> ADDEND (table-based invalid)
+    [InlineData(new ushort[] { 0x001D, 0x001F })] // PCREL21BI -> ADDEND (invalid)
     public void CoffRelocation_Ia64Addend_InvalidOrdering_EmitsSpecWarning_AndStrictModeFails(ushort[] types)
     {
         byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
@@ -251,7 +251,7 @@ public class CoffObjectConformanceGapTests
             sectionName: CreateSectionName(".text"),
             relocations: new[]
             {
-                (0x20u, 0u, (ushort)0x000F), // non-documented predecessor, prose compatibility
+                (0x20u, 0u, (ushort)0x000F), // documented predecessor
                 (0x24u, addendPayload, (ushort)0x001F)
             },
             symbols: new[] { symbol },
@@ -262,7 +262,7 @@ public class CoffObjectConformanceGapTests
         {
             PECOFF compatibility = new PECOFF(path, new PECOFFOptions { ValidationProfile = ValidationProfile.Compatibility });
             Assert.Equal(2, compatibility.CoffRelocations.Length);
-            Assert.Equal("TYPE_0x000F", compatibility.CoffRelocations[0].TypeName);
+            Assert.Equal("LTOFF64", compatibility.CoffRelocations[0].TypeName);
             Assert.DoesNotContain(
                 compatibility.ParseResult.Warnings,
                 warning => warning.Contains("SPEC violation: COFF IA64 ADDEND relocation entry", StringComparison.Ordinal));
@@ -274,7 +274,7 @@ public class CoffObjectConformanceGapTests
     }
 
     [Fact]
-    public void CoffRelocation_Ia64Addend_ExplicitTablePolicy_OverridesCompatibilityProfile()
+    public void CoffRelocation_Ia64Addend_ExplicitTablePolicy_Allows_Ltoff64Predecessor()
     {
         const uint addendPayload = 0x55667788u;
         byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
@@ -283,7 +283,7 @@ public class CoffObjectConformanceGapTests
             sectionName: CreateSectionName(".text"),
             relocations: new[]
             {
-                (0x20u, 0u, (ushort)0x000F), // non-documented predecessor
+                (0x20u, 0u, (ushort)0x000F), // documented predecessor
                 (0x24u, addendPayload, (ushort)0x001F)
             },
             symbols: new[] { symbol },
@@ -298,10 +298,9 @@ public class CoffObjectConformanceGapTests
                 Ia64AddendOrderingPolicy = Ia64AddendOrderingPolicy.TableOnly
             });
 
-            Assert.Contains(
+            Assert.DoesNotContain(
                 tableOnly.ParseResult.Warnings,
-                warning => warning.Contains("SPEC violation: COFF IA64 ADDEND relocation entry", StringComparison.Ordinal) &&
-                           warning.Contains("table-based IA64 predecessor set", StringComparison.Ordinal));
+                warning => warning.Contains("SPEC violation: COFF IA64 ADDEND relocation entry", StringComparison.Ordinal));
         }
         finally
         {

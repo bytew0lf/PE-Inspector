@@ -52,14 +52,14 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x0003, "BRANCH24")]
     [InlineData((ushort)0x0004, "BRANCH11")]
     [InlineData((ushort)0x000A, "REL32")]
+    [InlineData((ushort)0x000B, "BLX24")]
+    [InlineData((ushort)0x000C, "BLX11")]
+    [InlineData((ushort)0x000D, "TOKEN")]
     [InlineData((ushort)0x000E, "SECTION")]
     [InlineData((ushort)0x000F, "SECREL")]
     [InlineData((ushort)0x0010, "ARM_MOV32")]
     [InlineData((ushort)0x0011, "THUMB_MOV32")]
-    [InlineData((ushort)0x0012, "THUMB_BRANCH20")]
-    [InlineData((ushort)0x0013, "UNUSED")]
-    [InlineData((ushort)0x0014, "THUMB_BRANCH24")]
-    [InlineData((ushort)0x0015, "THUMB_BLX23")]
+    [InlineData((ushort)0x0012, "BLX23")]
     [InlineData((ushort)0x0016, "PAIR")]
     public void CoffRelocationTypeName_ArmTable_MatchesSpec(ushort type, string expected)
     {
@@ -108,6 +108,7 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x000C, "SECREL22")]
     [InlineData((ushort)0x000D, "SECREL64I")]
     [InlineData((ushort)0x000E, "SECREL32")]
+    [InlineData((ushort)0x000F, "LTOFF64")]
     [InlineData((ushort)0x0010, "DIR32NB")]
     [InlineData((ushort)0x0011, "SREL14")]
     [InlineData((ushort)0x0012, "SREL22")]
@@ -121,6 +122,8 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x001A, "IMMGPREL64")]
     [InlineData((ushort)0x001B, "TOKEN")]
     [InlineData((ushort)0x001C, "GPREL32")]
+    [InlineData((ushort)0x001D, "PCREL21BI")]
+    [InlineData((ushort)0x001E, "PCREL22")]
     [InlineData((ushort)0x001F, "ADDEND")]
     public void CoffRelocationTypeName_Ia64Table_MatchesSpec(ushort type, string expected)
     {
@@ -137,17 +140,20 @@ public class CoffRelocationTypeTests
     [InlineData((ushort)0x0005, "ADDR14")]
     [InlineData((ushort)0x0006, "REL24")]
     [InlineData((ushort)0x0007, "REL14")]
+    [InlineData((ushort)0x0008, "TOCREL16")]
+    [InlineData((ushort)0x0009, "TOCREL14")]
     [InlineData((ushort)0x000A, "ADDR32NB")]
     [InlineData((ushort)0x000B, "SECREL")]
     [InlineData((ushort)0x000C, "SECTION")]
+    [InlineData((ushort)0x000D, "ADDR14BRTAKEN")]
+    [InlineData((ushort)0x000E, "ADDR14BRNTAKEN")]
     [InlineData((ushort)0x000F, "SECREL16")]
     [InlineData((ushort)0x0010, "REFHI")]
     [InlineData((ushort)0x0011, "REFLO")]
     [InlineData((ushort)0x0012, "PAIR")]
     [InlineData((ushort)0x0013, "SECRELLO")]
-    [InlineData((ushort)0x0014, "SECRELHI")]
-    [InlineData((ushort)0x0015, "GPREL")]
-    [InlineData((ushort)0x0016, "TOKEN")]
+    [InlineData((ushort)0x0014, "GPREL")]
+    [InlineData((ushort)0x0015, "TOKEN")]
     public void CoffRelocationTypeName_PowerPcTable_MatchesSpec(ushort type, string expected)
     {
         string name = PECOFF.GetCoffRelocationTypeNameForTest((ushort)0x01F0, type);
@@ -242,17 +248,11 @@ public class CoffRelocationTypeTests
 
     [Theory]
     [InlineData((ushort)0x01C2, (ushort)0x0008)] // ARM
-    [InlineData((ushort)0x01C2, (ushort)0x000B)] // ARM non-spec legacy
-    [InlineData((ushort)0x01C2, (ushort)0x000C)] // ARM non-spec legacy
-    [InlineData((ushort)0x01C2, (ushort)0x000D)] // ARM non-spec legacy
-    [InlineData((ushort)0x0200, (ushort)0x000F)] // IA64 non-documented (table mismatch)
-    [InlineData((ushort)0x0200, (ushort)0x001D)] // IA64 non-documented
-    [InlineData((ushort)0x0200, (ushort)0x001E)] // IA64 non-documented
+    [InlineData((ushort)0x01C2, (ushort)0x0013)] // ARM
+    [InlineData((ushort)0x01C2, (ushort)0x0014)] // ARM
+    [InlineData((ushort)0x01C2, (ushort)0x0015)] // ARM
     [InlineData((ushort)0x0200, (ushort)0x0020)] // IA64
-    [InlineData((ushort)0x01F0, (ushort)0x0008)] // PPC non-documented
-    [InlineData((ushort)0x01F0, (ushort)0x0009)] // PPC non-documented
-    [InlineData((ushort)0x01F0, (ushort)0x000D)] // PPC non-documented
-    [InlineData((ushort)0x01F0, (ushort)0x000E)] // PPC non-documented
+    [InlineData((ushort)0x01F0, (ushort)0x0016)] // PPC
     [InlineData((ushort)0x01F0, (ushort)0x0020)] // PPC
     [InlineData((ushort)0x01A4, (ushort)0x0019)] // SH3E
     [InlineData((ushort)0x01A6, (ushort)0x0019)] // SH4

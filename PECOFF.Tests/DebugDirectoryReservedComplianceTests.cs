@@ -116,6 +116,99 @@ public class DebugDirectoryReservedComplianceTests
         }
     }
 
+    [Theory]
+    [InlineData((uint)DebugDirectoryType.Fixup, "IMAGE_DEBUG_TYPE_FIXUP")]
+    [InlineData((uint)DebugDirectoryType.Borland, "IMAGE_DEBUG_TYPE_BORLAND")]
+    [InlineData((uint)DebugDirectoryType.Clsid, "IMAGE_DEBUG_TYPE_CLSID")]
+    public void DebugDirectory_ReservedTypes6_9_11_WithPayload_EmitSpecViolation_AndStrictModeFails(uint debugType, string reservedTypeLabel)
+    {
+        byte[] payload = BuildReservedTypePayload(debugType);
+        byte[] mutated = BuildDebugFixture(
+            debugType: debugType,
+            characteristics: 0u,
+            payload: payload);
+
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, mutated);
+            PECOFF parser = new PECOFF(path);
+
+            DebugDirectoryEntry entry = Assert.Single(parser.DebugDirectories);
+            Assert.Contains("Non-standard", entry.Note, StringComparison.Ordinal);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains($"SPEC violation: {reservedTypeLabel} is reserved and should not be used", StringComparison.Ordinal));
+
+            if (debugType == (uint)DebugDirectoryType.Fixup)
+            {
+                Assert.NotNull(entry.Fixup);
+            }
+            else if (debugType == (uint)DebugDirectoryType.Borland)
+            {
+                Assert.NotNull(entry.Borland);
+            }
+            else if (debugType == (uint)DebugDirectoryType.Clsid)
+            {
+                Assert.NotNull(entry.Clsid);
+            }
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData((uint)DebugDirectoryType.Fixup, "IMAGE_DEBUG_TYPE_FIXUP")]
+    [InlineData((uint)DebugDirectoryType.Borland, "IMAGE_DEBUG_TYPE_BORLAND")]
+    [InlineData((uint)DebugDirectoryType.Clsid, "IMAGE_DEBUG_TYPE_CLSID")]
+    public void DebugDirectory_ReservedTypes6_9_11_ZeroSize_StillEmitSpecViolation(uint debugType, string reservedTypeLabel)
+    {
+        byte[] mutated = BuildDebugFixture(
+            debugType: debugType,
+            characteristics: 0u,
+            payload: Array.Empty<byte>());
+
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, mutated);
+            PECOFF parser = new PECOFF(path);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains($"SPEC violation: {reservedTypeLabel} is reserved and should not be used", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static byte[] BuildReservedTypePayload(uint debugType)
+    {
+        if (debugType == (uint)DebugDirectoryType.Borland)
+        {
+            byte[] borland = new byte[8];
+            WriteUInt32(borland, 0, 1u);
+            WriteUInt32(borland, 4, 2u);
+            return borland;
+        }
+
+        if (debugType == (uint)DebugDirectoryType.Clsid)
+        {
+            return Guid.NewGuid().ToByteArray();
+        }
+
+        return new byte[] { 0xAA, 0xBB, 0xCC, 0xDD };
+    }
+
     private static byte[] BuildDebugFixture(uint debugType, uint characteristics, byte[] payload)
     {
         string? fixtures = FindFixturesDirectory();

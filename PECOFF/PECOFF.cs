@@ -16751,9 +16751,8 @@ namespace PECoff
                 case 0x000C: // IMAGE_REL_IA64_SECREL22
                 case 0x000D: // IMAGE_REL_IA64_SECREL64I
                 case 0x000E: // IMAGE_REL_IA64_SECREL32
+                case 0x000F: // IMAGE_REL_IA64_LTOFF64
                     return true;
-                case 0x000F: // IMAGE_REL_IA64_LTOFF64 (prose compatibility path)
-                    return policy == Ia64AddendOrderingPolicy.CompatibilityProse;
                 default:
                     return false;
             }
@@ -16766,7 +16765,7 @@ namespace PECoff
                 return "compatibility/prose IA64 predecessor set: IMM14, IMM22, IMM64, GPREL22, LTOFF22, LTOFF64, SECREL22, SECREL64I, or SECREL32";
             }
 
-            return "table-based IA64 predecessor set: IMM14, IMM22, IMM64, GPREL22, LTOFF22, SECREL22, SECREL64I, or SECREL32";
+            return "table-based IA64 predecessor set: IMM14, IMM22, IMM64, GPREL22, LTOFF22, LTOFF64, SECREL22, SECREL64I, or SECREL32";
         }
 
         private Ia64AddendOrderingPolicy ResolveIa64AddendOrderingPolicy()
@@ -16814,7 +16813,7 @@ namespace PECoff
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPC ||
                 machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP)
             {
-                return previous == 0x0010 || previous == 0x0014; // REFHI or SECRELHI
+                return previous == 0x0010; // REFHI
             }
 
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_SH3 ||
@@ -16851,7 +16850,7 @@ namespace PECoff
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPC ||
                 machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP)
             {
-                return "REFHI or SECRELHI";
+                return "REFHI";
             }
 
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_SH3 ||
@@ -16989,14 +16988,14 @@ namespace PECoff
                         case 0x0003: return "BRANCH24";
                         case 0x0004: return "BRANCH11";
                         case 0x000A: return "REL32";
+                        case 0x000B: return "BLX24";
+                        case 0x000C: return "BLX11";
+                        case 0x000D: return "TOKEN";
                         case 0x000E: return "SECTION";
                         case 0x000F: return "SECREL";
                         case 0x0010: return "ARM_MOV32";
                         case 0x0011: return "THUMB_MOV32";
-                        case 0x0012: return "THUMB_BRANCH20";
-                        case 0x0013: return "UNUSED";
-                        case 0x0014: return "THUMB_BRANCH24";
-                        case 0x0015: return "THUMB_BLX23";
+                        case 0x0012: return "BLX23";
                         case 0x0016: return "PAIR";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
@@ -17043,6 +17042,7 @@ namespace PECoff
                         case 0x000C: return "SECREL22";
                         case 0x000D: return "SECREL64I";
                         case 0x000E: return "SECREL32";
+                        case 0x000F: return "LTOFF64";
                         case 0x0010: return "DIR32NB";
                         case 0x0011: return "SREL14";
                         case 0x0012: return "SREL22";
@@ -17056,6 +17056,8 @@ namespace PECoff
                         case 0x001A: return "IMMGPREL64";
                         case 0x001B: return "TOKEN";
                         case 0x001C: return "GPREL32";
+                        case 0x001D: return "PCREL21BI";
+                        case 0x001E: return "PCREL22";
                         case 0x001F: return "ADDEND";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
@@ -17071,17 +17073,20 @@ namespace PECoff
                         case 0x0005: return "ADDR14";
                         case 0x0006: return "REL24";
                         case 0x0007: return "REL14";
+                        case 0x0008: return "TOCREL16";
+                        case 0x0009: return "TOCREL14";
                         case 0x000A: return "ADDR32NB";
                         case 0x000B: return "SECREL";
                         case 0x000C: return "SECTION";
+                        case 0x000D: return "ADDR14BRTAKEN";
+                        case 0x000E: return "ADDR14BRNTAKEN";
                         case 0x000F: return "SECREL16";
                         case 0x0010: return "REFHI";
                         case 0x0011: return "REFLO";
                         case 0x0012: return "PAIR";
                         case 0x0013: return "SECRELLO";
-                        case 0x0014: return "SECRELHI";
-                        case 0x0015: return "GPREL";
-                        case 0x0016: return "TOKEN";
+                        case 0x0014: return "GPREL";
+                        case 0x0015: return "TOKEN";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_R3000BE:
@@ -18937,6 +18942,24 @@ namespace PECoff
                 {
                     Warn(ParseIssueCategory.Debug, "SPEC violation: IMAGE_DEBUG_TYPE_RESERVED10 is reserved and should not be used.");
                     note = AppendNote(note, "Non-standard: reserved debug type 10 parsed for compatibility.");
+                }
+
+                if (debugType == DebugDirectoryType.Fixup)
+                {
+                    Warn(ParseIssueCategory.Debug, "SPEC violation: IMAGE_DEBUG_TYPE_FIXUP is reserved and should not be used.");
+                    note = AppendNote(note, "Non-standard: reserved debug type 6 parsed for compatibility.");
+                }
+
+                if (debugType == DebugDirectoryType.Borland)
+                {
+                    Warn(ParseIssueCategory.Debug, "SPEC violation: IMAGE_DEBUG_TYPE_BORLAND is reserved and should not be used.");
+                    note = AppendNote(note, "Non-standard: reserved debug type 9 parsed for compatibility.");
+                }
+
+                if (debugType == DebugDirectoryType.Clsid)
+                {
+                    Warn(ParseIssueCategory.Debug, "SPEC violation: IMAGE_DEBUG_TYPE_CLSID is reserved and should not be used.");
+                    note = AppendNote(note, "Non-standard: reserved debug type 11 parsed for compatibility.");
                 }
 
                 if (debugType == DebugDirectoryType.CodeView && entry.SizeOfData > 0)
