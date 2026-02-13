@@ -14,12 +14,15 @@ public class PEImageCoffDeprecationTests
     private const ushort IMAGE_FILE_FUTURE_USE = 0x0040;
     private const ushort IMAGE_FILE_BYTES_REVERSED_LO = 0x0080;
     private const ushort IMAGE_FILE_DEBUG_STRIPPED = 0x0200;
+    private const ushort IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP = 0x0400;
+    private const ushort IMAGE_FILE_NET_RUN_FROM_SWAP = 0x0800;
     private const ushort IMAGE_FILE_BYTES_REVERSED_HI = 0x8000;
     private const ushort IMAGE_DLL_CHARACTERISTICS_DYNAMIC_BASE = 0x0040;
     private const uint IMAGE_SCN_RESERVED_01 = 0x00000001;
     private const uint IMAGE_SCN_LNK_INFO = 0x00000200;
     private const uint IMAGE_SCN_LNK_REMOVE = 0x00000800;
     private const uint IMAGE_SCN_LNK_COMDAT = 0x00001000;
+    private const uint IMAGE_SCN_NO_DEFER_SPEC_EXC = 0x00004000;
     private const uint IMAGE_SCN_GPREL = 0x00008000;
     private const uint IMAGE_SCN_ALIGN_16BYTES = 0x00500000;
 
@@ -259,6 +262,8 @@ public class PEImageCoffDeprecationTests
     [InlineData(IMAGE_FILE_FUTURE_USE, "IMAGE_FILE_FUTURE_USE is reserved and should be 0")]
     [InlineData(IMAGE_FILE_BYTES_REVERSED_LO, "IMAGE_FILE_BYTES_REVERSED_LO is deprecated and should be 0")]
     [InlineData(IMAGE_FILE_BYTES_REVERSED_HI, "IMAGE_FILE_BYTES_REVERSED_HI is deprecated and should be 0")]
+    [InlineData(IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP, "IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP is deprecated and should be 0")]
+    [InlineData(IMAGE_FILE_NET_RUN_FROM_SWAP, "IMAGE_FILE_NET_RUN_FROM_SWAP is deprecated and should be 0")]
     [InlineData(IMAGE_FILE_LINE_NUMS_STRIPPED, "IMAGE_FILE_LINE_NUMS_STRIPPED is deprecated and should be 0")]
     [InlineData(IMAGE_FILE_LOCAL_SYMS_STRIPPED, "IMAGE_FILE_LOCAL_SYMS_STRIPPED is deprecated and should be 0")]
     public void PeImage_DeprecatedOrReservedCharacteristics_BitSet_EmitsSpecViolation_AndStrictModeFails(ushort bit, string expectedSnippet)
@@ -310,6 +315,30 @@ public class PEImageCoffDeprecationTests
     }
 
     [Fact]
+    public void PeImage_NumberOfSectionsAbove96_EmitsSpecViolation_AndStrictModeFails()
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TrySetPeNumberOfSections(mutated, 97));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: PE images should not declare more than 96 sections", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
     public void CoffObject_ExecutableImageBitClear_DoesNotEmitPeImageExecutableWarning()
     {
         byte[] data = BuildCoffObjectWithLinePointers();
@@ -337,6 +366,7 @@ public class PEImageCoffDeprecationTests
     [InlineData(IMAGE_SCN_LNK_INFO, "IMAGE_SCN_LNK_INFO, which is object-only.")]
     [InlineData(IMAGE_SCN_LNK_REMOVE, "IMAGE_SCN_LNK_REMOVE, which is object-only.")]
     [InlineData(IMAGE_SCN_LNK_COMDAT, "IMAGE_SCN_LNK_COMDAT, which is object-only.")]
+    [InlineData(IMAGE_SCN_NO_DEFER_SPEC_EXC, "IMAGE_SCN_NO_DEFER_SPEC_EXC, which is deprecated/obsolete.")]
     [InlineData(IMAGE_SCN_GPREL, "IMAGE_SCN_GPREL, which is object-only.")]
     [InlineData(IMAGE_SCN_ALIGN_16BYTES, "IMAGE_SCN_ALIGN_* flags, which are object-only.")]
     [InlineData(IMAGE_SCN_RESERVED_01, "uses reserved section-characteristic bits")]
@@ -426,6 +456,24 @@ public class PEImageCoffDeprecationTests
         uint characteristics = BitConverter.ToUInt32(data, firstSectionOffset + 36);
         characteristics = (characteristics | setMask) & ~clearMask;
         WriteUInt32(data, firstSectionOffset + 36, characteristics);
+        return true;
+    }
+
+    private static bool TrySetPeNumberOfSections(byte[] data, ushort numberOfSections)
+    {
+        if (!TryGetPeLayout(
+                data,
+                out int fileHeaderOffset,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        WriteUInt16(data, fileHeaderOffset + 2, numberOfSections);
         return true;
     }
 

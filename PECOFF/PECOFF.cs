@@ -1067,6 +1067,7 @@ namespace PECoff
             IMAGE_SCN_RESERVED_05 = 0x00000400,
             IMAGE_SCN_LNK_REMOVE = 0x00000800,
             IMAGE_SCN_LNK_COMDAT = 0x00001000,
+            IMAGE_SCN_NO_DEFER_SPEC_EXC = 0x00004000,
             IMAGE_SCN_GPREL = 0x00008000,
             IMAGE_SCN_MEM_PURGEABLE = 0x00020000,
             IMAGE_SCN_MEM_16BIT = 0x00020000,
@@ -14953,6 +14954,8 @@ namespace PECoff
             bool futureUse = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_FUTURE_USE) != 0;
             bool bytesReversedLo = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_BYTES_REVERSED_LO) != 0;
             bool bytesReversedHi = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_BYTES_REVERSED_HI) != 0;
+            bool removableRunFromSwap = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP) != 0;
+            bool netRunFromSwap = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_NET_RUN_FROM_SWAP) != 0;
             bool debugStripped = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_DEBUG_STRIPPED) != 0;
             bool hasCoffSymbolTable = fileHeader.PointerToSymbolTable != 0 || fileHeader.NumberOfSymbols != 0;
             bool hasBaseRelocationDirectory = _dataDirectories != null &&
@@ -15004,6 +15007,20 @@ namespace PECoff
                 Warn(
                     ParseIssueCategory.Header,
                     "SPEC violation: IMAGE_FILE_BYTES_REVERSED_HI is deprecated and should be 0 for PE images.");
+            }
+
+            if (removableRunFromSwap)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP is deprecated and should be 0 for PE images.");
+            }
+
+            if (netRunFromSwap)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_NET_RUN_FROM_SWAP is deprecated and should be 0 for PE images.");
             }
 
             if (lineNumsStripped)
@@ -15133,6 +15150,13 @@ namespace PECoff
                 Warn(
                     ParseIssueCategory.Header,
                     $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_LNK_COMDAT, which is object-only.");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_NO_DEFER_SPEC_EXC) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_NO_DEFER_SPEC_EXC, which is deprecated/obsolete.");
             }
 
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_GPREL) != 0)
@@ -15559,6 +15583,10 @@ namespace PECoff
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_COMDAT) != 0)
             {
                 flags.Add("LNK_COMDAT");
+            }
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_NO_DEFER_SPEC_EXC) != 0)
+            {
+                flags.Add("NO_DEFER_SPEC_EXC");
             }
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_GPREL) != 0)
             {
@@ -26345,6 +26373,13 @@ namespace PECoff
                     _optionalHeaderChecksum = peHeader.CheckSum;
                     _subsystemInfo = BuildSubsystemInfo(peHeader.Subsystem);
                     _dllCharacteristicsInfo = BuildDllCharacteristicsInfo(peHeader.DllCharacteristics);
+
+                    if (peHeader.FileHeader.NumberOfSections > 96)
+                    {
+                        Warn(
+                            ParseIssueCategory.Header,
+                            $"SPEC violation: PE images should not declare more than 96 sections (NumberOfSections={peHeader.FileHeader.NumberOfSections}).");
+                    }
 
                     IMAGE_DATA_DIRECTORY[] dataDirectory = peHeader.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
                     _dataDirectories = dataDirectory;
