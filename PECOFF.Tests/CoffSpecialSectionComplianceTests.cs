@@ -381,7 +381,7 @@ public class CoffSpecialSectionComplianceTests
     }
 
     [Fact]
-    public void CoffObject_NonZeroVirtualAddress_Emits_SpecWarning_AndStrictModeFails()
+    public void CoffObject_NonZeroVirtualAddress_DoesNotEmit_SpecViolation_AndStrictModeSucceeds()
     {
         byte[] data = BuildCoffObject(
             machine: 0x014C,
@@ -400,11 +400,12 @@ public class CoffSpecialSectionComplianceTests
         try
         {
             PECOFF parser = new PECOFF(path);
-            Assert.Contains(
+            Assert.DoesNotContain(
                 parser.ParseResult.Warnings,
                 warning => warning.Contains("COFF object section .text should set VirtualAddress to 0", StringComparison.Ordinal));
 
-            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+            PECOFF strict = new PECOFF(path, new PECOFFOptions { StrictMode = true });
+            Assert.Equal("COFF", strict.ImageKind);
         }
         finally
         {
@@ -462,6 +463,105 @@ public class CoffSpecialSectionComplianceTests
                 parser.ParseResult.Warnings,
                 warning => warning.Contains("NumberOfRelocations=0 but PointerToRelocations is non-zero", StringComparison.Ordinal));
 
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_NonZeroOptionalHeaderSize_Emits_SpecWarning_AndStillParses()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".text", Array.Empty<byte>(), 0x60000020u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        const int coffHeaderSize = 20;
+        const int sizeOfOptionalHeaderOffset = 16;
+        const ushort optionalHeaderSize = 4;
+
+        byte[] mutated = new byte[data.Length + optionalHeaderSize];
+        Buffer.BlockCopy(data, 0, mutated, 0, coffHeaderSize);
+        Buffer.BlockCopy(data, coffHeaderSize, mutated, coffHeaderSize + optionalHeaderSize, data.Length - coffHeaderSize);
+        WriteUInt16(mutated, sizeOfOptionalHeaderOffset, optionalHeaderSize);
+
+        string path = WriteTemp(mutated);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Equal("COFF", parser.ImageKind);
+            Assert.NotNull(parser.CoffObject);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("COFF object SizeOfOptionalHeader should be 0", StringComparison.Ordinal));
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_UninitializedSectionWithRawData_Emits_SpecWarnings_AndStrictModeFails()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".bss", new byte[] { 1, 2, 3, 4 }, 0xC0000080u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("contains only uninitialized data but SizeOfRawData is non-zero", StringComparison.Ordinal));
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("contains only uninitialized data but PointerToRawData is non-zero", StringComparison.Ordinal));
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_PointerToRawDataWithoutRawSize_Emits_SpecWarning_AndStrictModeFails()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".text", Array.Empty<byte>(), 0x60000020u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        const int coffHeaderSize = 20;
+        const int pointerToRawDataOffsetInSectionHeader = 20;
+        WriteUInt32(data, coffHeaderSize + pointerToRawDataOffsetInSectionHeader, 0x200u);
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SizeOfRawData=0 but PointerToRawData is non-zero", StringComparison.Ordinal));
             Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
         }
         finally

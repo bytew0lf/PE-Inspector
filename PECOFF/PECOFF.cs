@@ -5508,18 +5508,37 @@ namespace PECoff
         private void ValidateCoffObjectSectionCharacteristics(IMAGE_SECTION_HEADER section, string sectionName)
         {
             uint characteristics = (uint)section.Characteristics;
-            if (section.VirtualAddress != 0)
-            {
-                Warn(
-                    ParseIssueCategory.Header,
-                    $"SPEC violation: COFF object section {sectionName} should set VirtualAddress to 0 (found 0x{section.VirtualAddress:X8}).");
-            }
-
             if (section.VirtualSize != 0)
             {
                 Warn(
                     ParseIssueCategory.Header,
                     $"SPEC violation: COFF object section {sectionName} should set VirtualSize to 0 (found 0x{section.VirtualSize:X8}).");
+            }
+
+            bool hasCode = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0;
+            bool hasInitializedData = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) != 0;
+            bool hasUninitializedData = (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0;
+            bool onlyUninitializedData = hasUninitializedData && !hasCode && !hasInitializedData;
+
+            if (section.SizeOfRawData == 0 && section.PointerToRawData != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: COFF object section {sectionName} has SizeOfRawData=0 but PointerToRawData is non-zero (0x{section.PointerToRawData:X8}).");
+            }
+
+            if (onlyUninitializedData && section.SizeOfRawData != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: COFF object section {sectionName} contains only uninitialized data but SizeOfRawData is non-zero (0x{section.SizeOfRawData:X8}).");
+            }
+
+            if (onlyUninitializedData && section.PointerToRawData != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: COFF object section {sectionName} contains only uninitialized data but PointerToRawData is non-zero (0x{section.PointerToRawData:X8}).");
             }
 
             if (section.NumberOfRelocations == 0 && section.PointerToRelocations != 0)
@@ -27106,7 +27125,10 @@ namespace PECoff
             }
             else if (coffHeader.SizeOfOptionalHeader != 0)
             {
-                return false;
+                sectionTableOffset = headerSize + coffHeader.SizeOfOptionalHeader;
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: COFF object SizeOfOptionalHeader should be 0 (found 0x{coffHeader.SizeOfOptionalHeader:X4}).");
             }
 
             long fileLength = PEFileStream.Length;
