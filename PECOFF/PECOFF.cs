@@ -15429,6 +15429,22 @@ namespace PECoff
                 Warn(ParseIssueCategory.OptionalHeader, $"SPEC violation: OptionalHeader.LoaderFlags must be 0 (found 0x{peHeader.LoaderFlags:X8}).");
             }
 
+            if (!isRomImage)
+            {
+                const ushort reservedDllCharacteristicsMask = (ushort)(
+                    (ushort)DllCharacteristics.IMAGE_DLL_CHARACTERISTICS_RESERVED_00 |
+                    (ushort)DllCharacteristics.IMAGE_DLL_CHARACTERISTICS_RESERVED_01 |
+                    (ushort)DllCharacteristics.IMAGE_DLL_CHARACTERISTICS_RESERVED_02 |
+                    (ushort)DllCharacteristics.IMAGE_DLL_CHARACTERISTICS_RESERVED_03);
+                ushort reservedDllCharacteristics = (ushort)((ushort)peHeader.DllCharacteristics & reservedDllCharacteristicsMask);
+                if (reservedDllCharacteristics != 0)
+                {
+                    Warn(
+                        ParseIssueCategory.OptionalHeader,
+                        $"SPEC violation: OptionalHeader.DllCharacteristics contains reserved bits 0x{reservedDllCharacteristics:X4} that must be 0.");
+                }
+            }
+
             if (!isRomImage && dataDirectories != null)
             {
                 if (dataDirectories.Length > 7 &&
@@ -17220,6 +17236,13 @@ namespace PECoff
                 byte[] buffer = new byte[descriptorSize];
                 ReadExactly(PEFileStream, buffer, 0, buffer.Length);
                 IMAGE_DELAY_IMPORT_DESCRIPTOR descriptor = ByteArrayToStructure<IMAGE_DELAY_IMPORT_DESCRIPTOR>(buffer);
+
+                if (descriptor.Attributes != 0)
+                {
+                    Warn(
+                        ParseIssueCategory.Imports,
+                        $"SPEC violation: IMAGE_DELAY_IMPORT_DESCRIPTOR.Attributes is reserved and must be 0 (found 0x{descriptor.Attributes:X8}).");
+                }
 
                 if (descriptor.Attributes == 0 &&
                     descriptor.NameRVA == 0 &&
