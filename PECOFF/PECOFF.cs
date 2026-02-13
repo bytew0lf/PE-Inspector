@@ -5315,6 +5315,8 @@ namespace PECoff
                         continue;
                     }
 
+                    ValidateCoffObjectSectionCharacteristics(section, sectionName);
+
                     if (string.Equals(sectionName, ".drectve", StringComparison.OrdinalIgnoreCase) ||
                         string.Equals(sectionName, ".drective", StringComparison.OrdinalIgnoreCase))
                     {
@@ -5501,6 +5503,18 @@ namespace PECoff
                     safeSehHandlers.ToArray())
                 : null;
             debugSections = debugList.ToArray();
+        }
+
+        private void ValidateCoffObjectSectionCharacteristics(IMAGE_SECTION_HEADER section, string sectionName)
+        {
+            uint characteristics = (uint)section.Characteristics;
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_GPREL) != 0 &&
+                _machineType != MachineTypes.IMAGE_FILE_MACHINE_IA64)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: COFF object section {sectionName} sets IMAGE_SCN_GPREL, which is documented only for IA64 objects.");
+            }
         }
 
         private bool TryReadCoffSectionRawData(IMAGE_SECTION_HEADER section, out byte[] data, out long fileOffset)

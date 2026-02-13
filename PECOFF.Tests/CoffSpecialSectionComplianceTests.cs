@@ -271,6 +271,58 @@ public class CoffSpecialSectionComplianceTests
     }
 
     [Fact]
+    public void CoffObject_GpRelSection_On_NonIa64_Emits_SpecWarning()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".sdata", Array.Empty<byte>(), 0x40008040u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("COFF object section .sdata sets IMAGE_SCN_GPREL, which is documented only for IA64 objects.", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_GpRelSection_On_Ia64_DoesNotEmit_Ia64OnlyWarning()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x0200,
+            sections: new[]
+            {
+                new SectionSpec(".sdata", Array.Empty<byte>(), 0x40008040u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("sets IMAGE_SCN_GPREL, which is documented only for IA64 objects.", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void CoffObject_CorMeta_Parses_Metadata_Root()
     {
         byte[] cormeta = BuildMinimalCorMetadata();
