@@ -15917,6 +15917,13 @@ namespace PECoff
                     $"SPEC violation: PE image section {sectionName} uses '$' grouping syntax, which is object-only.");
             }
 
+            if (!string.IsNullOrEmpty(sectionName) && sectionName.StartsWith("/", StringComparison.Ordinal))
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} uses COFF string-table long-name syntax, which is object-only.");
+            }
+
             if (isIdlSymSection && (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_INFO) == 0)
             {
                 Warn(
