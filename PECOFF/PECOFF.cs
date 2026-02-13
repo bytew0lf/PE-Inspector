@@ -5522,6 +5522,20 @@ namespace PECoff
                     $"SPEC violation: COFF object section {sectionName} should set VirtualSize to 0 (found 0x{section.VirtualSize:X8}).");
             }
 
+            if (section.NumberOfRelocations == 0 && section.PointerToRelocations != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: COFF object section {sectionName} has NumberOfRelocations=0 but PointerToRelocations is non-zero (0x{section.PointerToRelocations:X8}).");
+            }
+
+            if (section.NumberOfLinenumbers == 0 && section.PointerToLinenumbers != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: COFF object section {sectionName} has NumberOfLinenumbers=0 but PointerToLinenumbers is non-zero (0x{section.PointerToLinenumbers:X8}).");
+            }
+
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_GPREL) != 0 &&
                 _machineType != MachineTypes.IMAGE_FILE_MACHINE_IA64)
             {

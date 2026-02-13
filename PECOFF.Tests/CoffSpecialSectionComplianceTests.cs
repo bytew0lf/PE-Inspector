@@ -439,6 +439,70 @@ public class CoffSpecialSectionComplianceTests
     }
 
     [Fact]
+    public void CoffObject_RelocationPointerWithoutCount_Emits_SpecWarning_AndStrictModeFails()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".text", Array.Empty<byte>(), 0x60000020u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        const int coffHeaderSize = 20;
+        const int pointerToRelocationsOffsetInSectionHeader = 24;
+        WriteUInt32(data, coffHeaderSize + pointerToRelocationsOffsetInSectionHeader, 0x200u);
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("NumberOfRelocations=0 but PointerToRelocations is non-zero", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_LineNumberPointerWithoutCount_Emits_SpecWarning_AndStrictModeFails()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".text", Array.Empty<byte>(), 0x60000020u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        const int coffHeaderSize = 20;
+        const int pointerToLinenumbersOffsetInSectionHeader = 28;
+        WriteUInt32(data, coffHeaderSize + pointerToLinenumbersOffsetInSectionHeader, 0x240u);
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("NumberOfLinenumbers=0 but PointerToLinenumbers is non-zero", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void CoffObject_VsDataSection_On_NonArmSh4Thumb_Emits_SpecWarning()
     {
         byte[] data = BuildCoffObject(
