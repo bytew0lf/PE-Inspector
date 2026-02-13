@@ -27453,6 +27453,13 @@ namespace PECoff
                                 ReadExactly(PEFileStream, buffer, 0, buffer.Length);
                                 edt = (ByteArrayToStructure<EXPORT_DIRECTORY_TABLE>(buffer));
 
+                                if (edt.ExportFlags != 0)
+                                {
+                                    Warn(
+                                        ParseIssueCategory.Exports,
+                                        $"SPEC violation: IMAGE_EXPORT_DIRECTORY.Characteristics is reserved and must be 0 (found 0x{edt.ExportFlags:X8}).");
+                                }
+
                                 _exportDllName = string.Empty;
                                 if (edt.NameRVA != 0 &&
                                     TryGetFileOffset(sections, edt.NameRVA, out long exportTableNameOffset) &&

@@ -22,7 +22,7 @@ Executable outputs land in the project `bin/<Configuration>/net9.0/` folders.
 
 ## Features
 
-- Imports/exports (INT/IAT, delay/bound, forwarders, anomalies, API-set hints)
+- Imports/exports (INT/IAT, delay/bound, forwarders, anomalies, API-set hints, and export-directory reserved-field conformance)
 - Data directories mapping + validation (Architecture/GlobalPtr/IAT deep decode)
 - Sections (entropy, permissions, padding, alignment/overlap checks)
 - TLS/load-config metadata (guard flags, CHPE/XFG, dynamic-reloc/volatile pointed-structure decode, callback mapping, raw data hash/preview)
@@ -52,7 +52,7 @@ Status legend:
 | Optional header (PE32/PE32+/ROM) | `full` | Standard fields + checksum/timestamp decoding + reserved-field conformance checks + full documented subsystem mapping/classification (including `OS2_CUI` and `NATIVE_WINDOWS`) + bounded variable-size optional-header decoding (including reduced headers without directory arrays and ROM `0x0107`) + explicit mandatory-field truncation and `NumberOfRvaAndSizes` bounds checks against `SizeOfOptionalHeader`. |
 | Sections | `full` | Header decoding (sizes/flags/align), entropy, permissions, padding, overlaps/align checks, section-RVA order and virtual-overlap conformance checks, and directory containment summaries. |
 | Data directories | `full` | Name/section mapping + Architecture/GlobalPtr/IAT deep decode + size/mapping validation. |
-| Imports/Exports | `full` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints. |
+| Imports/Exports | `full` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints, and `IMAGE_EXPORT_DIRECTORY.Characteristics` reserved-field conformance warnings when non-zero. |
 | Relocations | `full` | Summaries + anomaly totals; machine-aware COFF relocation mapping with matrix tests across i386/AMD64/ARM/ARM64/IA64/PPC/MIPS/SH/M32R (including `SH3E`/`R3000BE` family behavior), table-aligned ARM/PPC constants, canonical latest-spec IA64/PPC behavior in `TableOnly` mode, true symbol-table-index resolution, PAIR displacement handling plus immediate-predecessor ordering validation (ARM/PPC/MIPS/M32R/SH), IA64 ADDEND immediate-predecessor/payload conformance checks, per-relocation compatibility audit markers and policy notices, COFF overflow-relocation (`IMAGE_SCN_LNK_NRELOC_OVFL`) marker parsing/validation, base-relocation HIGHADJ two-slot semantics, and 4K-page + 32-bit block-boundary conformance checks. Optional `CompatibilityProse` policies remain available as explicit non-canonical compatibility mode. |
 | TLS | `full` | Callbacks + raw data mapping, hash/preview, template sizing + index mapping. |
 | Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation, structured decode for dynamic-reloc/CHPE/volatile pointed metadata with deterministic malformed issues. |
@@ -348,6 +348,7 @@ The CSV output contains the following values per file:
 - v46: COFF object section-header conformance now warns when `VirtualAddress` is non-zero.
 - v47: Resource directory validation now flags non-zero reserved high bits in ID entries.
 - v48: COFF object section-header conformance now warns when relocation or line-number counts are zero but pointers are non-zero.
+- v49: Export directory validation now flags non-zero `IMAGE_EXPORT_DIRECTORY.Characteristics` values.
 
 ## Security
 
