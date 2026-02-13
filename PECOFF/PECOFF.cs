@@ -952,7 +952,7 @@ namespace PECoff
         {
             PE32 = 0x10b,
             PE32plus = 0x20b,
-            //ROM = 0x107            
+            ROM = 0x107
         }
 
         private enum MagicByteSignature : ushort
@@ -1234,7 +1234,9 @@ namespace PECoff
                 byte[] optionalHeaderBuffer = ReadBytesExact(reader, hdr.FileHeader.SizeOfOptionalHeader);
                 hdr.Magic = (PEFormat)BitConverter.ToUInt16(optionalHeaderBuffer, 0);
 
-                if (hdr.Magic == PEFormat.PE32 || hdr.Magic == PEFormat.PE32plus)
+                if (hdr.Magic == PEFormat.PE32 ||
+                    hdr.Magic == PEFormat.PE32plus ||
+                    hdr.Magic == PEFormat.ROM)
                 {
                     ParseOptionalHeaderFields(optionalHeaderBuffer, ref hdr);
                 }
@@ -1248,6 +1250,15 @@ namespace PECoff
 
             private static void ParseOptionalHeaderFields(byte[] buffer, ref IMAGE_NT_HEADERS hdr)
             {
+                if (hdr.Magic == PEFormat.ROM)
+                {
+                    hdr.SizeOfCode = ReadUInt32(buffer, 0x04);
+                    hdr.SizeOfInitializedData = ReadUInt32(buffer, 0x08);
+                    hdr.DataDirectory = Array.Empty<IMAGE_DATA_DIRECTORY>();
+                    hdr.NumberOfRvaAndSizes = 0;
+                    return;
+                }
+
                 bool isPe32Plus = hdr.Magic == PEFormat.PE32plus;
                 hdr.SizeOfCode = ReadUInt32(buffer, 0x04);
                 hdr.SizeOfInitializedData = ReadUInt32(buffer, 0x08);
@@ -7018,6 +7029,11 @@ namespace PECoff
             if (magic == PEFormat.PE32plus)
             {
                 return (int)Marshal.OffsetOf(typeof(IMAGE_OPTIONAL_HEADER64), nameof(IMAGE_OPTIONAL_HEADER64.CheckSum));
+            }
+
+            if (magic == PEFormat.ROM)
+            {
+                return -1;
             }
 
             return (int)Marshal.OffsetOf(typeof(IMAGE_OPTIONAL_HEADER32), nameof(IMAGE_OPTIONAL_HEADER32.CheckSum));
@@ -14740,18 +14756,19 @@ namespace PECoff
             uint sizeOfImage = peHeader.SizeOfImage;
             uint sizeOfCode = peHeader.SizeOfCode;
             uint sizeOfInitializedData = peHeader.SizeOfInitializedData;
+            bool isRomImage = peHeader.Magic == PEFormat.ROM;
 
-            if (peHeader.Win32VersionValue != 0)
+            if (!isRomImage && peHeader.Win32VersionValue != 0)
             {
                 Warn(ParseIssueCategory.OptionalHeader, $"SPEC violation: OptionalHeader.Win32VersionValue must be 0 (found 0x{peHeader.Win32VersionValue:X8}).");
             }
 
-            if (peHeader.LoaderFlags != 0)
+            if (!isRomImage && peHeader.LoaderFlags != 0)
             {
                 Warn(ParseIssueCategory.OptionalHeader, $"SPEC violation: OptionalHeader.LoaderFlags must be 0 (found 0x{peHeader.LoaderFlags:X8}).");
             }
 
-            if (dataDirectories != null)
+            if (!isRomImage && dataDirectories != null)
             {
                 if (dataDirectories.Length > 7 &&
                     (dataDirectories[7].VirtualAddress != 0 || dataDirectories[7].Size != 0))
@@ -14771,11 +14788,11 @@ namespace PECoff
                 }
             }
 
-            if (fileAlignment == 0)
+            if (!isRomImage && fileAlignment == 0)
             {
                 Warn(ParseIssueCategory.OptionalHeader, "FileAlignment is zero.");
             }
-            else
+            else if (!isRomImage)
             {
                 if (!IsPowerOfTwo(fileAlignment) || fileAlignment < 512 || fileAlignment > 65536)
                 {
@@ -14783,11 +14800,11 @@ namespace PECoff
                 }
             }
 
-            if (sectionAlignment == 0)
+            if (!isRomImage && sectionAlignment == 0)
             {
                 Warn(ParseIssueCategory.OptionalHeader, "SectionAlignment is zero.");
             }
-            else
+            else if (!isRomImage)
             {
                 if (!IsPowerOfTwo(sectionAlignment))
                 {
@@ -14798,6 +14815,13 @@ namespace PECoff
                 {
                     Warn(ParseIssueCategory.OptionalHeader, "SectionAlignment is smaller than FileAlignment.");
                 }
+
+                if (sectionAlignment < 0x1000 && sectionAlignment != fileAlignment)
+                {
+                    Warn(
+                        ParseIssueCategory.OptionalHeader,
+                        $"SPEC violation: SectionAlignment (0x{sectionAlignment:X}) is below page size and must equal FileAlignment (0x{fileAlignment:X}).");
+                }
             }
 
             long minHeaderSize = dosHeader.e_lfanew +
@@ -14806,7 +14830,7 @@ namespace PECoff
                                  peHeader.FileHeader.SizeOfOptionalHeader +
                                  (sections.Count * Marshal.SizeOf(typeof(IMAGE_SECTION_HEADER)));
 
-            if (sizeOfHeaders != 0)
+            if (!isRomImage && sizeOfHeaders != 0)
             {
                 if (sizeOfHeaders < minHeaderSize)
                 {
@@ -14825,9 +14849,12 @@ namespace PECoff
             }
 
             List<(long Start, long End, string Name)> ranges = new List<(long, long, string)>();
+            List<(uint Start, uint End, string Name)> virtualRanges = new List<(uint, uint, string)>();
             uint maxVirtualEnd = 0;
             uint sumCode = 0;
             uint sumInitData = 0;
+            uint previousVirtualAddress = 0;
+            bool hasPreviousVirtualAddress = false;
             foreach (IMAGE_SECTION_HEADER section in sections)
             {
                 string name = section.Section.TrimEnd('\0');
@@ -14843,6 +14870,16 @@ namespace PECoff
                     {
                         Warn(ParseIssueCategory.Sections, $"Section {name} has VirtualSize but no raw data for code/initialized data.");
                     }
+
+                    if (hasPreviousVirtualAddress && section.VirtualAddress < previousVirtualAddress)
+                    {
+                        Warn(
+                            ParseIssueCategory.Sections,
+                            $"SPEC violation: Section headers are not sorted by ascending VirtualAddress (section {name} has RVA 0x{section.VirtualAddress:X8} after 0x{previousVirtualAddress:X8}).");
+                    }
+
+                    previousVirtualAddress = section.VirtualAddress;
+                    hasPreviousVirtualAddress = true;
                     continue;
                 }
 
@@ -14913,6 +14950,20 @@ namespace PECoff
                     maxVirtualEnd = virtualEnd;
                 }
 
+                if (hasPreviousVirtualAddress && section.VirtualAddress < previousVirtualAddress)
+                {
+                    Warn(
+                        ParseIssueCategory.Sections,
+                        $"SPEC violation: Section headers are not sorted by ascending VirtualAddress (section {name} has RVA 0x{section.VirtualAddress:X8} after 0x{previousVirtualAddress:X8}).");
+                }
+
+                previousVirtualAddress = section.VirtualAddress;
+                hasPreviousVirtualAddress = true;
+                if (virtualEnd > section.VirtualAddress)
+                {
+                    virtualRanges.Add((section.VirtualAddress, virtualEnd, name));
+                }
+
                 if (isCode)
                 {
                     sumCode += section.SizeOfRawData;
@@ -14940,6 +14991,20 @@ namespace PECoff
                     if (ranges[i].Start < ranges[i - 1].End)
                     {
                         Warn(ParseIssueCategory.Sections, $"Section {ranges[i].Name} overlaps section {ranges[i - 1].Name} in the file.");
+                    }
+                }
+            }
+
+            if (virtualRanges.Count > 1)
+            {
+                virtualRanges.Sort((a, b) => a.Start.CompareTo(b.Start));
+                for (int i = 1; i < virtualRanges.Count; i++)
+                {
+                    if (virtualRanges[i].Start < virtualRanges[i - 1].End)
+                    {
+                        Warn(
+                            ParseIssueCategory.Sections,
+                            $"SPEC violation: Section {virtualRanges[i].Name} overlaps section {virtualRanges[i - 1].Name} in virtual address space.");
                     }
                 }
             }
@@ -14982,7 +15047,7 @@ namespace PECoff
                 Warn(ParseIssueCategory.OptionalHeader, "SizeOfInitializedData is zero but initialized data sections are present.");
             }
 
-            if (peHeader.NumberOfRvaAndSizes < dataDirectories.Length)
+            if (!isRomImage && peHeader.NumberOfRvaAndSizes < dataDirectories.Length)
             {
                 for (int i = (int)peHeader.NumberOfRvaAndSizes; i < dataDirectories.Length; i++)
                 {
@@ -15077,6 +15142,10 @@ namespace PECoff
                 case PEFormat.PE32plus:
                     requiredSize = 0x48;
                     formatName = "PE32+";
+                    break;
+                case PEFormat.ROM:
+                    requiredSize = 0x38;
+                    formatName = "ROM";
                     break;
                 default:
                     return;
@@ -26421,7 +26490,7 @@ namespace PECoff
                 _dllCharacteristicsInfo = null;
                 _importHash = string.Empty;
                 _computedChecksum = 0;
-                _checksumFieldOffset = 0;
+                _checksumFieldOffset = -1;
                 _certificateTableOffset = 0;
                 _certificateTableSize = 0;
                 _timeDateStamp = 0;
@@ -26500,7 +26569,9 @@ namespace PECoff
                         return;
                     }
 
-                    if (peHeader.Magic != PEFormat.PE32 && peHeader.Magic != PEFormat.PE32plus)
+                    if (peHeader.Magic != PEFormat.PE32 &&
+                        peHeader.Magic != PEFormat.PE32plus &&
+                        peHeader.Magic != PEFormat.ROM)
                     {
                         Fail(ParseIssueCategory.OptionalHeader, "Unknown PE optional header format.");
                         return;
@@ -26557,25 +26628,33 @@ namespace PECoff
                         _certificateTableSize = dataDirectory[4].Size;
                     }
 
-                    int checksumOffset = (int)header.e_lfanew +
-                                         sizeof(uint) +
-                                         Marshal.SizeOf(typeof(IMAGE_FILE_HEADER)) +
-                                         GetOptionalHeaderChecksumOffset(peHeader.Magic);
                     int optionalHeaderSize = peHeader.FileHeader.SizeOfOptionalHeader;
                     int checksumFieldOffset = GetOptionalHeaderChecksumOffset(peHeader.Magic);
-                    _checksumFieldOffset = checksumOffset;
-                    if (_options.ComputeChecksum)
+                    if (checksumFieldOffset >= 0)
                     {
-                        if (checksumFieldOffset + 4 <= optionalHeaderSize &&
-                            checksumOffset >= 0 &&
-                            checksumOffset + 4 <= PEFileStream.Length)
+                        int checksumOffset = (int)header.e_lfanew +
+                                             sizeof(uint) +
+                                             Marshal.SizeOf(typeof(IMAGE_FILE_HEADER)) +
+                                             checksumFieldOffset;
+                        _checksumFieldOffset = checksumOffset;
+
+                        if (_options.ComputeChecksum)
                         {
-                            _computedChecksum = ComputeChecksum(PEFileStream, checksumOffset);
+                            if (checksumFieldOffset + 4 <= optionalHeaderSize &&
+                                checksumOffset >= 0 &&
+                                checksumOffset + 4 <= PEFileStream.Length)
+                            {
+                                _computedChecksum = ComputeChecksum(PEFileStream, checksumOffset);
+                            }
+                            else
+                            {
+                                Warn(ParseIssueCategory.Checksum, "Checksum field offset is outside file bounds.");
+                            }
                         }
-                        else
-                        {
-                            Warn(ParseIssueCategory.Checksum, "Checksum field offset is outside file bounds.");
-                        }
+                    }
+                    else
+                    {
+                        _checksumFieldOffset = -1;
                     }
 
                     bool hasClrDirectory = _hasClrDirectory;
