@@ -10541,11 +10541,12 @@ namespace PECoff
             return true;
         }
 
-        private static bool TryReadResourceDataEntry(ReadOnlySpan<byte> buffer, int offset, out uint dataRva, out uint size, out uint codePage)
+        private static bool TryReadResourceDataEntry(ReadOnlySpan<byte> buffer, int offset, out uint dataRva, out uint size, out uint codePage, out uint reserved)
         {
             dataRva = 0;
             size = 0;
             codePage = 0;
+            reserved = 0;
 
             if (offset < 0 || offset + 16 > buffer.Length)
             {
@@ -10555,6 +10556,7 @@ namespace PECoff
             dataRva = ReadUInt32(buffer, offset);
             size = ReadUInt32(buffer, offset + 4);
             codePage = ReadUInt32(buffer, offset + 8);
+            reserved = ReadUInt32(buffer, offset + 12);
             return true;
         }
 
@@ -10684,10 +10686,17 @@ namespace PECoff
                         continue;
                     }
 
-                    if (!TryReadResourceDataEntry(buffer, dataOffset, out uint dataRva, out uint size, out uint codePage))
+                    if (!TryReadResourceDataEntry(buffer, dataOffset, out uint dataRva, out uint size, out uint codePage, out uint reserved))
                     {
                         Warn(ParseIssueCategory.Resources, "Resource data entry outside section bounds.");
                         continue;
+                    }
+
+                    if (reserved != 0)
+                    {
+                        Warn(
+                            ParseIssueCategory.Resources,
+                            $"SPEC violation: IMAGE_RESOURCE_DATA_ENTRY.Reserved must be 0 (found 0x{reserved:X8}).");
                     }
 
                     long fileOffset = -1;
@@ -10819,9 +10828,13 @@ namespace PECoff
                     {
                         ValidateResourceDirectoryNode(buffer, childOffset, level + 1, allowDeepTree, visited, issues);
                     }
-                    else if (!TryReadResourceDataEntry(buffer, childOffset, out _, out _, out _))
+                    else if (!TryReadResourceDataEntry(buffer, childOffset, out _, out _, out _, out uint reserved))
                     {
                         issues.Add("Resource data entry outside section bounds.");
+                    }
+                    else if (reserved != 0)
+                    {
+                        issues.Add("SPEC violation: IMAGE_RESOURCE_DATA_ENTRY.Reserved must be 0.");
                     }
                 }
             }

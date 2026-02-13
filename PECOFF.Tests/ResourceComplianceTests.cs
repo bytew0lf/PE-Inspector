@@ -74,6 +74,22 @@ public class ResourceComplianceTests
         Assert.Contains(issues, issue => issue.Contains("entry count exceeds available data", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void ResourceDirectory_Detects_NonZero_DataEntryReserved()
+    {
+        byte[] data = new byte[0x40];
+        WriteDirectoryHeader(data, 0x00, namedEntries: 0, idEntries: 1);
+        WriteDirectoryEntry(data, 0x10, 1u, 0x00000020u);
+        WriteDataEntry(data, 0x20);
+        WriteUInt32(data, 0x20 + 12, 1u); // Reserved must be 0
+
+        string[] issues = PECOFF.ValidateResourceDirectoryForTest(data, allowDeepTree: false);
+
+        Assert.Contains(
+            issues,
+            issue => issue.Contains("IMAGE_RESOURCE_DATA_ENTRY.Reserved must be 0", StringComparison.Ordinal));
+    }
+
     private static byte[] BuildDeepResourceTree()
     {
         byte[] data = new byte[0x140];
