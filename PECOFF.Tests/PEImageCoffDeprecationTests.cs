@@ -19,11 +19,16 @@ public class PEImageCoffDeprecationTests
     private const ushort IMAGE_FILE_BYTES_REVERSED_HI = 0x8000;
     private const ushort IMAGE_DLL_CHARACTERISTICS_DYNAMIC_BASE = 0x0040;
     private const uint IMAGE_SCN_RESERVED_01 = 0x00000001;
+    private const uint IMAGE_SCN_CNT_CODE = 0x00000020;
+    private const uint IMAGE_SCN_CNT_INITIALIZED_DATA = 0x00000040;
+    private const uint IMAGE_SCN_CNT_UNINITIALIZED_DATA = 0x00000080;
     private const uint IMAGE_SCN_LNK_INFO = 0x00000200;
     private const uint IMAGE_SCN_LNK_REMOVE = 0x00000800;
     private const uint IMAGE_SCN_LNK_COMDAT = 0x00001000;
     private const uint IMAGE_SCN_NO_DEFER_SPEC_EXC = 0x00004000;
     private const uint IMAGE_SCN_GPREL = 0x00008000;
+    private const uint IMAGE_SCN_MEM_READ = 0x40000000;
+    private const uint IMAGE_SCN_MEM_WRITE = 0x80000000;
     private const uint IMAGE_SCN_MEM_PURGEABLE = 0x00020000;
     private const uint IMAGE_SCN_MEM_LOCKED = 0x00040000;
     private const uint IMAGE_SCN_MEM_PRELOAD = 0x00080000;
@@ -123,6 +128,37 @@ public class PEImageCoffDeprecationTests
                 parser.ParseResult.Warnings,
                 warning => warning.Contains("SPEC violation: PE image section", StringComparison.Ordinal) &&
                            warning.Contains("SizeOfRawData=0 but PointerToRawData is non-zero", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void PeImage_UninitializedOnlySection_WithRawData_EmitsSpecViolation_AndStrictModeFails()
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TryUpdateFirstSectionCharacteristics(
+            mutated,
+            setMask: IMAGE_SCN_CNT_UNINITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_WRITE,
+            clearMask: IMAGE_SCN_CNT_CODE | IMAGE_SCN_CNT_INITIALIZED_DATA));
+        Assert.True(TryMutateImageSectionRawDataFields(mutated, sizeOfRawData: 0x200u, pointerToRawData: 0x200u));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("contains only uninitialized data but SizeOfRawData is non-zero", StringComparison.Ordinal));
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("contains only uninitialized data but PointerToRawData is non-zero", StringComparison.Ordinal));
 
             Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
         }

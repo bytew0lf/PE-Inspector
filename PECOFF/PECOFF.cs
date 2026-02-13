@@ -15602,9 +15602,25 @@ namespace PECoff
                 bool isCode = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_CODE) != 0;
                 bool isInitData = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) != 0;
                 bool isUninitData = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_CNT_UNINITIALIZED_DATA) != 0;
+                bool onlyUninitializedData = isUninitData && !isCode && !isInitData;
                 bool isExecutable = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_EXECUTE) != 0;
                 bool isReadable = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_READ) != 0;
                 bool isWritable = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_WRITE) != 0;
+
+                if (onlyUninitializedData && section.SizeOfRawData != 0)
+                {
+                    Warn(
+                        ParseIssueCategory.Sections,
+                        $"SPEC violation: PE image section {name} contains only uninitialized data but SizeOfRawData is non-zero (0x{section.SizeOfRawData:X8}).");
+                }
+
+                if (onlyUninitializedData && section.PointerToRawData != 0)
+                {
+                    Warn(
+                        ParseIssueCategory.Sections,
+                        $"SPEC violation: PE image section {name} contains only uninitialized data but PointerToRawData is non-zero (0x{section.PointerToRawData:X8}).");
+                }
+
                 if (section.SizeOfRawData == 0)
                 {
                     if (section.PointerToRawData != 0)
