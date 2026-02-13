@@ -138,6 +138,44 @@ public class PeImageLayoutAndRomComplianceTests
         }
     }
 
+    [Fact]
+    public void PeImage_SectionRawDataOutOfRvaOrder_EmitsSpecViolation_AndStrictModeFails()
+    {
+        byte[] data = BuildPe32Image(
+            fileAlignment: 0x200,
+            sectionAlignment: 0x1000,
+            sections: new[]
+            {
+                new SectionSpec(".text", 0x1000, 0x200, 0x200),
+                new SectionSpec(".rdata", 0x2000, 0x200, 0x200)
+            });
+
+        const int peOffset = 0x80;
+        const int optionalHeaderSize = 0xE0;
+        const int sectionHeaderSize = 40;
+        const int rawPointerOffset = 20;
+        int sectionTableOffset = peOffset + 4 + 20 + optionalHeaderSize;
+
+        WriteUInt32(data, sectionTableOffset + rawPointerOffset, 0x400); // .text points later
+        WriteUInt32(data, sectionTableOffset + sectionHeaderSize + rawPointerOffset, 0x200); // .rdata points earlier
+
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, data);
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("raw data is not laid out in ascending RVA order", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
     private readonly record struct SectionSpec(string Name, uint VirtualAddress, uint VirtualSize, uint RawSize);
 
     private static byte[] BuildPe32Image(uint fileAlignment, uint sectionAlignment, IReadOnlyList<SectionSpec> sections)

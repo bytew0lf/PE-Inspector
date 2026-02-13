@@ -15591,6 +15591,7 @@ namespace PECoff
 
             List<(long Start, long End, string Name)> ranges = new List<(long, long, string)>();
             List<(uint Start, uint End, string Name)> virtualRanges = new List<(uint, uint, string)>();
+            List<(uint VirtualAddress, uint PointerToRawData, string Name)> rawLayoutByRva = new List<(uint, uint, string)>();
             uint maxVirtualEnd = 0;
             uint sumCode = 0;
             uint sumInitData = 0;
@@ -15739,6 +15740,7 @@ namespace PECoff
                 }
 
                 ranges.Add((start, end, name));
+                rawLayoutByRva.Add((section.VirtualAddress, section.PointerToRawData, name));
             }
 
             if (ranges.Count > 0)
@@ -15769,6 +15771,20 @@ namespace PECoff
                         Warn(
                             ParseIssueCategory.Sections,
                             $"SPEC violation: Section {virtualRanges[i].Name} overlaps section {virtualRanges[i - 1].Name} in virtual address space.");
+                    }
+                }
+            }
+
+            if (rawLayoutByRva.Count > 1)
+            {
+                rawLayoutByRva.Sort((a, b) => a.VirtualAddress.CompareTo(b.VirtualAddress));
+                for (int i = 1; i < rawLayoutByRva.Count; i++)
+                {
+                    if (rawLayoutByRva[i].PointerToRawData < rawLayoutByRva[i - 1].PointerToRawData)
+                    {
+                        Warn(
+                            ParseIssueCategory.Sections,
+                            $"SPEC violation: PE image section raw data is not laid out in ascending RVA order (section {rawLayoutByRva[i].Name} RVA 0x{rawLayoutByRva[i].VirtualAddress:X8} has PointerToRawData 0x{rawLayoutByRva[i].PointerToRawData:X8} before section {rawLayoutByRva[i - 1].Name} RVA 0x{rawLayoutByRva[i - 1].VirtualAddress:X8} PointerToRawData 0x{rawLayoutByRva[i - 1].PointerToRawData:X8}).");
                     }
                 }
             }
