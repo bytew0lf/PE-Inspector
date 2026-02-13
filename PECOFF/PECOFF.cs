@@ -15576,6 +15576,13 @@ namespace PECoff
                 bool isWritable = (section.Characteristics & SectionCharacteristics.IMAGE_SCN_MEM_WRITE) != 0;
                 if (section.SizeOfRawData == 0)
                 {
+                    if (section.PointerToRawData != 0)
+                    {
+                        Warn(
+                            ParseIssueCategory.Sections,
+                            $"SPEC violation: PE image section {name} has SizeOfRawData=0 but PointerToRawData is non-zero (0x{section.PointerToRawData:X8}).");
+                    }
+
                     if ((isCode || isInitData) && section.VirtualSize > 0)
                     {
                         Warn(ParseIssueCategory.Sections, $"Section {name} has VirtualSize but no raw data for code/initialized data.");

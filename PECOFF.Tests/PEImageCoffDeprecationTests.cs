@@ -108,6 +108,31 @@ public class PEImageCoffDeprecationTests
     }
 
     [Fact]
+    public void PeImage_SizeOfRawDataZero_WithNonZeroPointerToRawData_EmitsSpecViolation_AndStrictModeFails()
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TryMutateImageSectionRawDataFields(mutated, sizeOfRawData: 0u, pointerToRawData: 0x00000200u));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: PE image section", StringComparison.Ordinal) &&
+                           warning.Contains("SizeOfRawData=0 but PointerToRawData is non-zero", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
     public void PeImage_RelocsStripped_Set_WithRelocationDirectory_EmitsSpecViolation_AndStrictModeFails()
     {
         byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
@@ -830,6 +855,26 @@ public class PEImageCoffDeprecationTests
         int firstSectionOffset = sectionTableOffset;
         WriteUInt32(data, firstSectionOffset + 20, pointerToRelocations);
         WriteUInt16(data, firstSectionOffset + 32, numberOfRelocations);
+        return true;
+    }
+
+    private static bool TryMutateImageSectionRawDataFields(byte[] data, uint sizeOfRawData, uint pointerToRawData)
+    {
+        if (!TryGetPeLayout(
+                data,
+                out _,
+                out _,
+                out _,
+                out int sectionTableOffset,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        int firstSectionOffset = sectionTableOffset;
+        WriteUInt32(data, firstSectionOffset + 16, sizeOfRawData);
+        WriteUInt32(data, firstSectionOffset + 20, pointerToRawData);
         return true;
     }
 
