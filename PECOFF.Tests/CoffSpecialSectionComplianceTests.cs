@@ -185,6 +185,33 @@ public class CoffSpecialSectionComplianceTests
     }
 
     [Fact]
+    public void CoffObject_FeatSymbol_NonAbsolute_Emits_SpecWarning()
+    {
+        byte[] feat = CreateShortNameSymbol("@feat.00", sectionNumber: 1, storageClass: 0x03, auxCount: 0, value: 0x00000001u);
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".text", Array.Empty<byte>(), 0x60000020u)
+            },
+            symbols: new[] { feat },
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("@feat.00 should be an absolute symbol", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void CoffObject_DebugSubsections_Are_Parsed_From_DebugS()
     {
         byte[] debugSubsections = BuildDebugSubsectionStream();
@@ -209,6 +236,33 @@ public class CoffSpecialSectionComplianceTests
             Assert.Equal(2, section.Subsections.Count);
             Assert.Equal("SYM", section.Subsections[0].TypeName);
             Assert.Equal("STRING_TABLE", section.Subsections[1].TypeName);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_DebugF_On_NonX86_Emits_SpecWarning()
+    {
+        byte[] debugF = new byte[16];
+        byte[] data = BuildCoffObject(
+            machine: 0x8664,
+            sections: new[]
+            {
+                new SectionSpec(".debug$F", debugF, 0x42000040u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains(".debug$F is documented for x86 COFF objects only", StringComparison.Ordinal));
         }
         finally
         {

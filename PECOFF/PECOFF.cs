@@ -5285,16 +5285,21 @@ namespace PECoff
             bool hasFeatureSymbol = false;
             uint featureFlags = 0;
             bool safeSehEnabled = false;
+            CoffSymbolInfo featureSymbol = null;
 
             if (_coffSymbols != null && _coffSymbols.Count > 0)
             {
-                CoffSymbolInfo featSymbol = _coffSymbols.FirstOrDefault(
+                featureSymbol = _coffSymbols.FirstOrDefault(
                     symbol => string.Equals(symbol.Name, "@feat.00", StringComparison.OrdinalIgnoreCase));
-                if (featSymbol != null)
+                if (featureSymbol != null)
                 {
                     hasFeatureSymbol = true;
-                    featureFlags = featSymbol.Value;
+                    featureFlags = featureSymbol.Value;
                     safeSehEnabled = (featureFlags & 0x00000001) != 0;
+                    if (featureSymbol.SectionNumber != -1)
+                    {
+                        Warn(ParseIssueCategory.Header, "SPEC violation: @feat.00 should be an absolute symbol (SectionNumber == -1).");
+                    }
                 }
             }
 
@@ -5601,6 +5606,11 @@ namespace PECoff
 
             if (string.Equals(normalizedSuffix, "F", StringComparison.Ordinal))
             {
+                if (_machineType != MachineTypes.IMAGE_FILE_MACHINE_I386)
+                {
+                    Warn(ParseIssueCategory.Debug, "SPEC violation: .debug$F is documented for x86 COFF objects only.");
+                }
+
                 if (TryParseFpoData(data, out DebugFpoInfo fpo))
                 {
                     return new CoffObjectInfo.CoffDebugSectionInfo(
