@@ -53,7 +53,7 @@ Status legend:
 | Sections | `full` | Header decoding (sizes/flags/align), entropy, permissions, padding, overlaps/align checks, directory containment summaries. |
 | Data directories | `full` | Name/section mapping + Architecture/GlobalPtr/IAT deep decode + size/mapping validation. |
 | Imports/Exports | `full` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints. |
-| Relocations | `partial` | Summaries + anomaly totals; machine-aware COFF relocation mapping with matrix tests across i386/AMD64/ARM/ARM64/IA64/PPC/MIPS/SH/M32R (including `SH3E`/`R3000BE` family behavior), table-aligned ARM/PPC constants, IA64 table-only defaults plus explicit compatibility labels for disputed constants (`LTOFF64_COMPAT`/`PCREL21BI_COMPAT`/`PCREL22_COMPAT`), true symbol-table-index resolution, PAIR displacement handling plus immediate-predecessor ordering validation (ARM/PPC/MIPS/M32R/SH) with optional PPC compatibility predecessor handling, IA64 ADDEND immediate-predecessor/payload conformance checks with explicit policy controls (`TableOnly`, `CompatibilityProse`, `ProfileDefault`), per-relocation compatibility audit markers and policy notices, COFF overflow-relocation (`IMAGE_SCN_LNK_NRELOC_OVFL`) marker parsing/validation, base-relocation HIGHADJ two-slot semantics, and 4K-page + 32-bit block-boundary conformance checks. Status remains `partial` because selected IA64/PPC table-vs-prose ambiguities are policy-driven rather than single-mode canonical. |
+| Relocations | `full` | Summaries + anomaly totals; machine-aware COFF relocation mapping with matrix tests across i386/AMD64/ARM/ARM64/IA64/PPC/MIPS/SH/M32R (including `SH3E`/`R3000BE` family behavior), table-aligned ARM/PPC constants, canonical latest-spec IA64/PPC behavior in `TableOnly` mode, true symbol-table-index resolution, PAIR displacement handling plus immediate-predecessor ordering validation (ARM/PPC/MIPS/M32R/SH), IA64 ADDEND immediate-predecessor/payload conformance checks, per-relocation compatibility audit markers and policy notices, COFF overflow-relocation (`IMAGE_SCN_LNK_NRELOC_OVFL`) marker parsing/validation, base-relocation HIGHADJ two-slot semantics, and 4K-page + 32-bit block-boundary conformance checks. Optional `CompatibilityProse` policies remain available as explicit non-canonical compatibility mode. |
 | TLS | `full` | Callbacks + raw data mapping, hash/preview, template sizing + index mapping. |
 | Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation, structured decode for dynamic-reloc/CHPE/volatile pointed metadata with deterministic malformed issues. |
 | Exception directory | `full` | AMD64/ARM64/ARM32/IA64 decode + range validation, x86 SEH. |
@@ -71,6 +71,8 @@ Status legend:
 | Rich header | `full` | Toolchain signature summaries + extended product mapping. |
 
 ### Relocation Policy Matrix
+
+Canonical latest-spec conformance is `TableOnly` (`ProfileDefault` resolves to `TableOnly` for all validation profiles). `CompatibilityProse` is opt-in and non-canonical.
 
 | Area | TableOnly | CompatibilityProse |
 | --- | --- | --- |
@@ -151,9 +153,9 @@ The PECOFF library exposes a rich result model:
 - `PECOFFOptions.IssueCallback`: receive issues as they are raised (warnings/errors) in addition to the collected lists.
 - `PECOFFOptions.PresetFast()` / `PresetDefault()` / `PresetStrictSecurity()`: convenience presets for common configurations.
 - `PECOFFOptions.ValidationProfile`: `Default`, `Compatibility`, `Strict`, `Forensic` severity presets for warnings/errors. Default profile reports per-field certificate uniqueness as warnings; strict profile escalates them to errors.
-- `PECOFFOptions.Ia64AddendOrderingPolicy`: controls IA64 `ADDEND` predecessor semantics: `ProfileDefault` (default), `TableOnly`, or `CompatibilityProse`.
-- `PECOFFOptions.Ia64RelocationTablePolicy`: controls IA64 disputed constant naming: `ProfileDefault` (default), `TableOnly`, or `CompatibilityProse` (`*_COMPAT` labels).
-- `PECOFFOptions.PpcPairOrderingPolicy`: controls PPC `PAIR` predecessor handling: `ProfileDefault` (default), `TableOnly` (`REFHI` only), or `CompatibilityProse` (`REFHI` + legacy `SECRELHI`).
+- `PECOFFOptions.Ia64AddendOrderingPolicy`: controls IA64 `ADDEND` predecessor semantics: `ProfileDefault` (default canonical `TableOnly`), `TableOnly`, or `CompatibilityProse` (non-canonical compatibility mode).
+- `PECOFFOptions.Ia64RelocationTablePolicy`: controls IA64 disputed constant naming: `ProfileDefault` (default canonical `TableOnly`), `TableOnly`, or `CompatibilityProse` (`*_COMPAT` labels; non-canonical compatibility mode).
+- `PECOFFOptions.PpcPairOrderingPolicy`: controls PPC `PAIR` predecessor handling: `ProfileDefault` (default canonical `TableOnly`), `TableOnly` (`REFHI` only), or `CompatibilityProse` (`REFHI` + legacy `SECRELHI`; non-canonical compatibility mode).
 - `PECOFFOptions.ApiSetSchemaPath`: optional path to an `apisetschema.dll` for precise API-set resolution (otherwise heuristics are used). On Windows, the parser attempts `%SystemRoot%\System32\apisetschema.dll` automatically when this is not set.
 - `PECOFFOptions.IssuePolicy`: override per-category severity (e.g. treat Imports as warnings, Authenticode as errors).
 

@@ -16804,12 +16804,7 @@ namespace PECoff
                 return configured;
             }
 
-            ValidationProfile profile = _options?.ValidationProfile ?? ValidationProfile.Default;
-            if (profile == ValidationProfile.Compatibility || profile == ValidationProfile.Forensic)
-            {
-                return Ia64AddendOrderingPolicy.CompatibilityProse;
-            }
-
+            // Canonical latest-spec conformance defaults to table-only behavior.
             return Ia64AddendOrderingPolicy.TableOnly;
         }
 
@@ -16821,12 +16816,7 @@ namespace PECoff
                 return configured;
             }
 
-            ValidationProfile profile = _options?.ValidationProfile ?? ValidationProfile.Default;
-            if (profile == ValidationProfile.Compatibility || profile == ValidationProfile.Forensic)
-            {
-                return Ia64RelocationTablePolicy.CompatibilityProse;
-            }
-
+            // Canonical latest-spec conformance defaults to table-only behavior.
             return Ia64RelocationTablePolicy.TableOnly;
         }
 
@@ -16838,12 +16828,7 @@ namespace PECoff
                 return configured;
             }
 
-            ValidationProfile profile = _options?.ValidationProfile ?? ValidationProfile.Default;
-            if (profile == ValidationProfile.Compatibility || profile == ValidationProfile.Forensic)
-            {
-                return PpcPairOrderingPolicy.CompatibilityProse;
-            }
-
+            // Canonical latest-spec conformance defaults to table-only behavior.
             return PpcPairOrderingPolicy.TableOnly;
         }
 

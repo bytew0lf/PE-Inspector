@@ -117,7 +117,7 @@ public class CoffObjectConformanceGapTests
     }
 
     [Fact]
-    public void CoffRelocation_PpcPair_CompatibilityProfile_Allows_LegacySecrelhiPredecessor()
+    public void CoffRelocation_PpcPair_CompatibilityPolicy_Allows_LegacySecrelhiPredecessor()
     {
         const uint displacement = 0x01020304u;
         byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
@@ -142,7 +142,10 @@ public class CoffObjectConformanceGapTests
                 warning => warning.Contains("SPEC violation: COFF PAIR relocation entry", StringComparison.Ordinal) &&
                            warning.Contains("must immediately follow REFHI", StringComparison.Ordinal));
 
-            PECOFF compatibility = new PECOFF(path, new PECOFFOptions { ValidationProfile = ValidationProfile.Compatibility });
+            PECOFF compatibility = new PECOFF(path, new PECOFFOptions
+            {
+                PpcPairOrderingPolicy = PpcPairOrderingPolicy.CompatibilityProse
+            });
             Assert.DoesNotContain(
                 compatibility.ParseResult.Warnings,
                 warning => warning.Contains("SPEC violation: COFF PAIR relocation entry", StringComparison.Ordinal));
@@ -292,7 +295,7 @@ public class CoffObjectConformanceGapTests
     }
 
     [Fact]
-    public void CoffRelocation_Ia64Addend_CompatibilityProfile_Allows_Ltoff64Predecessor()
+    public void CoffRelocation_Ia64Addend_CompatibilityPolicy_Allows_Ltoff64Predecessor()
     {
         const uint addendPayload = 0x11223344u;
         byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
@@ -310,7 +313,11 @@ public class CoffObjectConformanceGapTests
         string path = WriteTemp(data);
         try
         {
-            PECOFF compatibility = new PECOFF(path, new PECOFFOptions { ValidationProfile = ValidationProfile.Compatibility });
+            PECOFF compatibility = new PECOFF(path, new PECOFFOptions
+            {
+                Ia64AddendOrderingPolicy = Ia64AddendOrderingPolicy.CompatibilityProse,
+                Ia64RelocationTablePolicy = Ia64RelocationTablePolicy.CompatibilityProse
+            });
             Assert.Equal(2, compatibility.CoffRelocations.Length);
             Assert.Equal("LTOFF64_COMPAT", compatibility.CoffRelocations[0].TypeName);
             Assert.True(compatibility.CoffRelocations[0].UsesCompatibilityMapping);
@@ -334,7 +341,7 @@ public class CoffObjectConformanceGapTests
     }
 
     [Fact]
-    public void CoffRelocation_Ia64Addend_ExplicitTablePolicy_OverridesCompatibilityProfile()
+    public void CoffRelocation_Ia64Addend_ProfileDefault_StaysCanonical_EvenInCompatibilityValidationProfile()
     {
         const uint addendPayload = 0x55667788u;
         byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
@@ -354,8 +361,7 @@ public class CoffObjectConformanceGapTests
         {
             PECOFF tableOnly = new PECOFF(path, new PECOFFOptions
             {
-                ValidationProfile = ValidationProfile.Compatibility,
-                Ia64AddendOrderingPolicy = Ia64AddendOrderingPolicy.TableOnly
+                ValidationProfile = ValidationProfile.Compatibility
             });
 
             Assert.Contains(
@@ -411,7 +417,7 @@ public class CoffObjectConformanceGapTests
     [InlineData((ushort)0x000F, "LTOFF64_COMPAT")]
     [InlineData((ushort)0x001D, "PCREL21BI_COMPAT")]
     [InlineData((ushort)0x001E, "PCREL22_COMPAT")]
-    public void CoffRelocation_Ia64DisputedConstants_CompatibilityProfile_UsesExplicitCompatLabels(ushort relocationType, string expectedCompatName)
+    public void CoffRelocation_Ia64DisputedConstants_CompatibilityPolicy_UsesExplicitCompatLabels(ushort relocationType, string expectedCompatName)
     {
         byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
         byte[] data = BuildCoffObject(
@@ -431,7 +437,7 @@ public class CoffObjectConformanceGapTests
 
             PECOFF compatibility = new PECOFF(path, new PECOFFOptions
             {
-                ValidationProfile = ValidationProfile.Compatibility
+                Ia64RelocationTablePolicy = Ia64RelocationTablePolicy.CompatibilityProse
             });
             CoffRelocationInfo compatibilityRelocation = Assert.Single(compatibility.CoffRelocations);
             Assert.Equal(expectedCompatName, compatibilityRelocation.TypeName);
@@ -441,6 +447,75 @@ public class CoffObjectConformanceGapTests
                 compatibility.ParseResult.Warnings,
                 warning => warning.Contains("Policy notice: COFF relocation entry #0", StringComparison.Ordinal) &&
                            warning.Contains(expectedCompatName, StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(ValidationProfile.Default)]
+    [InlineData(ValidationProfile.Compatibility)]
+    [InlineData(ValidationProfile.Forensic)]
+    [InlineData(ValidationProfile.Strict)]
+    public void CoffRelocation_Ia64DisputedConstants_ProfileDefault_IsCanonicalTableOnly(ValidationProfile profile)
+    {
+        byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
+        byte[] data = BuildCoffObject(
+            machine: 0x0200,
+            sectionName: CreateSectionName(".text"),
+            relocations: new[] { (0x20u, 0u, (ushort)0x000F) },
+            symbols: new[] { symbol },
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path, new PECOFFOptions { ValidationProfile = profile });
+            CoffRelocationInfo relocation = Assert.Single(parser.CoffRelocations);
+            Assert.Equal("TYPE_0x000F", relocation.TypeName);
+            Assert.False(relocation.UsesCompatibilityMapping);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(ValidationProfile.Default)]
+    [InlineData(ValidationProfile.Compatibility)]
+    [InlineData(ValidationProfile.Forensic)]
+    [InlineData(ValidationProfile.Strict)]
+    public void CoffRelocation_PpcPair_ProfileDefault_IsCanonicalTableOnly(ValidationProfile profile)
+    {
+        const uint displacement = 0x01020304u;
+        byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
+        byte[] data = BuildCoffObject(
+            machine: 0x01F0,
+            sectionName: CreateSectionName(".text"),
+            relocations: new[]
+            {
+                (0x20u, 0u, (ushort)0x0014),
+                (0x24u, displacement, (ushort)0x0012)
+            },
+            symbols: new[] { symbol },
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path, new PECOFFOptions { ValidationProfile = profile });
+            Assert.Equal("TYPE_0x0014", parser.CoffRelocations[0].TypeName);
+            bool foundViolation =
+                parser.ParseResult.Warnings.Any(
+                    warning => warning.Contains("SPEC violation: COFF PAIR relocation entry", StringComparison.Ordinal) &&
+                               warning.Contains("must immediately follow REFHI", StringComparison.Ordinal)) ||
+                parser.ParseResult.Errors.Any(
+                    error => error.Contains("SPEC violation: COFF PAIR relocation entry", StringComparison.Ordinal) &&
+                             error.Contains("must immediately follow REFHI", StringComparison.Ordinal));
+            Assert.True(foundViolation);
         }
         finally
         {
