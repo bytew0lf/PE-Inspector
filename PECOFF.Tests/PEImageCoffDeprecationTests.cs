@@ -449,6 +449,29 @@ public class PEImageCoffDeprecationTests
     }
 
     [Fact]
+    public void PeImage_IdlSymSection_WithLnkInfo_DoesNotEmitObjectOnlyWarning()
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TrySetFirstSectionName(mutated, ".idlsym"));
+        Assert.True(TryUpdateFirstSectionCharacteristics(mutated, setMask: IMAGE_SCN_LNK_INFO, clearMask: 0));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("PE image section .idlsym sets IMAGE_SCN_LNK_INFO, which is object-only.", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
     public void CoffObject_SectionObjectOnlyFlags_DoNotEmitPeImageSectionWarning()
     {
         byte[] data = BuildCoffObjectWithLinePointers();
@@ -510,6 +533,37 @@ public class PEImageCoffDeprecationTests
         uint characteristics = BitConverter.ToUInt32(data, firstSectionOffset + 36);
         characteristics = (characteristics | setMask) & ~clearMask;
         WriteUInt32(data, firstSectionOffset + 36, characteristics);
+        return true;
+    }
+
+    private static bool TrySetFirstSectionName(byte[] data, string sectionName)
+    {
+        if (string.IsNullOrWhiteSpace(sectionName))
+        {
+            return false;
+        }
+
+        if (!TryGetPeLayout(
+                data,
+                out _,
+                out _,
+                out _,
+                out int sectionTableOffset,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        int firstSectionOffset = sectionTableOffset;
+        for (int i = 0; i < 8; i++)
+        {
+            data[firstSectionOffset + i] = 0;
+        }
+
+        byte[] nameBytes = Encoding.ASCII.GetBytes(sectionName);
+        int copyLength = Math.Min(nameBytes.Length, 8);
+        Array.Copy(nameBytes, 0, data, firstSectionOffset, copyLength);
         return true;
     }
 

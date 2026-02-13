@@ -15843,6 +15843,7 @@ namespace PECoff
         {
             uint characteristics = (uint)section.Characteristics;
             string sectionName = NormalizeSectionName(section);
+            bool isIdlSymSection = string.Equals(sectionName, ".idlsym", StringComparison.OrdinalIgnoreCase);
 
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_01) != 0 ||
                 (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_02) != 0 ||
@@ -15872,9 +15873,12 @@ namespace PECoff
 
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_INFO) != 0)
             {
-                Warn(
-                    ParseIssueCategory.Header,
-                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_LNK_INFO, which is object-only.");
+                if (!isIdlSymSection)
+                {
+                    Warn(
+                        ParseIssueCategory.Header,
+                        $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_LNK_INFO, which is object-only.");
+                }
             }
 
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_REMOVE) != 0)
