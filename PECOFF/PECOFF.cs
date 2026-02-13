@@ -15910,6 +15910,13 @@ namespace PECoff
                     $"SPEC violation: PE image section {sectionName} is documented for COFF objects only.");
             }
 
+            if (isIdlSymSection && (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_INFO) == 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: PE image section .idlsym should set IMAGE_SCN_LNK_INFO.");
+            }
+
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_01) != 0 ||
                 (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_02) != 0 ||
                 (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_03) != 0 ||

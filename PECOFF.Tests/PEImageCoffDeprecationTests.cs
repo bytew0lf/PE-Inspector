@@ -472,6 +472,31 @@ public class PEImageCoffDeprecationTests
     }
 
     [Fact]
+    public void PeImage_IdlSymSection_WithoutLnkInfo_EmitsSpecViolation_AndStrictModeFails()
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TrySetFirstSectionName(mutated, ".idlsym"));
+        Assert.True(TryUpdateFirstSectionCharacteristics(mutated, setMask: 0, clearMask: IMAGE_SCN_LNK_INFO));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("PE image section .idlsym should set IMAGE_SCN_LNK_INFO.", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
     public void CoffObject_SectionObjectOnlyFlags_DoNotEmitPeImageSectionWarning()
     {
         byte[] data = BuildCoffObjectWithLinePointers();
