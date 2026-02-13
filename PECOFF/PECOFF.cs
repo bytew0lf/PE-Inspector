@@ -1234,43 +1234,9 @@ namespace PECoff
                 byte[] optionalHeaderBuffer = ReadBytesExact(reader, hdr.FileHeader.SizeOfOptionalHeader);
                 hdr.Magic = (PEFormat)BitConverter.ToUInt16(optionalHeaderBuffer, 0);
 
-                if (hdr.Magic == PEFormat.PE32 &&
-                    optionalHeaderBuffer.Length >= Marshal.SizeOf(typeof(IMAGE_OPTIONAL_HEADER32)))
+                if (hdr.Magic == PEFormat.PE32 || hdr.Magic == PEFormat.PE32plus)
                 {
-                    IMAGE_OPTIONAL_HEADER32 opt32 = optionalHeaderBuffer.ToStructure<IMAGE_OPTIONAL_HEADER32>();
-                    hdr.DataDirectory = opt32.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
-                    hdr.SectionAlignment = opt32.SectionAlignment;
-                    hdr.FileAlignment = opt32.FileAlignment;
-                    hdr.SizeOfHeaders = opt32.SizeOfHeaders;
-                    hdr.CheckSum = opt32.CheckSum;
-                    hdr.Subsystem = opt32.Subsystem;
-                    hdr.DllCharacteristics = opt32.DllCharacteristics;
-                    hdr.SizeOfImage = opt32.SizeOfImage;
-                    hdr.SizeOfCode = opt32.SizeOfCode;
-                    hdr.SizeOfInitializedData = opt32.SizeOfInitializedData;
-                    hdr.Win32VersionValue = opt32.Win32VersionValue;
-                    hdr.LoaderFlags = opt32.LoaderFlags;
-                    hdr.NumberOfRvaAndSizes = opt32.NumberOfRvaAndSizes;
-                    hdr.ImageBase = opt32.ImageBase;
-                }
-                else if (hdr.Magic == PEFormat.PE32plus &&
-                         optionalHeaderBuffer.Length >= Marshal.SizeOf(typeof(IMAGE_OPTIONAL_HEADER64)))
-                {
-                    IMAGE_OPTIONAL_HEADER64 opt64 = optionalHeaderBuffer.ToStructure<IMAGE_OPTIONAL_HEADER64>();
-                    hdr.DataDirectory = opt64.DataDirectory ?? Array.Empty<IMAGE_DATA_DIRECTORY>();
-                    hdr.SectionAlignment = opt64.SectionAlignment;
-                    hdr.FileAlignment = opt64.FileAlignment;
-                    hdr.SizeOfHeaders = opt64.SizeOfHeaders;
-                    hdr.CheckSum = opt64.CheckSum;
-                    hdr.Subsystem = opt64.Subsystem;
-                    hdr.DllCharacteristics = opt64.DllCharacteristics;
-                    hdr.SizeOfImage = opt64.SizeOfImage;
-                    hdr.SizeOfCode = opt64.SizeOfCode;
-                    hdr.SizeOfInitializedData = opt64.SizeOfInitializedData;
-                    hdr.Win32VersionValue = opt64.Win32VersionValue;
-                    hdr.LoaderFlags = opt64.LoaderFlags;
-                    hdr.NumberOfRvaAndSizes = opt64.NumberOfRvaAndSizes;
-                    hdr.ImageBase = opt64.ImageBase;
+                    ParseOptionalHeaderFields(optionalHeaderBuffer, ref hdr);
                 }
                 else
                 {
@@ -1278,6 +1244,93 @@ namespace PECoff
                 }
 
                 this = hdr;
+            }
+
+            private static void ParseOptionalHeaderFields(byte[] buffer, ref IMAGE_NT_HEADERS hdr)
+            {
+                bool isPe32Plus = hdr.Magic == PEFormat.PE32plus;
+                hdr.SizeOfCode = ReadUInt32(buffer, 0x04);
+                hdr.SizeOfInitializedData = ReadUInt32(buffer, 0x08);
+                hdr.SectionAlignment = ReadUInt32(buffer, 0x20);
+                hdr.FileAlignment = ReadUInt32(buffer, 0x24);
+                hdr.Win32VersionValue = ReadUInt32(buffer, 0x34);
+                hdr.SizeOfImage = ReadUInt32(buffer, 0x38);
+                hdr.SizeOfHeaders = ReadUInt32(buffer, 0x3C);
+                hdr.CheckSum = ReadUInt32(buffer, 0x40);
+                hdr.Subsystem = (Subsystem)ReadUInt16(buffer, 0x44);
+                hdr.DllCharacteristics = (DllCharacteristics)ReadUInt16(buffer, 0x46);
+                hdr.LoaderFlags = ReadUInt32(buffer, isPe32Plus ? 0x68 : 0x58);
+                hdr.NumberOfRvaAndSizes = ReadUInt32(buffer, isPe32Plus ? 0x6C : 0x5C);
+                hdr.ImageBase = isPe32Plus ? ReadUInt64(buffer, 0x18) : ReadUInt32(buffer, 0x1C);
+
+                int dataDirectoryOffset = isPe32Plus ? 0x70 : 0x60;
+                int maxEntriesBySize = buffer.Length <= dataDirectoryOffset
+                    ? 0
+                    : (buffer.Length - dataDirectoryOffset) / 8;
+                int entryCount = 0;
+                if (maxEntriesBySize > 0 && hdr.NumberOfRvaAndSizes > 0)
+                {
+                    entryCount = (int)Math.Min((uint)maxEntriesBySize, hdr.NumberOfRvaAndSizes);
+                }
+
+                if (entryCount <= 0)
+                {
+                    hdr.DataDirectory = Array.Empty<IMAGE_DATA_DIRECTORY>();
+                    return;
+                }
+
+                IMAGE_DATA_DIRECTORY[] directories = new IMAGE_DATA_DIRECTORY[entryCount];
+                for (int i = 0; i < entryCount; i++)
+                {
+                    int entryOffset = dataDirectoryOffset + (i * 8);
+                    directories[i] = new IMAGE_DATA_DIRECTORY
+                    {
+                        VirtualAddress = ReadUInt32(buffer, entryOffset),
+                        Size = ReadUInt32(buffer, entryOffset + 4)
+                    };
+                }
+
+                hdr.DataDirectory = directories;
+            }
+
+            private static ushort ReadUInt16(byte[] buffer, int offset)
+            {
+                if (offset < 0 || offset + sizeof(ushort) > buffer.Length)
+                {
+                    return 0;
+                }
+
+                return (ushort)(buffer[offset] | (buffer[offset + 1] << 8));
+            }
+
+            private static uint ReadUInt32(byte[] buffer, int offset)
+            {
+                if (offset < 0 || offset + sizeof(uint) > buffer.Length)
+                {
+                    return 0;
+                }
+
+                return (uint)(buffer[offset] |
+                              (buffer[offset + 1] << 8) |
+                              (buffer[offset + 2] << 16) |
+                              (buffer[offset + 3] << 24));
+            }
+
+            private static ulong ReadUInt64(byte[] buffer, int offset)
+            {
+                if (offset < 0 || offset + sizeof(ulong) > buffer.Length)
+                {
+                    return 0;
+                }
+
+                return (ulong)buffer[offset] |
+                    ((ulong)buffer[offset + 1] << 8) |
+                    ((ulong)buffer[offset + 2] << 16) |
+                    ((ulong)buffer[offset + 3] << 24) |
+                    ((ulong)buffer[offset + 4] << 32) |
+                    ((ulong)buffer[offset + 5] << 40) |
+                    ((ulong)buffer[offset + 6] << 48) |
+                    ((ulong)buffer[offset + 7] << 56);
             }
         }
 
@@ -15011,6 +15064,37 @@ namespace PECoff
             }
         }
 
+        private void ValidateOptionalHeaderMinimumSize(ushort sizeOfOptionalHeader, PEFormat magic)
+        {
+            int requiredSize;
+            string formatName;
+            switch (magic)
+            {
+                case PEFormat.PE32:
+                    requiredSize = 0x48;
+                    formatName = "PE32";
+                    break;
+                case PEFormat.PE32plus:
+                    requiredSize = 0x48;
+                    formatName = "PE32+";
+                    break;
+                default:
+                    return;
+            }
+
+            if (sizeOfOptionalHeader < requiredSize)
+            {
+                Warn(
+                    ParseIssueCategory.OptionalHeader,
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "SPEC violation: SizeOfOptionalHeader (0x{0:X}) is too small to contain mandatory {1} optional-header fields (minimum 0x{2:X}).",
+                        sizeOfOptionalHeader,
+                        formatName,
+                        requiredSize));
+            }
+        }
+
         private void ValidateImageCoffDeprecation(IMAGE_FILE_HEADER fileHeader, IReadOnlyList<IMAGE_SECTION_HEADER> sections)
         {
             bool executableImage = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_EXECUTABLE_IMAGE) != 0;
@@ -15216,6 +15300,27 @@ namespace PECoff
                 Warn(
                     ParseIssueCategory.Header,
                     $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_LNK_NRELOC_OVFL, which is object-only.");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_PURGEABLE) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_MEM_PURGEABLE, which is reserved.");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_LOCKED) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_MEM_LOCKED, which is reserved.");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_MEM_PRELOAD) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_MEM_PRELOAD, which is reserved.");
             }
 
             uint alignmentMask = (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_1BYTES |
@@ -26402,6 +26507,9 @@ namespace PECoff
                     }
 
                     long optionalHeaderOffset = (long)header.e_lfanew + sizeof(uint) + Marshal.SizeOf(typeof(IMAGE_FILE_HEADER));
+                    ValidateOptionalHeaderMinimumSize(
+                        peHeader.FileHeader.SizeOfOptionalHeader,
+                        peHeader.Magic);
                     ValidateOptionalHeaderDirectoryBounds(
                         optionalHeaderOffset,
                         peHeader.FileHeader.SizeOfOptionalHeader,

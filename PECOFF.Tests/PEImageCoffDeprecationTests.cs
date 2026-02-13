@@ -24,6 +24,9 @@ public class PEImageCoffDeprecationTests
     private const uint IMAGE_SCN_LNK_COMDAT = 0x00001000;
     private const uint IMAGE_SCN_NO_DEFER_SPEC_EXC = 0x00004000;
     private const uint IMAGE_SCN_GPREL = 0x00008000;
+    private const uint IMAGE_SCN_MEM_PURGEABLE = 0x00020000;
+    private const uint IMAGE_SCN_MEM_LOCKED = 0x00040000;
+    private const uint IMAGE_SCN_MEM_PRELOAD = 0x00080000;
     private const uint IMAGE_SCN_ALIGN_16BYTES = 0x00500000;
 
     [Fact]
@@ -416,6 +419,9 @@ public class PEImageCoffDeprecationTests
     [InlineData(IMAGE_SCN_LNK_COMDAT, "IMAGE_SCN_LNK_COMDAT, which is object-only.")]
     [InlineData(IMAGE_SCN_NO_DEFER_SPEC_EXC, "uses reserved section-characteristic bits")]
     [InlineData(IMAGE_SCN_GPREL, "IMAGE_SCN_GPREL, which is object-only.")]
+    [InlineData(IMAGE_SCN_MEM_PURGEABLE, "IMAGE_SCN_MEM_PURGEABLE, which is reserved.")]
+    [InlineData(IMAGE_SCN_MEM_LOCKED, "IMAGE_SCN_MEM_LOCKED, which is reserved.")]
+    [InlineData(IMAGE_SCN_MEM_PRELOAD, "IMAGE_SCN_MEM_PRELOAD, which is reserved.")]
     [InlineData(IMAGE_SCN_ALIGN_16BYTES, "IMAGE_SCN_ALIGN_* flags, which are object-only.")]
     [InlineData(IMAGE_SCN_RESERVED_01, "uses reserved section-characteristic bits")]
     public void PeImage_SectionObjectOnlyOrReservedFlags_EmitSpecViolation_AndStrictModeFails(uint sectionFlag, string expectedSnippet)
