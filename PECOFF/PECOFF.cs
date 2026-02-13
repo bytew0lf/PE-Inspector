@@ -10645,6 +10645,14 @@ namespace PECoff
 
                 bool isName = (nameOrId & 0x80000000) != 0;
                 uint entryId = nameOrId & 0xFFFF;
+                uint idReservedBits = nameOrId & 0x7FFF0000;
+
+                if (!isName && idReservedBits != 0)
+                {
+                    Warn(
+                        ParseIssueCategory.Resources,
+                        $"SPEC violation: Resource directory ID entry uses non-zero reserved high bits (0x{idReservedBits:X8}).");
+                }
                 string entryName = string.Empty;
                 if (isName)
                 {
@@ -10804,6 +10812,12 @@ namespace PECoff
                     uint dataOrSubdir = ReadUInt32(buffer, entryOffset + 4);
                     bool isName = (nameOrId & 0x80000000) != 0;
                     uint entryId = nameOrId & 0xFFFF;
+                    uint idReservedBits = nameOrId & 0x7FFF0000;
+
+                    if (!isName && idReservedBits != 0)
+                    {
+                        issues.Add("SPEC violation: Resource directory ID entry uses non-zero reserved high bits.");
+                    }
 
                     if (i < numberOfNamed && !isName)
                     {

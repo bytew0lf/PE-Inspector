@@ -91,6 +91,21 @@ public class ResourceComplianceTests
     }
 
     [Fact]
+    public void ResourceDirectory_Detects_NonZero_IdEntryReservedHighBits()
+    {
+        byte[] data = new byte[0x40];
+        WriteDirectoryHeader(data, 0x00, namedEntries: 0, idEntries: 1);
+        WriteDirectoryEntry(data, 0x10, 0x00010001u, 0x00000020u); // high bits must be 0 for ID entries
+        WriteDataEntry(data, 0x20);
+
+        string[] issues = PECOFF.ValidateResourceDirectoryForTest(data, allowDeepTree: false);
+
+        Assert.Contains(
+            issues,
+            issue => issue.Contains("Resource directory ID entry uses non-zero reserved high bits", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ResourceDirectory_Detects_NonZero_DataEntryReserved()
     {
         byte[] data = new byte[0x40];
