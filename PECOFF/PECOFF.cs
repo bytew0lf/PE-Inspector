@@ -5527,6 +5527,13 @@ namespace PECoff
                     $"SPEC violation: COFF object section {sectionName} has SizeOfRawData=0 but PointerToRawData is non-zero (0x{section.PointerToRawData:X8}).");
             }
 
+            if (section.SizeOfRawData > 0 && section.PointerToRawData != 0 && (section.PointerToRawData % 4) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: COFF object section {sectionName} should align PointerToRawData to a 4-byte boundary (found 0x{section.PointerToRawData:X8}).");
+            }
+
             if (onlyUninitializedData && section.SizeOfRawData != 0)
             {
                 Warn(

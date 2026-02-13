@@ -571,6 +571,37 @@ public class CoffSpecialSectionComplianceTests
     }
 
     [Fact]
+    public void CoffObject_UnalignedPointerToRawData_Emits_SpecWarning_AndStrictModeFails()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".text", new byte[] { 1, 2, 3, 4 }, 0x60000020u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        const int coffHeaderSize = 20;
+        const int pointerToRawDataOffsetInSectionHeader = 20;
+        WriteUInt32(data, coffHeaderSize + pointerToRawDataOffsetInSectionHeader, 0x3Eu);
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("should align PointerToRawData to a 4-byte boundary", StringComparison.Ordinal));
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void CoffObject_LineNumberPointerWithoutCount_Emits_SpecWarning_AndStrictModeFails()
     {
         byte[] data = BuildCoffObject(
