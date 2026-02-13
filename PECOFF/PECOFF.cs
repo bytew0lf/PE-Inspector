@@ -14945,9 +14945,14 @@ namespace PECoff
 
         private void ValidateImageCoffDeprecation(IMAGE_FILE_HEADER fileHeader, IReadOnlyList<IMAGE_SECTION_HEADER> sections)
         {
+            bool executableImage = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_EXECUTABLE_IMAGE) != 0;
             bool relocsStripped = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_RELOCS_STRIPPED) != 0;
             bool lineNumsStripped = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_LINE_NUMS_STRIPPED) != 0;
             bool localSymsStripped = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_LOCAL_SYMS_STRIPPED) != 0;
+            bool aggressiveWsTrim = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_AGGRESSIVE_WS_TRIM) != 0;
+            bool futureUse = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_FUTURE_USE) != 0;
+            bool bytesReversedLo = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_BYTES_REVERSED_LO) != 0;
+            bool bytesReversedHi = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_BYTES_REVERSED_HI) != 0;
             bool debugStripped = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_DEBUG_STRIPPED) != 0;
             bool hasCoffSymbolTable = fileHeader.PointerToSymbolTable != 0 || fileHeader.NumberOfSymbols != 0;
             bool hasBaseRelocationDirectory = _dataDirectories != null &&
@@ -14964,6 +14969,55 @@ namespace PECoff
                 Warn(
                     ParseIssueCategory.Header,
                     $"SPEC violation: PE images should have COFF symbol table pointers cleared (PointerToSymbolTable=0x{fileHeader.PointerToSymbolTable:X8}, NumberOfSymbols={fileHeader.NumberOfSymbols}).");
+            }
+
+            if (!executableImage)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: PE images should set IMAGE_FILE_EXECUTABLE_IMAGE.");
+            }
+
+            if (aggressiveWsTrim)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_AGGRESSIVE_WS_TRIM is deprecated and should be 0 for PE images.");
+            }
+
+            if (futureUse)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_FUTURE_USE is reserved and should be 0 for PE images.");
+            }
+
+            if (bytesReversedLo)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_BYTES_REVERSED_LO is deprecated and should be 0 for PE images.");
+            }
+
+            if (bytesReversedHi)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_BYTES_REVERSED_HI is deprecated and should be 0 for PE images.");
+            }
+
+            if (lineNumsStripped)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_LINE_NUMS_STRIPPED is deprecated and should be 0 for PE images.");
+            }
+
+            if (localSymsStripped)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    "SPEC violation: IMAGE_FILE_LOCAL_SYMS_STRIPPED is deprecated and should be 0 for PE images.");
             }
 
             if (localSymsStripped && hasCoffSymbolTable)
@@ -14987,6 +15041,7 @@ namespace PECoff
                 for (int i = 0; i < sections.Count; i++)
                 {
                     IMAGE_SECTION_HEADER section = sections[i];
+                    ValidateImageSectionCharacteristics(section);
                     if (section.PointerToRelocations != 0 || section.NumberOfRelocations != 0)
                     {
                         hasImageSectionRelocations = true;
@@ -15026,6 +15081,93 @@ namespace PECoff
                 Warn(
                     ParseIssueCategory.Header,
                     "SPEC violation: IMAGE_FILE_RELOCS_STRIPPED is clear while no relocation information is present and DYNAMIC_BASE is enabled.");
+            }
+        }
+
+        private void ValidateImageSectionCharacteristics(IMAGE_SECTION_HEADER section)
+        {
+            uint characteristics = (uint)section.Characteristics;
+            string sectionName = NormalizeSectionName(section);
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_01) != 0 ||
+                (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_02) != 0 ||
+                (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_03) != 0 ||
+                (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_04) != 0 ||
+                (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_05) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} uses reserved section-characteristic bits (0x{characteristics:X8}).");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_OTHER) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_LNK_OTHER, which is reserved.");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_TYPE_NO_PAD) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_TYPE_NO_PAD, which is object-only/deprecated.");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_INFO) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_LNK_INFO, which is object-only.");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_REMOVE) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_LNK_REMOVE, which is object-only.");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_COMDAT) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_LNK_COMDAT, which is object-only.");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_GPREL) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_GPREL, which is object-only.");
+            }
+
+            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_NRELOC_OVFL) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_LNK_NRELOC_OVFL, which is object-only.");
+            }
+
+            uint alignmentMask = (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_1BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_2BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_4BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_8BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_16BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_32BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_64BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_128BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_256BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_512BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_1024BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_2048BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_4096BYTES |
+                                 (uint)SectionCharacteristics.IMAGE_SCN_ALIGN_8192BYTES;
+            if ((characteristics & alignmentMask) != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_ALIGN_* flags, which are object-only.");
             }
         }
 

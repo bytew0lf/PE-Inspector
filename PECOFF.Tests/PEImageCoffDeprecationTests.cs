@@ -7,10 +7,21 @@ using Xunit;
 public class PEImageCoffDeprecationTests
 {
     private const ushort IMAGE_FILE_RELOCS_STRIPPED = 0x0001;
+    private const ushort IMAGE_FILE_EXECUTABLE_IMAGE = 0x0002;
     private const ushort IMAGE_FILE_LINE_NUMS_STRIPPED = 0x0004;
     private const ushort IMAGE_FILE_LOCAL_SYMS_STRIPPED = 0x0008;
+    private const ushort IMAGE_FILE_AGGRESSIVE_WS_TRIM = 0x0010;
+    private const ushort IMAGE_FILE_FUTURE_USE = 0x0040;
+    private const ushort IMAGE_FILE_BYTES_REVERSED_LO = 0x0080;
     private const ushort IMAGE_FILE_DEBUG_STRIPPED = 0x0200;
+    private const ushort IMAGE_FILE_BYTES_REVERSED_HI = 0x8000;
     private const ushort IMAGE_DLL_CHARACTERISTICS_DYNAMIC_BASE = 0x0040;
+    private const uint IMAGE_SCN_RESERVED_01 = 0x00000001;
+    private const uint IMAGE_SCN_LNK_INFO = 0x00000200;
+    private const uint IMAGE_SCN_LNK_REMOVE = 0x00000800;
+    private const uint IMAGE_SCN_LNK_COMDAT = 0x00001000;
+    private const uint IMAGE_SCN_GPREL = 0x00008000;
+    private const uint IMAGE_SCN_ALIGN_16BYTES = 0x00500000;
 
     [Fact]
     public void PeImage_With_CoffPointers_Emits_Deprecation_Warnings()
@@ -210,7 +221,7 @@ public class PEImageCoffDeprecationTests
     }
 
     [Fact]
-    public void PeImage_StrippedCharacteristics_WithoutContradictoryData_DoNotWarn()
+    public void PeImage_StrippedCharacteristics_WithoutContradictoryData_StillWarnForDeprecatedBits()
     {
         byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
         Assert.True(TryMutateImageStrippedCharacteristicConsistentState(mutated));
@@ -221,20 +232,201 @@ public class PEImageCoffDeprecationTests
             File.WriteAllBytes(tempFile, mutated);
             PECOFF parser = new PECOFF(tempFile);
 
-            Assert.DoesNotContain(
+            Assert.Contains(
                 parser.ParseResult.Warnings,
-                warning => warning.Contains("IMAGE_FILE_LINE_NUMS_STRIPPED is set", StringComparison.Ordinal));
-            Assert.DoesNotContain(
+                warning => warning.Contains("SPEC violation: IMAGE_FILE_LINE_NUMS_STRIPPED is deprecated and should be 0", StringComparison.Ordinal));
+            Assert.Contains(
                 parser.ParseResult.Warnings,
-                warning => warning.Contains("IMAGE_FILE_LOCAL_SYMS_STRIPPED is set", StringComparison.Ordinal));
+                warning => warning.Contains("SPEC violation: IMAGE_FILE_LOCAL_SYMS_STRIPPED is deprecated and should be 0", StringComparison.Ordinal));
             Assert.DoesNotContain(
                 parser.ParseResult.Warnings,
                 warning => warning.Contains("IMAGE_FILE_DEBUG_STRIPPED is set", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("COFF line-number data is still present", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("COFF symbol table data is present", StringComparison.Ordinal));
         }
         finally
         {
             File.Delete(tempFile);
         }
+    }
+
+    [Theory]
+    [InlineData(IMAGE_FILE_AGGRESSIVE_WS_TRIM, "IMAGE_FILE_AGGRESSIVE_WS_TRIM is deprecated and should be 0")]
+    [InlineData(IMAGE_FILE_FUTURE_USE, "IMAGE_FILE_FUTURE_USE is reserved and should be 0")]
+    [InlineData(IMAGE_FILE_BYTES_REVERSED_LO, "IMAGE_FILE_BYTES_REVERSED_LO is deprecated and should be 0")]
+    [InlineData(IMAGE_FILE_BYTES_REVERSED_HI, "IMAGE_FILE_BYTES_REVERSED_HI is deprecated and should be 0")]
+    [InlineData(IMAGE_FILE_LINE_NUMS_STRIPPED, "IMAGE_FILE_LINE_NUMS_STRIPPED is deprecated and should be 0")]
+    [InlineData(IMAGE_FILE_LOCAL_SYMS_STRIPPED, "IMAGE_FILE_LOCAL_SYMS_STRIPPED is deprecated and should be 0")]
+    public void PeImage_DeprecatedOrReservedCharacteristics_BitSet_EmitsSpecViolation_AndStrictModeFails(ushort bit, string expectedSnippet)
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TryUpdateFileHeaderCharacteristics(mutated, setMask: bit, clearMask: 0));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation:", StringComparison.Ordinal) &&
+                           warning.Contains(expectedSnippet, StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void PeImage_ExecutableImageBitClear_EmitsSpecViolation_AndStrictModeFails()
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TryUpdateFileHeaderCharacteristics(mutated, setMask: 0, clearMask: IMAGE_FILE_EXECUTABLE_IMAGE));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: PE images should set IMAGE_FILE_EXECUTABLE_IMAGE", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_ExecutableImageBitClear_DoesNotEmitPeImageExecutableWarning()
+    {
+        byte[] data = BuildCoffObjectWithLinePointers();
+        int fileHeaderOffset = 0;
+        ushort characteristics = BitConverter.ToUInt16(data, fileHeaderOffset + 18);
+        characteristics = (ushort)(characteristics & ~IMAGE_FILE_EXECUTABLE_IMAGE);
+        WriteUInt16(data, fileHeaderOffset + 18, characteristics);
+
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, data);
+            PECOFF parser = new PECOFF(path);
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("PE images should set IMAGE_FILE_EXECUTABLE_IMAGE", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(IMAGE_SCN_LNK_INFO, "IMAGE_SCN_LNK_INFO, which is object-only.")]
+    [InlineData(IMAGE_SCN_LNK_REMOVE, "IMAGE_SCN_LNK_REMOVE, which is object-only.")]
+    [InlineData(IMAGE_SCN_LNK_COMDAT, "IMAGE_SCN_LNK_COMDAT, which is object-only.")]
+    [InlineData(IMAGE_SCN_GPREL, "IMAGE_SCN_GPREL, which is object-only.")]
+    [InlineData(IMAGE_SCN_ALIGN_16BYTES, "IMAGE_SCN_ALIGN_* flags, which are object-only.")]
+    [InlineData(IMAGE_SCN_RESERVED_01, "uses reserved section-characteristic bits")]
+    public void PeImage_SectionObjectOnlyOrReservedFlags_EmitSpecViolation_AndStrictModeFails(uint sectionFlag, string expectedSnippet)
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TryUpdateFirstSectionCharacteristics(mutated, setMask: sectionFlag, clearMask: 0));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: PE image section", StringComparison.Ordinal) &&
+                           warning.Contains(expectedSnippet, StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_SectionObjectOnlyFlags_DoNotEmitPeImageSectionWarning()
+    {
+        byte[] data = BuildCoffObjectWithLinePointers();
+        int sectionHeaderOffset = 20;
+        uint sectionCharacteristics = BitConverter.ToUInt32(data, sectionHeaderOffset + 36);
+        sectionCharacteristics |= IMAGE_SCN_LNK_COMDAT;
+        WriteUInt32(data, sectionHeaderOffset + 36, sectionCharacteristics);
+
+        string path = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(path, data);
+            PECOFF parser = new PECOFF(path);
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: PE image section", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static bool TryUpdateFileHeaderCharacteristics(byte[] data, ushort setMask, ushort clearMask)
+    {
+        if (!TryGetPeLayout(
+                data,
+                out int fileHeaderOffset,
+                out _,
+                out _,
+                out _,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        ushort characteristics = BitConverter.ToUInt16(data, fileHeaderOffset + 18);
+        characteristics = (ushort)((characteristics | setMask) & ~clearMask);
+        WriteUInt16(data, fileHeaderOffset + 18, characteristics);
+        return true;
+    }
+
+    private static bool TryUpdateFirstSectionCharacteristics(byte[] data, uint setMask, uint clearMask)
+    {
+        if (!TryGetPeLayout(
+                data,
+                out _,
+                out _,
+                out _,
+                out int sectionTableOffset,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        int firstSectionOffset = sectionTableOffset;
+        uint characteristics = BitConverter.ToUInt32(data, firstSectionOffset + 36);
+        characteristics = (characteristics | setMask) & ~clearMask;
+        WriteUInt32(data, firstSectionOffset + 36, characteristics);
+        return true;
     }
 
     private static bool TryMutateDeprecatedCoffFields(byte[] data)
