@@ -5515,6 +5515,32 @@ namespace PECoff
                     ParseIssueCategory.Header,
                     $"SPEC violation: COFF object section {sectionName} sets IMAGE_SCN_GPREL, which is documented only for IA64 objects.");
             }
+
+            if (IsVsDataSectionName(sectionName) && !IsVsDataMachine(_machineType))
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: COFF object section {sectionName} is documented only for ARM/SH4/Thumb architectures.");
+            }
+        }
+
+        private static bool IsVsDataSectionName(string sectionName)
+        {
+            if (string.IsNullOrWhiteSpace(sectionName))
+            {
+                return false;
+            }
+
+            return string.Equals(sectionName, ".vsdata", StringComparison.OrdinalIgnoreCase) ||
+                sectionName.StartsWith(".vsdata$", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsVsDataMachine(MachineTypes machineType)
+        {
+            return machineType == MachineTypes.IMAGE_FILE_MACHINE_ARM ||
+                machineType == MachineTypes.IMAGE_FILE_MACHINE_ARMNT ||
+                machineType == MachineTypes.IMAGE_FILE_MACHINE_THUMB ||
+                machineType == MachineTypes.IMAGE_FILE_MACHINE_SH4;
         }
 
         private bool TryReadCoffSectionRawData(IMAGE_SECTION_HEADER section, out byte[] data, out long fileOffset)
@@ -15858,6 +15884,7 @@ namespace PECoff
             uint characteristics = (uint)section.Characteristics;
             string sectionName = NormalizeSectionName(section);
             bool isIdlSymSection = string.Equals(sectionName, ".idlsym", StringComparison.OrdinalIgnoreCase);
+            bool isVsDataSection = IsVsDataSectionName(sectionName);
 
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_01) != 0 ||
                 (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_02) != 0 ||
@@ -15963,6 +15990,13 @@ namespace PECoff
                 Warn(
                     ParseIssueCategory.Header,
                     $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_ALIGN_* flags, which are object-only.");
+            }
+
+            if (isVsDataSection && !IsVsDataMachine(_machineType))
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} is documented only for ARM/SH4/Thumb architectures.");
             }
         }
 

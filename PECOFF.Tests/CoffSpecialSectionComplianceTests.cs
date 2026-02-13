@@ -323,6 +323,58 @@ public class CoffSpecialSectionComplianceTests
     }
 
     [Fact]
+    public void CoffObject_VsDataSection_On_NonArmSh4Thumb_Emits_SpecWarning()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".vsdata", Array.Empty<byte>(), 0x40000040u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("COFF object section .vsdata is documented only for ARM/SH4/Thumb architectures.", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_VsDataSection_On_Arm_DoesNotEmit_ArchitectureWarning()
+    {
+        byte[] data = BuildCoffObject(
+            machine: 0x01C0,
+            sections: new[]
+            {
+                new SectionSpec(".vsdata", Array.Empty<byte>(), 0x40000040u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("is documented only for ARM/SH4/Thumb architectures.", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void CoffObject_CorMeta_Parses_Metadata_Root()
     {
         byte[] cormeta = BuildMinimalCorMetadata();
