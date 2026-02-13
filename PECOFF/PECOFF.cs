@@ -17092,6 +17092,8 @@ namespace PECoff
             bool warnedUnmappedNameRva = false;
             bool warnedExecutableNameRva = false;
             bool warnedInvalidName = false;
+            bool warnedReservedOrdinalBits = false;
+            bool warnedReservedNameBits = false;
             int nullThunkCount = 0;
             int entryCount = 0;
             for (int index = 0; index < maxIterations; index++)
@@ -17159,10 +17161,33 @@ namespace PECoff
 
                 if (isOrdinal)
                 {
+                    ulong reservedOrdinalBits = isPe32Plus
+                        ? (value & 0x7FFFFFFFFFFF0000UL)
+                        : (value & 0x7FFF0000UL);
+                    if (reservedOrdinalBits != 0 && !warnedReservedOrdinalBits)
+                    {
+                        Warn(
+                            ParseIssueCategory.Imports,
+                            $"SPEC violation: Import lookup thunk entry for {dllName} ({source}) imports by ordinal but has reserved bits set (0x{reservedOrdinalBits:X}).");
+                        warnedReservedOrdinalBits = true;
+                    }
+
                     ushort ordinal = (ushort)(value & 0xFFFF);
                     targetList.Add(new ImportEntry(dllName, string.Empty, 0, ordinal, true, source, thunkEntryRva));
                     entryCount++;
                     continue;
+                }
+
+                if (isPe32Plus)
+                {
+                    ulong reservedNameBits = value & 0x7FFFFFFF80000000UL;
+                    if (reservedNameBits != 0 && !warnedReservedNameBits)
+                    {
+                        Warn(
+                            ParseIssueCategory.Imports,
+                            $"SPEC violation: Import lookup thunk entry for {dllName} ({source}) imports by name but has reserved high bits set (0x{reservedNameBits:X}).");
+                        warnedReservedNameBits = true;
+                    }
                 }
 
                 uint nameRva = (uint)value;
