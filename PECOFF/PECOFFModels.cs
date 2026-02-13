@@ -3476,6 +3476,9 @@ namespace PECoff
         public string SymbolName { get; }
         public ushort Type { get; }
         public string TypeName { get; }
+        public bool UsesCompatibilityMapping { get; }
+        public string CompatibilityPolicy { get; }
+        public string CompatibilityNote { get; }
         public long FileOffset { get; }
 
         public CoffRelocationInfo(
@@ -3486,7 +3489,10 @@ namespace PECoff
             string symbolName,
             ushort type,
             string typeName,
-            long fileOffset)
+            long fileOffset,
+            bool usesCompatibilityMapping = false,
+            string compatibilityPolicy = "",
+            string compatibilityNote = "")
         {
             SectionName = sectionName ?? string.Empty;
             SectionIndex = sectionIndex;
@@ -3495,6 +3501,9 @@ namespace PECoff
             SymbolName = symbolName ?? string.Empty;
             Type = type;
             TypeName = typeName ?? string.Empty;
+            UsesCompatibilityMapping = usesCompatibilityMapping;
+            CompatibilityPolicy = compatibilityPolicy ?? string.Empty;
+            CompatibilityNote = compatibilityNote ?? string.Empty;
             FileOffset = fileOffset;
         }
     }

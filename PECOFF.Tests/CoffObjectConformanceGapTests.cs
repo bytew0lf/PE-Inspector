@@ -136,6 +136,7 @@ public class CoffObjectConformanceGapTests
         try
         {
             PECOFF tableOnly = new PECOFF(path);
+            Assert.Equal("TYPE_0x0014", tableOnly.CoffRelocations[0].TypeName);
             Assert.Contains(
                 tableOnly.ParseResult.Warnings,
                 warning => warning.Contains("SPEC violation: COFF PAIR relocation entry", StringComparison.Ordinal) &&
@@ -145,7 +146,19 @@ public class CoffObjectConformanceGapTests
             Assert.DoesNotContain(
                 compatibility.ParseResult.Warnings,
                 warning => warning.Contains("SPEC violation: COFF PAIR relocation entry", StringComparison.Ordinal));
-            Assert.Equal("TYPE_0x0014", compatibility.CoffRelocations[0].TypeName);
+            CoffRelocationInfo compatibilityPredecessor = compatibility.CoffRelocations[0];
+            Assert.Equal("SECRELHI_COMPAT", compatibilityPredecessor.TypeName);
+            Assert.True(compatibilityPredecessor.UsesCompatibilityMapping);
+            Assert.Equal("PpcPairOrderingPolicy=CompatibilityProse", compatibilityPredecessor.CompatibilityPolicy);
+            Assert.Contains("legacy PPC PAIR predecessor", compatibilityPredecessor.CompatibilityNote, StringComparison.Ordinal);
+            Assert.Contains(
+                compatibility.ParseResult.Warnings,
+                warning => warning.Contains("Policy notice: COFF relocation entry #0", StringComparison.Ordinal) &&
+                           warning.Contains("SECRELHI_COMPAT", StringComparison.Ordinal));
+
+            string compatibilityJson = compatibility.Result.ToJsonReport(includeBinary: false, indented: false);
+            Assert.Contains("\"UsesCompatibilityMapping\":true", compatibilityJson, StringComparison.Ordinal);
+            Assert.Contains("\"CompatibilityPolicy\":\"PpcPairOrderingPolicy=CompatibilityProse\"", compatibilityJson, StringComparison.Ordinal);
         }
         finally
         {
@@ -300,9 +313,19 @@ public class CoffObjectConformanceGapTests
             PECOFF compatibility = new PECOFF(path, new PECOFFOptions { ValidationProfile = ValidationProfile.Compatibility });
             Assert.Equal(2, compatibility.CoffRelocations.Length);
             Assert.Equal("LTOFF64_COMPAT", compatibility.CoffRelocations[0].TypeName);
+            Assert.True(compatibility.CoffRelocations[0].UsesCompatibilityMapping);
+            Assert.Equal("Ia64RelocationTablePolicy=CompatibilityProse", compatibility.CoffRelocations[0].CompatibilityPolicy);
+            Assert.Contains(
+                compatibility.ParseResult.Warnings,
+                warning => warning.Contains("Policy notice: COFF relocation entry #0", StringComparison.Ordinal) &&
+                           warning.Contains("LTOFF64_COMPAT", StringComparison.Ordinal));
             Assert.DoesNotContain(
                 compatibility.ParseResult.Warnings,
                 warning => warning.Contains("SPEC violation: COFF IA64 ADDEND relocation entry", StringComparison.Ordinal));
+
+            string compatibilityJson = compatibility.Result.ToJsonReport(includeBinary: false, indented: false);
+            Assert.Contains("\"UsesCompatibilityMapping\":true", compatibilityJson, StringComparison.Ordinal);
+            Assert.Contains("\"CompatibilityPolicy\":\"Ia64RelocationTablePolicy=CompatibilityProse\"", compatibilityJson, StringComparison.Ordinal);
         }
         finally
         {
@@ -372,6 +395,8 @@ public class CoffObjectConformanceGapTests
             });
 
             Assert.Equal("LTOFF64_COMPAT", compatibility.CoffRelocations[0].TypeName);
+            Assert.True(compatibility.CoffRelocations[0].UsesCompatibilityMapping);
+            Assert.Equal("Ia64RelocationTablePolicy=CompatibilityProse", compatibility.CoffRelocations[0].CompatibilityPolicy);
             Assert.DoesNotContain(
                 compatibility.ParseResult.Warnings,
                 warning => warning.Contains("SPEC violation: COFF IA64 ADDEND relocation entry", StringComparison.Ordinal));
@@ -400,13 +425,51 @@ public class CoffObjectConformanceGapTests
         try
         {
             PECOFF tableOnly = new PECOFF(path);
-            Assert.Equal($"TYPE_0x{relocationType:X4}", Assert.Single(tableOnly.CoffRelocations).TypeName);
+            CoffRelocationInfo tableOnlyRelocation = Assert.Single(tableOnly.CoffRelocations);
+            Assert.Equal($"TYPE_0x{relocationType:X4}", tableOnlyRelocation.TypeName);
+            Assert.False(tableOnlyRelocation.UsesCompatibilityMapping);
 
             PECOFF compatibility = new PECOFF(path, new PECOFFOptions
             {
                 ValidationProfile = ValidationProfile.Compatibility
             });
-            Assert.Equal(expectedCompatName, Assert.Single(compatibility.CoffRelocations).TypeName);
+            CoffRelocationInfo compatibilityRelocation = Assert.Single(compatibility.CoffRelocations);
+            Assert.Equal(expectedCompatName, compatibilityRelocation.TypeName);
+            Assert.True(compatibilityRelocation.UsesCompatibilityMapping);
+            Assert.Equal("Ia64RelocationTablePolicy=CompatibilityProse", compatibilityRelocation.CompatibilityPolicy);
+            Assert.Contains(
+                compatibility.ParseResult.Warnings,
+                warning => warning.Contains("Policy notice: COFF relocation entry #0", StringComparison.Ordinal) &&
+                           warning.Contains(expectedCompatName, StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffRelocation_PairTypes_ArmInvalidOrdering_Message_UsesRefhiAliasWording()
+    {
+        byte[] symbol = CreateShortNameSymbol("sym", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
+        byte[] data = BuildCoffObject(
+            machine: 0x01C2,
+            sectionName: CreateSectionName(".text"),
+            relocations: new[]
+            {
+                (0x20u, 0u, (ushort)0x000A), // ARM REL32
+                (0x24u, 0x11223344u, (ushort)0x0016) // ARM PAIR
+            },
+            symbols: new[] { symbol },
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("ARM/THUMB REFHI aliases", StringComparison.Ordinal));
         }
         finally
         {

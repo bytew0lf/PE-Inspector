@@ -5052,7 +5052,15 @@ namespace PECoff
                     uint virtualAddress = ReadUInt32(buffer, entryOffset);
                     uint symbolIndex = ReadUInt32(buffer, entryOffset + 4);
                     ushort type = ReadUInt16(buffer, entryOffset + 8);
-                    string typeName = GetCoffRelocationTypeName(_machineType, type, ia64RelocationPolicy);
+                    string typeName = GetCoffRelocationTypeName(_machineType, type, ia64RelocationPolicy, ppcPairPolicy);
+                    bool usesCompatibilityMapping = TryGetCoffRelocationCompatibilityMetadata(
+                        _machineType,
+                        type,
+                        typeName,
+                        ia64RelocationPolicy,
+                        ppcPairPolicy,
+                        out string compatibilityPolicy,
+                        out string compatibilityNote);
                     string symbolName = string.Empty;
                     bool usesPairDisplacement = IsPairRelocationDisplacementCarrier(_machineType, type);
                     bool usesIa64AddendPayload = IsIa64AddendPayloadCarrier(_machineType, type);
@@ -5060,7 +5068,7 @@ namespace PECoff
                     {
                         string sectionLabel = string.IsNullOrWhiteSpace(sectionName) ? "<unnamed>" : sectionName;
                         string previousTypeName = previousRelocationType.HasValue
-                            ? GetCoffRelocationTypeName(_machineType, previousRelocationType.Value, ia64RelocationPolicy)
+                            ? GetCoffRelocationTypeName(_machineType, previousRelocationType.Value, ia64RelocationPolicy, ppcPairPolicy)
                             : "<none>";
                         Warn(
                             ParseIssueCategory.Relocations,
@@ -5078,7 +5086,7 @@ namespace PECoff
                     {
                         string sectionLabel = string.IsNullOrWhiteSpace(sectionName) ? "<unnamed>" : sectionName;
                         string previousTypeName = previousRelocationType.HasValue
-                            ? GetCoffRelocationTypeName(_machineType, previousRelocationType.Value, ia64RelocationPolicy)
+                            ? GetCoffRelocationTypeName(_machineType, previousRelocationType.Value, ia64RelocationPolicy, ppcPairPolicy)
                             : "<none>";
                         Warn(
                             ParseIssueCategory.Relocations,
@@ -5112,6 +5120,20 @@ namespace PECoff
                         }
                     }
 
+                    if (usesCompatibilityMapping)
+                    {
+                        Warn(
+                            ParseIssueCategory.Relocations,
+                            string.Format(
+                                CultureInfo.InvariantCulture,
+                                "Policy notice: COFF relocation entry #{0} in section {1} uses compatibility mapping {2} for type 0x{3:X4} ({4}).",
+                                j,
+                                string.IsNullOrWhiteSpace(sectionName) ? "<unnamed>" : sectionName,
+                                typeName,
+                                type,
+                                compatibilityPolicy));
+                    }
+
                     _coffRelocations.Add(new CoffRelocationInfo(
                         sectionName,
                         i + 1,
@@ -5120,7 +5142,10 @@ namespace PECoff
                         symbolName,
                         type,
                         typeName,
-                        offset + entryOffset));
+                        offset + entryOffset,
+                        usesCompatibilityMapping,
+                        compatibilityPolicy,
+                        compatibilityNote));
                     previousRelocationType = type;
                 }
             }
@@ -16844,7 +16869,7 @@ namespace PECoff
                 machine == MachineTypes.IMAGE_FILE_MACHINE_ARMNT ||
                 machine == MachineTypes.IMAGE_FILE_MACHINE_THUMB)
             {
-                return previous == 0x0010 || previous == 0x0011; // ARM_MOV32 or THUMB_MOV32
+                return previous == 0x0010 || previous == 0x0011; // ARM/THUMB REFHI aliases (ARM_MOV32/THUMB_MOV32)
             }
 
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPC ||
@@ -16886,7 +16911,7 @@ namespace PECoff
                 machine == MachineTypes.IMAGE_FILE_MACHINE_ARMNT ||
                 machine == MachineTypes.IMAGE_FILE_MACHINE_THUMB)
             {
-                return "ARM_MOV32 or THUMB_MOV32";
+                return "ARM/THUMB REFHI aliases (ARM_MOV32 or THUMB_MOV32)";
             }
 
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPC ||
@@ -16981,10 +17006,58 @@ namespace PECoff
 
         private static string GetCoffRelocationTypeName(MachineTypes machine, ushort type)
         {
-            return GetCoffRelocationTypeName(machine, type, Ia64RelocationTablePolicy.TableOnly);
+            return GetCoffRelocationTypeName(
+                machine,
+                type,
+                Ia64RelocationTablePolicy.TableOnly,
+                PpcPairOrderingPolicy.TableOnly);
+        }
+
+        private static bool TryGetCoffRelocationCompatibilityMetadata(
+            MachineTypes machine,
+            ushort type,
+            string typeName,
+            Ia64RelocationTablePolicy ia64Policy,
+            PpcPairOrderingPolicy ppcPolicy,
+            out string compatibilityPolicy,
+            out string compatibilityNote)
+        {
+            compatibilityPolicy = string.Empty;
+            compatibilityNote = string.Empty;
+
+            if (machine == MachineTypes.IMAGE_FILE_MACHINE_IA64 &&
+                ia64Policy == Ia64RelocationTablePolicy.CompatibilityProse &&
+                (type == 0x000F || type == 0x001D || type == 0x001E) &&
+                typeName.EndsWith("_COMPAT", StringComparison.Ordinal))
+            {
+                compatibilityPolicy = "Ia64RelocationTablePolicy=CompatibilityProse";
+                compatibilityNote = "Compatibility mapping used for IA64 disputed prose/table constant.";
+                return true;
+            }
+
+            if ((machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPC || machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP) &&
+                ppcPolicy == PpcPairOrderingPolicy.CompatibilityProse &&
+                type == 0x0014 &&
+                string.Equals(typeName, "SECRELHI_COMPAT", StringComparison.Ordinal))
+            {
+                compatibilityPolicy = "PpcPairOrderingPolicy=CompatibilityProse";
+                compatibilityNote = "Compatibility alias used for legacy PPC PAIR predecessor constant 0x0014.";
+                return true;
+            }
+
+            return false;
         }
 
         private static string GetCoffRelocationTypeName(MachineTypes machine, ushort type, Ia64RelocationTablePolicy ia64Policy)
+        {
+            return GetCoffRelocationTypeName(machine, type, ia64Policy, PpcPairOrderingPolicy.TableOnly);
+        }
+
+        private static string GetCoffRelocationTypeName(
+            MachineTypes machine,
+            ushort type,
+            Ia64RelocationTablePolicy ia64Policy,
+            PpcPairOrderingPolicy ppcPolicy)
         {
             switch (machine)
             {
@@ -17140,7 +17213,13 @@ namespace PECoff
                         case 0x0013: return "SECRELLO";
                         case 0x0015: return "GPREL";
                         case 0x0016: return "TOKEN";
-                        default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
+                        default:
+                            if (type == 0x0014 && ppcPolicy == PpcPairOrderingPolicy.CompatibilityProse)
+                            {
+                                return "SECRELHI_COMPAT";
+                            }
+
+                            return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_R3000BE:
                 case MachineTypes.IMAGE_FILE_MACHINE_R3000:

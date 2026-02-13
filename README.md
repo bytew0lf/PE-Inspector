@@ -32,7 +32,7 @@ Executable outputs land in the project `bin/<Configuration>/net9.0/` folders.
 - PDB/MSF stream parsing + symbol record decoding
 - CLR/.NET metadata deep-dive (tables, token refs, signature decode, IL/EH summaries, ReadyToRun)
 - Authenticode/certificates (PKCS7 signers/timestamps, X509/TS-stack metadata, tuple-uniqueness checks + per-field uniqueness warnings with strict-profile escalation, CT hints, WinTrust on Windows, policy summaries)
-- COFF objects/archives + UEFI TE images (expanded relocation families, linker-member mapping, import header reserved-bit validation, broader machine-type constant coverage including canonical `ALPHA`/`ALPHA64 (AXP64)`/`CEE` naming plus `R3000BE`/`TARGET_HOST`/`CHPE_X86`, spec-aligned storage-class constants, richer aux symbol decode including CLR-token structured fields, Aux Format 1/2 reserved-field conformance checks, weak-external symbol-table-index resolution, relocation SymbolTableIndex vs PAIR-displacement conformance plus PAIR ordering validation (ARM/PPC/MIPS/M32R/SH), ARM/PPC table-aligned constants, IA64 table-only defaults with explicit compatibility labels for disputed prose constants, configurable IA64 ADDEND and PPC PAIR ordering policies, COFF extended relocation-overflow (`LNK_NRELOC_OVFL`) parsing, COFF `/nnn` section long-name resolution, and UTF-8 short/string-table name decode with deterministic Latin-1 fallback)
+- COFF objects/archives + UEFI TE images (expanded relocation families, linker-member mapping, import header reserved-bit validation, broader machine-type constant coverage including canonical `ALPHA`/`ALPHA64 (AXP64)`/`CEE` naming plus `R3000BE`/`TARGET_HOST`/`CHPE_X86`, spec-aligned storage-class constants, richer aux symbol decode including CLR-token structured fields, Aux Format 1/2 reserved-field conformance checks, weak-external symbol-table-index resolution, relocation SymbolTableIndex vs PAIR-displacement conformance plus PAIR ordering validation (ARM/PPC/MIPS/M32R/SH), ARM/PPC table-aligned constants, IA64 table-only defaults with explicit compatibility labels for disputed prose constants, configurable IA64 ADDEND and PPC PAIR ordering policies, per-relocation compatibility audit markers (`UsesCompatibilityMapping`/`CompatibilityPolicy`/`CompatibilityNote`) with policy notices, COFF extended relocation-overflow (`LNK_NRELOC_OVFL`) parsing, COFF `/nnn` section long-name resolution, and UTF-8 short/string-table name decode with deterministic Latin-1 fallback)
 - Overlay container parsing (ZIP/RAR/7z NextHeader + EncodedHeader notes)
 - JSON report snapshotting (stable schema versioning)
 
@@ -53,7 +53,7 @@ Status legend:
 | Sections | `full` | Header decoding (sizes/flags/align), entropy, permissions, padding, overlaps/align checks, directory containment summaries. |
 | Data directories | `full` | Name/section mapping + Architecture/GlobalPtr/IAT deep decode + size/mapping validation. |
 | Imports/Exports | `full` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints. |
-| Relocations | `partial` | Summaries + anomaly totals; machine-aware COFF relocation mapping with matrix tests across i386/AMD64/ARM/ARM64/IA64/PPC/MIPS/SH/M32R (including `SH3E`/`R3000BE` family behavior), table-aligned ARM/PPC constants, IA64 table-only defaults plus explicit compatibility labels for disputed constants (`LTOFF64_COMPAT`/`PCREL21BI_COMPAT`/`PCREL22_COMPAT`), true symbol-table-index resolution, PAIR displacement handling plus immediate-predecessor ordering validation (ARM/PPC/MIPS/M32R/SH) with optional PPC compatibility predecessor handling, IA64 ADDEND immediate-predecessor/payload conformance checks with explicit policy controls (`TableOnly`, `CompatibilityProse`, `ProfileDefault`), COFF overflow-relocation (`IMAGE_SCN_LNK_NRELOC_OVFL`) marker parsing/validation, base-relocation HIGHADJ two-slot semantics, and 4K-page + 32-bit block-boundary conformance checks. |
+| Relocations | `partial` | Summaries + anomaly totals; machine-aware COFF relocation mapping with matrix tests across i386/AMD64/ARM/ARM64/IA64/PPC/MIPS/SH/M32R (including `SH3E`/`R3000BE` family behavior), table-aligned ARM/PPC constants, IA64 table-only defaults plus explicit compatibility labels for disputed constants (`LTOFF64_COMPAT`/`PCREL21BI_COMPAT`/`PCREL22_COMPAT`), true symbol-table-index resolution, PAIR displacement handling plus immediate-predecessor ordering validation (ARM/PPC/MIPS/M32R/SH) with optional PPC compatibility predecessor handling, IA64 ADDEND immediate-predecessor/payload conformance checks with explicit policy controls (`TableOnly`, `CompatibilityProse`, `ProfileDefault`), per-relocation compatibility audit markers and policy notices, COFF overflow-relocation (`IMAGE_SCN_LNK_NRELOC_OVFL`) marker parsing/validation, base-relocation HIGHADJ two-slot semantics, and 4K-page + 32-bit block-boundary conformance checks. Status remains `partial` because selected IA64/PPC table-vs-prose ambiguities are policy-driven rather than single-mode canonical. |
 | TLS | `full` | Callbacks + raw data mapping, hash/preview, template sizing + index mapping. |
 | Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation, structured decode for dynamic-reloc/CHPE/volatile pointed metadata with deterministic malformed issues. |
 | Exception directory | `full` | AMD64/ARM64/ARM32/IA64 decode + range validation, x86 SEH. |
@@ -69,6 +69,14 @@ Status legend:
 | UEFI TE images | `full` | Header/sections, base relocations, entrypoint/base-of-code file offsets + mapping checks. |
 | Overlay containers | `full` | ZIP/RAR4/5/7z container parsing + encoded-header method notes. |
 | Rich header | `full` | Toolchain signature summaries + extended product mapping. |
+
+### Relocation Policy Matrix
+
+| Area | TableOnly | CompatibilityProse |
+| --- | --- | --- |
+| IA64 disputed constants (`0x000F`, `0x001D`, `0x001E`) | `TYPE_0xXXXX` fallback | Explicit compatibility aliases (`LTOFF64_COMPAT`, `PCREL21BI_COMPAT`, `PCREL22_COMPAT`) + policy notice |
+| IA64 ADDEND predecessor (`0x001F`) | `0x000F` predecessor rejected (spec violation) | `0x000F` predecessor accepted |
+| PPC `PAIR` predecessor (`0x0012`) | `REFHI` only | `REFHI` + legacy `0x0014` via `SECRELHI_COMPAT` alias + policy notice |
 
 ### Load-Config matrix (Win8→Win11)
 
