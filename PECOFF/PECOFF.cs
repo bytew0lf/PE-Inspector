@@ -5543,6 +5543,24 @@ namespace PECoff
                 machineType == MachineTypes.IMAGE_FILE_MACHINE_SH4;
         }
 
+        private static bool IsObjectOnlySpecialSectionName(string sectionName)
+        {
+            if (string.IsNullOrWhiteSpace(sectionName))
+            {
+                return false;
+            }
+
+            if (sectionName.StartsWith(".debug$", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return string.Equals(sectionName, ".drectve", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(sectionName, ".drective", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(sectionName, ".cormeta", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(sectionName, ".sxdata", StringComparison.OrdinalIgnoreCase);
+        }
+
         private bool TryReadCoffSectionRawData(IMAGE_SECTION_HEADER section, out byte[] data, out long fileOffset)
         {
             data = Array.Empty<byte>();
@@ -15885,6 +15903,12 @@ namespace PECoff
             string sectionName = NormalizeSectionName(section);
             bool isIdlSymSection = string.Equals(sectionName, ".idlsym", StringComparison.OrdinalIgnoreCase);
             bool isVsDataSection = IsVsDataSectionName(sectionName);
+            if (IsObjectOnlySpecialSectionName(sectionName))
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    $"SPEC violation: PE image section {sectionName} is documented for COFF objects only.");
+            }
 
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_01) != 0 ||
                 (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_02) != 0 ||

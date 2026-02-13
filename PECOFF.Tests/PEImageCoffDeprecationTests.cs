@@ -519,6 +519,34 @@ public class PEImageCoffDeprecationTests
         }
     }
 
+    [Theory]
+    [InlineData(".debug$S")]
+    [InlineData(".drectve")]
+    [InlineData(".sxdata")]
+    [InlineData(".cormeta")]
+    public void PeImage_ObjectOnlySpecialSectionName_EmitsSpecViolation_AndStrictModeFails(string sectionName)
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TrySetFirstSectionName(mutated, sectionName));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains($"PE image section {sectionName} is documented for COFF objects only.", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
     private static bool TryUpdateFileHeaderCharacteristics(byte[] data, ushort setMask, ushort clearMask)
     {
         if (!TryGetPeLayout(
