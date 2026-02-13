@@ -10599,6 +10599,14 @@ namespace PECoff
                 return;
             }
 
+            uint directoryCharacteristics = ReadUInt32(buffer, directoryOffset);
+            if (directoryCharacteristics != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Resources,
+                    $"SPEC violation: IMAGE_RESOURCE_DIRECTORY.Characteristics is reserved and must be 0 (found 0x{directoryCharacteristics:X8}).");
+            }
+
             if (!visited.Add(directoryOffset))
             {
                 Warn(ParseIssueCategory.Resources, "Resource directory contains a circular reference.");
@@ -10745,6 +10753,12 @@ namespace PECoff
             {
                 issues.Add("Resource directory entry offset outside section bounds.");
                 return;
+            }
+
+            uint directoryCharacteristics = ReadUInt32(buffer, directoryOffset);
+            if (directoryCharacteristics != 0)
+            {
+                issues.Add("SPEC violation: IMAGE_RESOURCE_DIRECTORY.Characteristics is reserved and must be 0.");
             }
 
             if (!visited.Add(directoryOffset))

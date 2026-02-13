@@ -27,7 +27,7 @@ Executable outputs land in the project `bin/<Configuration>/net9.0/` folders.
 - Sections (entropy, permissions, padding, alignment/overlap checks)
 - TLS/load-config metadata (guard flags, CHPE/XFG, dynamic-reloc/volatile pointed-structure decode, callback mapping, raw data hash/preview)
 - Exception/unwind decoding (x64/ARM64/ARM32/IA64 + x86 SEH)
-- Resources (strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, RT_VERSION extensions, ordering/depth/cycle compliance checks, and IMAGE_RESOURCE_DATA_ENTRY reserved-field conformance)
+- Resources (strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, RT_VERSION extensions, ordering/depth/cycle compliance checks, and IMAGE_RESOURCE_DIRECTORY/IMAGE_RESOURCE_DATA_ENTRY reserved-field conformance)
 - Debug directory decoding (CodeView/PDB identity, canonical-first type labeling for undefined/custom entries with compatibility aliases, reserved-field/type conformance checks including reserved debug types `6/9/10/11`, POGO/VC_FEATURE/FPO/Borland/reserved, EX_DLLCHARACTERISTICS symbolic flag decode + unsupported-bit conformance checks, raw fallback)
 - PDB/MSF stream parsing + symbol record decoding
 - CLR/.NET metadata deep-dive (tables, token refs, signature decode, IL/EH summaries, ReadyToRun, and COFF object `.cormeta` metadata roots)
@@ -57,7 +57,7 @@ Status legend:
 | TLS | `full` | Callbacks + raw data mapping, hash/preview, template sizing + index mapping. |
 | Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation, structured decode for dynamic-reloc/CHPE/volatile pointed metadata with deterministic malformed issues. |
 | Exception directory | `full` | AMD64/ARM64/ARM32/IA64 decode + range validation, x86 SEH. |
-| Resources | `full` | Strings, dialogs/menus/toolbars, manifests/MUI edge fields, icons/cursors/bitmaps, message tables, RT_VERSION extensions, ordering and malformed-tree checks, and `IMAGE_RESOURCE_DATA_ENTRY.Reserved` conformance warnings when non-zero. |
+| Resources | `full` | Strings, dialogs/menus/toolbars, manifests/MUI edge fields, icons/cursors/bitmaps, message tables, RT_VERSION extensions, ordering and malformed-tree checks, and reserved-field conformance warnings for `IMAGE_RESOURCE_DIRECTORY.Characteristics` and `IMAGE_RESOURCE_DATA_ENTRY.Reserved` when non-zero. |
 | Resources (tree compliance) | `full` | Named/ID ordering checks, circular-reference detection, malformed entry bounds checks, optional safe deep-tree validation beyond 3 levels. |
 | Resources (extended) | `full` | Fonts/fontdir, rcdata format detection, dlginit, animated cursor/icon. |
 | Debug directory | `full` | CodeView/PDB identity, POGO/VC_FEATURE/FPO/Borland/reserved, EX_DLLCHARACTERISTICS symbolic flag mapping (`CET_COMPAT`/`FORWARD_CFI_COMPAT`) with explicit unsupported-bit SPEC violations (including `0x00000002` as non-spec/unknown in default with strict-mode escalation), reserved `IMAGE_DEBUG_DIRECTORY.Characteristics` enforcement, reserved debug-type usage warnings for `IMAGE_DEBUG_TYPE_FIXUP (6)`, `IMAGE_DEBUG_TYPE_BORLAND (9)`, `IMAGE_DEBUG_TYPE_RESERVED10 (10)`, and `IMAGE_DEBUG_TYPE_CLSID (11)` with compatibility decode paths, canonical-first type labeling for `Undefined17`/`Undefined19` plus compatibility aliases (`EmbeddedPortablePdb`/`PdbHash`) and explicit custom-type handling for `Unknown18` (`Spgo` alias), embedded PDB/SPGO/PDB hash decode + raw fallback. |
@@ -344,6 +344,7 @@ The CSV output contains the following values per file:
 - v42: PE-image section-name conformance now warns when `/nnn` COFF string-table long-name syntax appears in image section headers.
 - v43: COFF object section-header conformance now warns when `VirtualSize` is non-zero.
 - v44: Resource directory validation now flags non-zero `IMAGE_RESOURCE_DATA_ENTRY.Reserved` values.
+- v45: Resource directory validation now flags non-zero `IMAGE_RESOURCE_DIRECTORY.Characteristics` values.
 
 ## Security
 
