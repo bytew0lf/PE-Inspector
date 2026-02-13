@@ -27471,6 +27471,10 @@ namespace PECoff
                 if ((header.e_magic == MagicByteSignature.IMAGE_DOS_SIGNATURE) || (header.e_magic == MagicByteSignature.IMAGE_OS2_SIGNATURE) || (header.e_magic == MagicByteSignature.IMAGE_OS2_SIGNATURE_LE))
                 {
                     _imageKind = "PE";
+                    if (header.e_magic != MagicByteSignature.IMAGE_DOS_SIGNATURE)
+                    {
+                        Warn(ParseIssueCategory.Header, $"SPEC violation: IMAGE_DOS_HEADER.e_magic should be MZ (found {(ushort)header.e_magic:X4}).");
+                    }
                     ValidateDosHeaderReservedFields(header);
                     ParseRichHeader(header);
                     ParseDosRelocations(header);

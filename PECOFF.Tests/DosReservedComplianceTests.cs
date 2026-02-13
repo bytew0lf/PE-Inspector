@@ -5,6 +5,37 @@ using Xunit;
 
 public class DosReservedComplianceTests
 {
+    [Theory]
+    [InlineData((ushort)0x454E)] // NE
+    [InlineData((ushort)0x454C)] // LE
+    public void PeImage_NonMzDosSignature_EmitsSpecViolation_AndStrictModeFails(ushort nonMzSignature)
+    {
+        string? fixtures = FindFixturesDirectory();
+        Assert.False(string.IsNullOrWhiteSpace(fixtures));
+
+        string validPath = Path.Combine(fixtures!, "minimal", "minimal-x86.exe");
+        Assert.True(File.Exists(validPath));
+
+        byte[] mutated = File.ReadAllBytes(validPath);
+        WriteUInt16(mutated, 0, nonMzSignature);
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: IMAGE_DOS_HEADER.e_magic should be MZ", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
     [Fact]
     public void PeImage_DosReservedWordsNonZero_EmitSpecViolation_AndStrictModeFails()
     {
