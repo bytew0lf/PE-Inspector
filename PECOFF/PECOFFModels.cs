@@ -51,6 +51,20 @@ namespace PECoff
         CompatibilityProse = 2
     }
 
+    public enum Ia64RelocationTablePolicy
+    {
+        ProfileDefault = 0,
+        TableOnly = 1,
+        CompatibilityProse = 2
+    }
+
+    public enum PpcPairOrderingPolicy
+    {
+        ProfileDefault = 0,
+        TableOnly = 1,
+        CompatibilityProse = 2
+    }
+
     public sealed class ParseIssue
     {
         public ParseIssueCategory Category { get; }
@@ -81,6 +95,8 @@ namespace PECoff
         public bool UseMemoryMappedFile { get; init; }
         public bool LazyParseDataDirectories { get; init; }
         public Ia64AddendOrderingPolicy Ia64AddendOrderingPolicy { get; init; } = Ia64AddendOrderingPolicy.ProfileDefault;
+        public Ia64RelocationTablePolicy Ia64RelocationTablePolicy { get; init; } = Ia64RelocationTablePolicy.ProfileDefault;
+        public PpcPairOrderingPolicy PpcPairOrderingPolicy { get; init; } = PpcPairOrderingPolicy.ProfileDefault;
         public string ApiSetSchemaPath { get; init; } = string.Empty;
         public AuthenticodePolicy AuthenticodePolicy { get; init; } = new AuthenticodePolicy();
         public Dictionary<ParseIssueCategory, ParseIssueSeverity> IssuePolicy { get; init; } = new Dictionary<ParseIssueCategory, ParseIssueSeverity>();

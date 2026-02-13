@@ -11,9 +11,9 @@ public class CoffRelocationMachineCoverageTests
     [InlineData((ushort)0x8664, (ushort)0x0004, "REL32")] // AMD64
     [InlineData((ushort)0xAA64, (ushort)0x0003, "BRANCH26")] // ARM64
     [InlineData((ushort)0x0166, (ushort)0x0025, "PAIR")] // MIPS
-    [InlineData((ushort)0x01C2, (ushort)0x0012, "BLX23")] // THUMB
+    [InlineData((ushort)0x01C2, (ushort)0x0015, "THUMB_BLX23")] // THUMB
     [InlineData((ushort)0x0200, (ushort)0x000A, "LTOFF22")] // IA64
-    [InlineData((ushort)0x01F0, (ushort)0x0014, "GPREL")] // POWERPC
+    [InlineData((ushort)0x01F0, (ushort)0x0015, "GPREL")] // POWERPC
     [InlineData((ushort)0x0166, (ushort)0x0010, "JMPADDR16")] // R4000 (MIPS family)
     [InlineData((ushort)0x01A4, (ushort)0x0010, "DIRECT32_NB")] // SH3E
     [InlineData((ushort)0x01A6, (ushort)0x0010, "DIRECT32_NB")] // SH4

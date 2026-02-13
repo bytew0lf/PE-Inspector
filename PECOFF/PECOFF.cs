@@ -5043,6 +5043,8 @@ namespace PECoff
                 }
 
                 Ia64AddendOrderingPolicy ia64AddendPolicy = ResolveIa64AddendOrderingPolicy();
+                Ia64RelocationTablePolicy ia64RelocationPolicy = ResolveIa64RelocationTablePolicy();
+                PpcPairOrderingPolicy ppcPairPolicy = ResolvePpcPairOrderingPolicy();
                 ushort? previousRelocationType = null;
                 for (int j = startEntry; j < entries; j++)
                 {
@@ -5050,15 +5052,15 @@ namespace PECoff
                     uint virtualAddress = ReadUInt32(buffer, entryOffset);
                     uint symbolIndex = ReadUInt32(buffer, entryOffset + 4);
                     ushort type = ReadUInt16(buffer, entryOffset + 8);
-                    string typeName = GetCoffRelocationTypeName(_machineType, type);
+                    string typeName = GetCoffRelocationTypeName(_machineType, type, ia64RelocationPolicy);
                     string symbolName = string.Empty;
                     bool usesPairDisplacement = IsPairRelocationDisplacementCarrier(_machineType, type);
                     bool usesIa64AddendPayload = IsIa64AddendPayloadCarrier(_machineType, type);
-                    if (usesPairDisplacement && !IsPairRelocationOrderingValid(_machineType, previousRelocationType))
+                    if (usesPairDisplacement && !IsPairRelocationOrderingValid(_machineType, previousRelocationType, ppcPairPolicy))
                     {
                         string sectionLabel = string.IsNullOrWhiteSpace(sectionName) ? "<unnamed>" : sectionName;
                         string previousTypeName = previousRelocationType.HasValue
-                            ? GetCoffRelocationTypeName(_machineType, previousRelocationType.Value)
+                            ? GetCoffRelocationTypeName(_machineType, previousRelocationType.Value, ia64RelocationPolicy)
                             : "<none>";
                         Warn(
                             ParseIssueCategory.Relocations,
@@ -5068,7 +5070,7 @@ namespace PECoff
                                 typeName,
                                 j,
                                 sectionLabel,
-                                GetPairRelocationOrderingDescription(_machineType),
+                                GetPairRelocationOrderingDescription(_machineType, ppcPairPolicy),
                                 previousTypeName));
                     }
 
@@ -5076,7 +5078,7 @@ namespace PECoff
                     {
                         string sectionLabel = string.IsNullOrWhiteSpace(sectionName) ? "<unnamed>" : sectionName;
                         string previousTypeName = previousRelocationType.HasValue
-                            ? GetCoffRelocationTypeName(_machineType, previousRelocationType.Value)
+                            ? GetCoffRelocationTypeName(_machineType, previousRelocationType.Value, ia64RelocationPolicy)
                             : "<none>";
                         Warn(
                             ParseIssueCategory.Relocations,
@@ -16751,8 +16753,9 @@ namespace PECoff
                 case 0x000C: // IMAGE_REL_IA64_SECREL22
                 case 0x000D: // IMAGE_REL_IA64_SECREL64I
                 case 0x000E: // IMAGE_REL_IA64_SECREL32
-                case 0x000F: // IMAGE_REL_IA64_LTOFF64
                     return true;
+                case 0x000F: // IMAGE_REL_IA64_LTOFF64 (prose compatibility path)
+                    return policy == Ia64AddendOrderingPolicy.CompatibilityProse;
                 default:
                     return false;
             }
@@ -16765,7 +16768,7 @@ namespace PECoff
                 return "compatibility/prose IA64 predecessor set: IMM14, IMM22, IMM64, GPREL22, LTOFF22, LTOFF64, SECREL22, SECREL64I, or SECREL32";
             }
 
-            return "table-based IA64 predecessor set: IMM14, IMM22, IMM64, GPREL22, LTOFF22, LTOFF64, SECREL22, SECREL64I, or SECREL32";
+            return "table-based IA64 predecessor set: IMM14, IMM22, IMM64, GPREL22, LTOFF22, SECREL22, SECREL64I, or SECREL32";
         }
 
         private Ia64AddendOrderingPolicy ResolveIa64AddendOrderingPolicy()
@@ -16785,7 +16788,41 @@ namespace PECoff
             return Ia64AddendOrderingPolicy.TableOnly;
         }
 
-        private static bool IsPairRelocationOrderingValid(MachineTypes machine, ushort? previousType)
+        private Ia64RelocationTablePolicy ResolveIa64RelocationTablePolicy()
+        {
+            Ia64RelocationTablePolicy configured = _options?.Ia64RelocationTablePolicy ?? Ia64RelocationTablePolicy.ProfileDefault;
+            if (configured == Ia64RelocationTablePolicy.TableOnly || configured == Ia64RelocationTablePolicy.CompatibilityProse)
+            {
+                return configured;
+            }
+
+            ValidationProfile profile = _options?.ValidationProfile ?? ValidationProfile.Default;
+            if (profile == ValidationProfile.Compatibility || profile == ValidationProfile.Forensic)
+            {
+                return Ia64RelocationTablePolicy.CompatibilityProse;
+            }
+
+            return Ia64RelocationTablePolicy.TableOnly;
+        }
+
+        private PpcPairOrderingPolicy ResolvePpcPairOrderingPolicy()
+        {
+            PpcPairOrderingPolicy configured = _options?.PpcPairOrderingPolicy ?? PpcPairOrderingPolicy.ProfileDefault;
+            if (configured == PpcPairOrderingPolicy.TableOnly || configured == PpcPairOrderingPolicy.CompatibilityProse)
+            {
+                return configured;
+            }
+
+            ValidationProfile profile = _options?.ValidationProfile ?? ValidationProfile.Default;
+            if (profile == ValidationProfile.Compatibility || profile == ValidationProfile.Forensic)
+            {
+                return PpcPairOrderingPolicy.CompatibilityProse;
+            }
+
+            return PpcPairOrderingPolicy.TableOnly;
+        }
+
+        private static bool IsPairRelocationOrderingValid(MachineTypes machine, ushort? previousType, PpcPairOrderingPolicy ppcPolicy)
         {
             if (!previousType.HasValue)
             {
@@ -16813,7 +16850,12 @@ namespace PECoff
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPC ||
                 machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP)
             {
-                return previous == 0x0010; // REFHI
+                if (previous == 0x0010) // REFHI
+                {
+                    return true;
+                }
+
+                return ppcPolicy == PpcPairOrderingPolicy.CompatibilityProse && previous == 0x0014; // legacy SECRELHI
             }
 
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_SH3 ||
@@ -16828,7 +16870,7 @@ namespace PECoff
             return true;
         }
 
-        private static string GetPairRelocationOrderingDescription(MachineTypes machine)
+        private static string GetPairRelocationOrderingDescription(MachineTypes machine, PpcPairOrderingPolicy ppcPolicy)
         {
             if (IsMipsMachine(machine))
             {
@@ -16850,7 +16892,9 @@ namespace PECoff
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPC ||
                 machine == MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP)
             {
-                return "REFHI";
+                return ppcPolicy == PpcPairOrderingPolicy.CompatibilityProse
+                    ? "REFHI (compatibility also accepts legacy SECRELHI)"
+                    : "REFHI";
             }
 
             if (machine == MachineTypes.IMAGE_FILE_MACHINE_SH3 ||
@@ -16937,6 +16981,11 @@ namespace PECoff
 
         private static string GetCoffRelocationTypeName(MachineTypes machine, ushort type)
         {
+            return GetCoffRelocationTypeName(machine, type, Ia64RelocationTablePolicy.TableOnly);
+        }
+
+        private static string GetCoffRelocationTypeName(MachineTypes machine, ushort type, Ia64RelocationTablePolicy ia64Policy)
+        {
             switch (machine)
             {
                 case MachineTypes.IMAGE_FILE_MACHINE_I386:
@@ -16988,14 +17037,14 @@ namespace PECoff
                         case 0x0003: return "BRANCH24";
                         case 0x0004: return "BRANCH11";
                         case 0x000A: return "REL32";
-                        case 0x000B: return "BLX24";
-                        case 0x000C: return "BLX11";
-                        case 0x000D: return "TOKEN";
                         case 0x000E: return "SECTION";
                         case 0x000F: return "SECREL";
                         case 0x0010: return "ARM_MOV32";
                         case 0x0011: return "THUMB_MOV32";
-                        case 0x0012: return "BLX23";
+                        case 0x0012: return "THUMB_BRANCH20";
+                        case 0x0013: return "UNUSED";
+                        case 0x0014: return "THUMB_BRANCH24";
+                        case 0x0015: return "THUMB_BLX23";
                         case 0x0016: return "PAIR";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
@@ -17042,7 +17091,6 @@ namespace PECoff
                         case 0x000C: return "SECREL22";
                         case 0x000D: return "SECREL64I";
                         case 0x000E: return "SECREL32";
-                        case 0x000F: return "LTOFF64";
                         case 0x0010: return "DIR32NB";
                         case 0x0011: return "SREL14";
                         case 0x0012: return "SREL22";
@@ -17056,10 +17104,19 @@ namespace PECoff
                         case 0x001A: return "IMMGPREL64";
                         case 0x001B: return "TOKEN";
                         case 0x001C: return "GPREL32";
-                        case 0x001D: return "PCREL21BI";
-                        case 0x001E: return "PCREL22";
                         case 0x001F: return "ADDEND";
-                        default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
+                        default:
+                            if (ia64Policy == Ia64RelocationTablePolicy.CompatibilityProse)
+                            {
+                                switch (type)
+                                {
+                                    case 0x000F: return "LTOFF64_COMPAT";
+                                    case 0x001D: return "PCREL21BI_COMPAT";
+                                    case 0x001E: return "PCREL22_COMPAT";
+                                }
+                            }
+
+                            return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_POWERPC:
                 case MachineTypes.IMAGE_FILE_MACHINE_POWERPCFP:
@@ -17073,20 +17130,16 @@ namespace PECoff
                         case 0x0005: return "ADDR14";
                         case 0x0006: return "REL24";
                         case 0x0007: return "REL14";
-                        case 0x0008: return "TOCREL16";
-                        case 0x0009: return "TOCREL14";
                         case 0x000A: return "ADDR32NB";
                         case 0x000B: return "SECREL";
                         case 0x000C: return "SECTION";
-                        case 0x000D: return "ADDR14BRTAKEN";
-                        case 0x000E: return "ADDR14BRNTAKEN";
                         case 0x000F: return "SECREL16";
                         case 0x0010: return "REFHI";
                         case 0x0011: return "REFLO";
                         case 0x0012: return "PAIR";
                         case 0x0013: return "SECRELLO";
-                        case 0x0014: return "GPREL";
-                        case 0x0015: return "TOKEN";
+                        case 0x0015: return "GPREL";
+                        case 0x0016: return "TOKEN";
                         default: return string.Format(CultureInfo.InvariantCulture, "TYPE_0x{0:X4}", type);
                     }
                 case MachineTypes.IMAGE_FILE_MACHINE_R3000BE:
