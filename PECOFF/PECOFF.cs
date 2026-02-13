@@ -15214,6 +15214,37 @@ namespace PECoff
                 entries.ToArray());
         }
 
+        private void ValidateDosHeaderReservedFields(IMAGE_DOS_HEADER header)
+        {
+            if (HasNonZeroDosReservedWords(header.e_res))
+            {
+                Warn(ParseIssueCategory.Header, "SPEC violation: IMAGE_DOS_HEADER.e_res contains non-zero reserved words.");
+            }
+
+            if (HasNonZeroDosReservedWords(header.e_res2))
+            {
+                Warn(ParseIssueCategory.Header, "SPEC violation: IMAGE_DOS_HEADER.e_res2 contains non-zero reserved words.");
+            }
+        }
+
+        private static bool HasNonZeroDosReservedWords(ushort[] values)
+        {
+            if (values == null || values.Length == 0)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (values[i] != 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static bool TryParseDosRelocationsFromBuffer(IMAGE_DOS_HEADER header, byte[] data, out DosRelocationInfo info)
         {
             info = null;
@@ -27424,6 +27455,7 @@ namespace PECoff
                 if ((header.e_magic == MagicByteSignature.IMAGE_DOS_SIGNATURE) || (header.e_magic == MagicByteSignature.IMAGE_OS2_SIGNATURE) || (header.e_magic == MagicByteSignature.IMAGE_OS2_SIGNATURE_LE))
                 {
                     _imageKind = "PE";
+                    ValidateDosHeaderReservedFields(header);
                     ParseRichHeader(header);
                     ParseDosRelocations(header);
                     if (!TrySetPosition(header.e_lfanew, sizeof(uint) + Marshal.SizeOf(typeof(IMAGE_FILE_HEADER))))

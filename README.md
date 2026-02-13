@@ -23,6 +23,7 @@ Executable outputs land in the project `bin/<Configuration>/net9.0/` folders.
 ## Features
 
 - Imports/exports (INT/IAT, delay/bound, forwarders, anomalies, API-set hints, import-thunk reserved-bit conformance, and delay/export reserved-field conformance)
+- DOS header/stub analysis (relocation table summary + reserved-field conformance for `IMAGE_DOS_HEADER.e_res`/`e_res2`)
 - Data directories mapping + validation (Architecture/GlobalPtr/IAT deep decode)
 - Sections (entropy, permissions, padding, alignment/overlap checks)
 - TLS/load-config metadata (guard flags, CHPE/XFG, dynamic-reloc/volatile pointed-structure decode, callback mapping, raw data hash/preview, TLS-characteristics reserved-bit conformance, and load-config reserved-field conformance)
@@ -47,7 +48,7 @@ Status legend:
 
 | Area | Status | Current coverage |
 | --- | --- | --- |
-| DOS header + stub | `full` | Header + relocation table summary. |
+| DOS header + stub | `full` | Header + relocation table summary, plus reserved-field conformance warnings for non-zero `IMAGE_DOS_HEADER.e_res` and `IMAGE_DOS_HEADER.e_res2` words. |
 | COFF file header | `full` | Machine/characteristics with full documented machine-name matrix coverage (including canonical `ALPHA`, `ALPHA64 (AXP64)`, `CEE`, and additional IDs such as `R3000BE`/`TARGET_HOST`/`CHPE_X86`), bigobj header support, and image-vs-object COFF conformance checks including PE-image loader section-count limit (`NumberOfSections <= 96`), `EXECUTABLE_IMAGE`, deprecated/reserved file-header bits (`AGGRESSIVE_WS_TRIM`, `FUTURE_USE`, `BYTES_REVERSED_LO/HI`, deprecated line/local bits), symbol/line/relocation-pointer deprecation rules, stripped-bit consistency (`RELOCS_STRIPPED`/`LINE_NUMS_STRIPPED`/`LOCAL_SYMS_STRIPPED`/`DEBUG_STRIPPED`), section object-only/reserved characteristic enforcement (`LNK_INFO`/`LNK_REMOVE`/`LNK_COMDAT`/`GPREL`/`ALIGN_*`/reserved low bits including `0x00004000` plus reserved memory-only bits `MEM_PURGEABLE`/`MEM_LOCKED`/`MEM_PRELOAD`, with the documented image-section `.idlsym` exemption for `LNK_INFO` and explicit `.idlsym` `LNK_INFO` requirement), PE-image object-only special-section name warnings for `.debug$*`/`.drectve`/`.sxdata`/`.cormeta`, PE-image section-name `$` grouping-syntax warnings, PE-image `/nnn` COFF long-name-syntax warnings, and optional-header `NumberOfRvaAndSizes`/`SizeOfOptionalHeader` consistency validation. |
 | Optional header (PE32/PE32+/ROM) | `full` | Standard fields + checksum/timestamp decoding + reserved-field conformance checks (including `OptionalHeader.DllCharacteristics` low reserved bits) + full documented subsystem mapping/classification (including `OS2_CUI` and `NATIVE_WINDOWS`) + bounded variable-size optional-header decoding (including reduced headers without directory arrays and ROM `0x0107`) + explicit mandatory-field truncation and `NumberOfRvaAndSizes` bounds checks against `SizeOfOptionalHeader`. |
 | Sections | `full` | Header decoding (sizes/flags/align), entropy, permissions, padding, overlaps/align checks, section-RVA order and virtual-overlap conformance checks, PE-image no-raw-data pointer consistency checks (`SizeOfRawData == 0` implies `PointerToRawData == 0`), and directory containment summaries. |
@@ -356,6 +357,7 @@ The CSV output contains the following values per file:
 - v54: COFF object conformance now keeps parsing when `SizeOfOptionalHeader` is non-zero (with warning), removes the non-spec `VirtualAddress != 0` violation, and adds section raw-data/pointer conformance checks (`SizeOfRawData == 0` implies `PointerToRawData == 0`; uninitialized-only sections require zero raw-size/pointer).
 - v55: COFF object section-header conformance now warns when raw-data sections use non-4-byte `PointerToRawData` alignment.
 - v56: PE-image section-header conformance now warns when `SizeOfRawData` is zero but `PointerToRawData` is non-zero.
+- v57: DOS-header conformance now warns when reserved words in `IMAGE_DOS_HEADER.e_res` or `IMAGE_DOS_HEADER.e_res2` are non-zero.
 
 ## Security
 
