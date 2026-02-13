@@ -5697,6 +5697,13 @@ namespace PECoff
                     Warn(ParseIssueCategory.Debug, "SPEC violation: .debug$F is documented for x86 COFF objects only.");
                 }
 
+                if (HasFpoReservedBitSet(data))
+                {
+                    Warn(
+                        ParseIssueCategory.Debug,
+                        "SPEC violation: FPO_DATA frame flags contain reserved bit 13 set; this bit must be 0.");
+                }
+
                 if (TryParseFpoData(data, out DebugFpoInfo fpo))
                 {
                     return new CoffObjectInfo.CoffDebugSectionInfo(
@@ -20344,10 +20351,19 @@ namespace PECoff
                 }
                 else if (debugType == DebugDirectoryType.Fpo && entry.SizeOfData > 0)
                 {
-                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data) &&
-                        TryParseFpoData(data, out DebugFpoInfo parsed))
+                    if (TryReadDebugDirectoryData(entry, sections, out byte[] data))
                     {
-                        fpo = parsed;
+                        if (HasFpoReservedBitSet(data))
+                        {
+                            Warn(
+                                ParseIssueCategory.Debug,
+                                "SPEC violation: FPO_DATA frame flags contain reserved bit 13 set; this bit must be 0.");
+                        }
+
+                        if (TryParseFpoData(data, out DebugFpoInfo parsed))
+                        {
+                            fpo = parsed;
+                        }
                     }
                 }
                 else if (debugType == DebugDirectoryType.Borland && entry.SizeOfData > 0)
@@ -20889,6 +20905,28 @@ namespace PECoff
             return true;
         }
 
+        private static bool HasFpoReservedBitSet(byte[] data)
+        {
+            if (data == null || data.Length < 16)
+            {
+                return false;
+            }
+
+            int entrySize = 16;
+            int total = data.Length / entrySize;
+            for (int i = 0; i < total; i++)
+            {
+                int offset = (i * entrySize) + 14;
+                ushort flags = ReadUInt16(data, offset);
+                if ((flags & (1 << 13)) != 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static bool TryParseDebugBorlandData(byte[] data, out DebugBorlandInfo info)
         {
             info = null;
@@ -21178,6 +21216,15 @@ namespace PECoff
                 callbacksAddr = tls.AddressOfCallbacks;
                 zeroFill = tls.SizeOfZeroFill;
                 characteristics = tls.Characteristics;
+            }
+
+            const uint tlsAlignmentBitsMask = 0x00F00000u;
+            uint tlsReservedBits = characteristics & ~tlsAlignmentBitsMask;
+            if (tlsReservedBits != 0)
+            {
+                Warn(
+                    ParseIssueCategory.Tls,
+                    $"SPEC violation: IMAGE_TLS_DIRECTORY.Characteristics has reserved bits set (0x{tlsReservedBits:X8}); only alignment bits [23:20] may be used.");
             }
 
             uint rawDataSize = 0;
