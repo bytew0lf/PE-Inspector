@@ -572,6 +572,30 @@ public class PEImageCoffDeprecationTests
         }
     }
 
+    [Fact]
+    public void PeImage_SectionNameWithDollar_EmitsSpecViolation_AndStrictModeFails()
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TrySetFirstSectionName(mutated, ".text$A"));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("PE image section .text$A uses '$' grouping syntax, which is object-only.", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
     private static bool TryUpdateFileHeaderCharacteristics(byte[] data, ushort setMask, ushort clearMask)
     {
         if (!TryGetPeLayout(
