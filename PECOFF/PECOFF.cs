@@ -21731,6 +21731,8 @@ namespace PECoff
             ushort dynamicValueRelocTableSection = 0;
             uint dynamicValueRelocTableOffsetRaw = 0;
             ushort dynamicValueRelocTableSectionRaw = 0;
+            uint reserved2 = 0;
+            uint reserved3 = 0;
             ulong chpeMetadataPointer = 0;
             ulong guardRFFailureRoutine = 0;
             ulong guardRFFailureRoutineFunctionPointer = 0;
@@ -21761,8 +21763,10 @@ namespace PECoff
             bool readGuardRFFailureRoutine = false;
             bool readGuardRFFailureRoutineFunctionPointer = false;
             bool readDynamicRelocMetadata = false;
+            bool readReserved2 = false;
             bool readGuardRFVerifyStackPointer = false;
             bool readHotPatchTableOffset = false;
+            bool readReserved3 = false;
             bool readEnclaveConfigurationPointer = false;
             bool readVolatileMetadataPointer = false;
             bool readGuardEhContinuationTable = false;
@@ -21786,7 +21790,11 @@ namespace PECoff
                     readDynamicRelocMetadata = true;
                     if (TryReadUInt16Value(span, ref offset, limit, out dynamicValueRelocTableSectionRaw))
                     {
-                        TryReadUInt16Value(span, ref offset, limit, out _);
+                        if (TryReadUInt16Value(span, ref offset, limit, out ushort reserved2Raw))
+                        {
+                            readReserved2 = true;
+                            reserved2 = reserved2Raw;
+                        }
                     }
                 }
 
@@ -21794,7 +21802,11 @@ namespace PECoff
                 readHotPatchTableOffset = TryReadUInt32Value(span, ref offset, limit, out hotPatchTableOffset); // HotPatchTableOffset
                 if (readHotPatchTableOffset)
                 {
-                    TryReadUInt32Value(span, ref offset, limit, out _); // Reserved3
+                    if (TryReadUInt32Value(span, ref offset, limit, out uint reserved3Raw)) // Reserved3
+                    {
+                        readReserved3 = true;
+                        reserved3 = reserved3Raw;
+                    }
                 }
 
                 readEnclaveConfigurationPointer = TryReadPointerValue(span, ref offset, limit, isPe32Plus, out enclaveConfigurationPointer); // EnclaveConfigurationPointer
@@ -21839,6 +21851,21 @@ namespace PECoff
             {
                 dynamicValueRelocTableOffset = 0;
                 dynamicValueRelocTableSection = 0;
+            }
+
+            if (readCodeIntegrity && codeIntegrityInfo != null && codeIntegrityInfo.Reserved != 0)
+            {
+                Warn(ParseIssueCategory.LoadConfig, $"SPEC violation: IMAGE_LOAD_CONFIG_CODE_INTEGRITY.Reserved must be 0 (found 0x{codeIntegrityInfo.Reserved:X8}).");
+            }
+
+            if (readReserved2 && reserved2 != 0)
+            {
+                Warn(ParseIssueCategory.LoadConfig, $"SPEC violation: IMAGE_LOAD_CONFIG_DIRECTORY.Reserved2 must be 0 (found 0x{reserved2:X4}).");
+            }
+
+            if (readReserved3 && reserved3 != 0)
+            {
+                Warn(ParseIssueCategory.LoadConfig, $"SPEC violation: IMAGE_LOAD_CONFIG_DIRECTORY.Reserved3 must be 0 (found 0x{reserved3:X8}).");
             }
 
             if (guardFlagsInfo.CfFunctionTablePresent && (guardCfTable == 0 || guardCfCount == 0))

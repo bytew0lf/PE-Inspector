@@ -25,7 +25,7 @@ Executable outputs land in the project `bin/<Configuration>/net9.0/` folders.
 - Imports/exports (INT/IAT, delay/bound, forwarders, anomalies, API-set hints, import-thunk reserved-bit conformance, and delay/export reserved-field conformance)
 - Data directories mapping + validation (Architecture/GlobalPtr/IAT deep decode)
 - Sections (entropy, permissions, padding, alignment/overlap checks)
-- TLS/load-config metadata (guard flags, CHPE/XFG, dynamic-reloc/volatile pointed-structure decode, callback mapping, raw data hash/preview, and TLS-characteristics reserved-bit conformance)
+- TLS/load-config metadata (guard flags, CHPE/XFG, dynamic-reloc/volatile pointed-structure decode, callback mapping, raw data hash/preview, TLS-characteristics reserved-bit conformance, and load-config reserved-field conformance)
 - Exception/unwind decoding (x64/ARM64/ARM32/IA64 + x86 SEH)
 - Resources (strings, dialogs/menus/toolbars, manifests/MUI, icons/cursors/bitmaps, RT_VERSION extensions, ordering/depth/cycle compliance checks, and IMAGE_RESOURCE_DIRECTORY/IMAGE_RESOURCE_DATA_ENTRY reserved-field plus ID-entry high-bit conformance)
 - Debug directory decoding (CodeView/PDB identity, canonical-first type labeling for undefined/custom entries with compatibility aliases, reserved-field/type conformance checks including reserved debug types `6/9/10/11` and FPO reserved-bit enforcement, POGO/VC_FEATURE/FPO/Borland/reserved, EX_DLLCHARACTERISTICS symbolic flag decode + unsupported-bit conformance checks, raw fallback)
@@ -55,7 +55,7 @@ Status legend:
 | Imports/Exports | `full` | INT/IAT, delay/bound, forwarders, anomalies, API-set hints, import-thunk reserved-bit conformance warnings (ordinal-form reserved bits and PE32+ name-form high reserved bits), and reserved-field conformance warnings for `IMAGE_DELAY_IMPORT_DESCRIPTOR.Attributes` plus `IMAGE_EXPORT_DIRECTORY.Characteristics` when non-zero. |
 | Relocations | `full` | Summaries + anomaly totals; machine-aware COFF relocation mapping with matrix tests across i386/AMD64/ARM/ARM64/IA64/PPC/MIPS/SH/M32R (including `SH3E`/`R3000BE` family behavior), table-aligned ARM/PPC constants, canonical latest-spec IA64/PPC behavior in `TableOnly` mode, true symbol-table-index resolution, PAIR displacement handling plus immediate-predecessor ordering validation (ARM/PPC/MIPS/M32R/SH), IA64 ADDEND immediate-predecessor/payload conformance checks, per-relocation compatibility audit markers and policy notices, COFF overflow-relocation (`IMAGE_SCN_LNK_NRELOC_OVFL`) marker parsing/validation, base-relocation HIGHADJ two-slot semantics, and 4K-page + 32-bit block-boundary conformance checks. Optional `CompatibilityProse` policies remain available as explicit non-canonical compatibility mode. |
 | TLS | `full` | Callbacks + raw data mapping, hash/preview, template sizing + index mapping, and `IMAGE_TLS_DIRECTORY.Characteristics` reserved-bit conformance warnings when non-zero outside alignment bits `[23:20]`. |
-| Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation, structured decode for dynamic-reloc/CHPE/volatile pointed metadata with deterministic malformed issues. |
+| Load config | `full` | Guard/CHPE/Enclave/CodeIntegrity + versioned layout, trailing bytes + truncation, structured decode for dynamic-reloc/CHPE/volatile pointed metadata with deterministic malformed issues, and reserved-field conformance warnings for `IMAGE_LOAD_CONFIG_CODE_INTEGRITY.Reserved`, `IMAGE_LOAD_CONFIG_DIRECTORY.Reserved2`, and `IMAGE_LOAD_CONFIG_DIRECTORY.Reserved3` when non-zero. |
 | Exception directory | `full` | AMD64/ARM64/ARM32/IA64 decode + range validation, x86 SEH. |
 | Resources | `full` | Strings, dialogs/menus/toolbars, manifests/MUI edge fields, icons/cursors/bitmaps, message tables, RT_VERSION extensions, ordering and malformed-tree checks, reserved-field conformance warnings for `IMAGE_RESOURCE_DIRECTORY.Characteristics` and `IMAGE_RESOURCE_DATA_ENTRY.Reserved` when non-zero, and resource ID-entry reserved-high-bit warnings when set. |
 | Resources (tree compliance) | `full` | Named/ID ordering checks, circular-reference detection, malformed entry bounds checks, optional safe deep-tree validation beyond 3 levels. |
@@ -352,6 +352,7 @@ The CSV output contains the following values per file:
 - v50: Delay import validation now flags non-zero `IMAGE_DELAY_IMPORT_DESCRIPTOR.Attributes` values, and optional-header validation now flags reserved low bits set in `OptionalHeader.DllCharacteristics`.
 - v51: TLS validation now flags non-zero reserved `IMAGE_TLS_DIRECTORY.Characteristics` bits outside alignment field `[23:20]`, and debug FPO parsing now flags reserved frame-flag bit `13` when set.
 - v52: Import thunk validation now flags reserved-bit usage in `IMAGE_THUNK_DATA` entries (`Bits 30-15` for PE32 ordinal imports, `Bits 62-15` for PE32+ ordinal imports, and `Bits 62-31` for PE32+ name imports).
+- v53: Load-config validation now flags non-zero values in `IMAGE_LOAD_CONFIG_CODE_INTEGRITY.Reserved`, `IMAGE_LOAD_CONFIG_DIRECTORY.Reserved2`, and `IMAGE_LOAD_CONFIG_DIRECTORY.Reserved3`.
 
 ## Security
 
