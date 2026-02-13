@@ -729,6 +729,7 @@ namespace PECoff
         };
 
         private const int CoffSymbolSize = 18;
+        private const int CoffBigObjSymbolSize = 20;
         private const int CoffLineNumberSize = 6;
         private const int CoffRelocationSize = 10;
 
@@ -4585,7 +4586,7 @@ namespace PECoff
                 samples.ToArray());
         }
 
-        private void ParseCoffSymbolTable(uint pointerToSymbolTable, uint numberOfSymbols, List<IMAGE_SECTION_HEADER> sections)
+        private void ParseCoffSymbolTable(uint pointerToSymbolTable, uint numberOfSymbols, List<IMAGE_SECTION_HEADER> sections, bool isBigObj = false)
         {
             if (pointerToSymbolTable == 0 || numberOfSymbols == 0)
             {
@@ -4598,7 +4599,8 @@ namespace PECoff
             }
 
             long fileLength = PEFileStream.Length;
-            long tableSize = (long)numberOfSymbols * CoffSymbolSize;
+            int symbolSize = isBigObj ? CoffBigObjSymbolSize : CoffSymbolSize;
+            long tableSize = (long)numberOfSymbols * symbolSize;
             if (tableSize <= 0 || tableSize > int.MaxValue)
             {
                 Warn(ParseIssueCategory.Header, "COFF symbol table size exceeds supported limits.");
@@ -4648,13 +4650,13 @@ namespace PECoff
 
             for (int index = 0; index < numberOfSymbols; index++)
             {
-                int symbolOffset = index * CoffSymbolSize;
-                if (symbolOffset + CoffSymbolSize > symbolData.Length)
+                int symbolOffset = index * symbolSize;
+                if (symbolOffset + symbolSize > symbolData.Length)
                 {
                     break;
                 }
 
-                ReadOnlySpan<byte> entry = new ReadOnlySpan<byte>(symbolData, symbolOffset, CoffSymbolSize);
+                ReadOnlySpan<byte> entry = new ReadOnlySpan<byte>(symbolData, symbolOffset, symbolSize);
                 string name = ResolveCoffSymbolName(entry, stringTable, out bool shortNameUsedFallback);
                 if (shortNameUsedFallback)
                 {
@@ -4667,11 +4669,13 @@ namespace PECoff
                             name));
                 }
                 uint value = BitConverter.ToUInt32(entry.Slice(8, 4));
-                short sectionNumber = BitConverter.ToInt16(entry.Slice(12, 2));
-                ushort type = BitConverter.ToUInt16(entry.Slice(14, 2));
+                int sectionNumber = isBigObj
+                    ? BitConverter.ToInt32(entry.Slice(12, 4))
+                    : BitConverter.ToInt16(entry.Slice(12, 2));
+                ushort type = BitConverter.ToUInt16(entry.Slice(isBigObj ? 16 : 14, 2));
                 string typeName = DecodeCoffSymbolTypeName(type);
-                byte storageClass = entry[16];
-                byte auxCount = entry[17];
+                byte storageClass = entry[isBigObj ? 18 : 16];
+                byte auxCount = entry[isBigObj ? 19 : 17];
                 string storageClassName = GetCoffStorageClassName(storageClass);
                 string scopeName = GetCoffSymbolScopeName(sectionNumber, storageClass);
 
@@ -4682,16 +4686,19 @@ namespace PECoff
                 }
 
                 byte[] auxData = Array.Empty<byte>();
-                int auxBytes = auxCount * CoffSymbolSize;
+                int auxBytes = auxCount * symbolSize;
                 if (auxBytes > 0)
                 {
-                    int auxStart = symbolOffset + CoffSymbolSize;
+                    int auxStart = symbolOffset + symbolSize;
                     int auxAvailable = symbolData.Length - auxStart;
                     int auxLength = Math.Min(auxBytes, auxAvailable);
                     if (auxLength > 0)
                     {
-                        auxData = new byte[auxLength];
-                        Array.Copy(symbolData, auxStart, auxData, 0, auxLength);
+                        byte[] rawAuxData = new byte[auxLength];
+                        Array.Copy(symbolData, auxStart, rawAuxData, 0, auxLength);
+                        auxData = isBigObj
+                            ? NormalizeBigObjAuxRecords(rawAuxData, auxCount)
+                            : rawAuxData;
                     }
                 }
 
@@ -4728,6 +4735,52 @@ namespace PECoff
             }
 
             ValidateCoffWeakExternalConformance(_coffSymbols);
+        }
+
+        private static byte[] NormalizeBigObjAuxRecords(byte[] rawAuxData, byte auxCount)
+        {
+            if (rawAuxData == null || rawAuxData.Length == 0)
+            {
+                return Array.Empty<byte>();
+            }
+
+            int fullRecords = rawAuxData.Length / CoffBigObjSymbolSize;
+            if (fullRecords == 0)
+            {
+                return rawAuxData;
+            }
+
+            if (auxCount > 0)
+            {
+                fullRecords = Math.Min(fullRecords, auxCount);
+            }
+
+            int remainder = rawAuxData.Length - (fullRecords * CoffBigObjSymbolSize);
+            int normalizedLength = (fullRecords * CoffSymbolSize) + Math.Min(remainder, CoffSymbolSize);
+            byte[] normalized = new byte[normalizedLength];
+
+            for (int i = 0; i < fullRecords; i++)
+            {
+                Buffer.BlockCopy(
+                    rawAuxData,
+                    i * CoffBigObjSymbolSize,
+                    normalized,
+                    i * CoffSymbolSize,
+                    CoffSymbolSize);
+            }
+
+            if (remainder > 0)
+            {
+                int tailBytes = Math.Min(remainder, CoffSymbolSize);
+                Buffer.BlockCopy(
+                    rawAuxData,
+                    fullRecords * CoffBigObjSymbolSize,
+                    normalized,
+                    fullRecords * CoffSymbolSize,
+                    tailBytes);
+            }
+
+            return normalized;
         }
 
         private void ParseCoffLineNumbers(List<IMAGE_SECTION_HEADER> sections)
@@ -5216,13 +5269,434 @@ namespace PECoff
             }
         }
 
+        private void ParseCoffSpecialSections(
+            List<IMAGE_SECTION_HEADER> sections,
+            out CoffObjectInfo.CoffDirectiveInfo[] directives,
+            out CoffObjectInfo.CoffSafeSehInfo safeSeh,
+            out CoffObjectInfo.CoffDebugSectionInfo[] debugSections,
+            out CoffObjectInfo.CoffCorMetadataInfo corMetadata)
+        {
+            List<CoffObjectInfo.CoffDirectiveInfo> directiveList = new List<CoffObjectInfo.CoffDirectiveInfo>();
+            List<CoffObjectInfo.CoffSafeSehHandlerInfo> safeSehHandlers = new List<CoffObjectInfo.CoffSafeSehHandlerInfo>();
+            List<CoffObjectInfo.CoffDebugSectionInfo> debugList = new List<CoffObjectInfo.CoffDebugSectionInfo>();
+            corMetadata = null;
+
+            bool hasSxDataSection = false;
+            bool hasFeatureSymbol = false;
+            uint featureFlags = 0;
+            bool safeSehEnabled = false;
+
+            if (_coffSymbols != null && _coffSymbols.Count > 0)
+            {
+                CoffSymbolInfo featSymbol = _coffSymbols.FirstOrDefault(
+                    symbol => string.Equals(symbol.Name, "@feat.00", StringComparison.OrdinalIgnoreCase));
+                if (featSymbol != null)
+                {
+                    hasFeatureSymbol = true;
+                    featureFlags = featSymbol.Value;
+                    safeSehEnabled = (featureFlags & 0x00000001) != 0;
+                }
+            }
+
+            Dictionary<int, CoffSymbolInfo> symbolsByTableIndex = BuildCoffSymbolsByTableIndex(_coffSymbols);
+            if (sections != null)
+            {
+                for (int i = 0; i < sections.Count; i++)
+                {
+                    IMAGE_SECTION_HEADER section = sections[i];
+                    string sectionName = NormalizeSectionName(section);
+                    if (string.IsNullOrWhiteSpace(sectionName))
+                    {
+                        continue;
+                    }
+
+                    if (string.Equals(sectionName, ".drectve", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (section.PointerToRelocations != 0 || section.NumberOfRelocations != 0)
+                        {
+                            Warn(
+                                ParseIssueCategory.Header,
+                                "SPEC violation: .drectve section must not contain COFF relocations.");
+                        }
+
+                        if (section.PointerToLinenumbers != 0 || section.NumberOfLinenumbers != 0)
+                        {
+                            Warn(
+                                ParseIssueCategory.Header,
+                                "SPEC violation: .drectve section must not contain COFF line numbers.");
+                        }
+
+                        if (TryReadCoffSectionRawData(section, out byte[] rawData, out _))
+                        {
+                            string rawText = DecodeUtf8WithLatin1Fallback(rawData, out bool _).TrimEnd('\0');
+                            string[] parsedDirectives = ParseDrectveDirectives(rawText);
+                            directiveList.Add(new CoffObjectInfo.CoffDirectiveInfo(sectionName, rawText, parsedDirectives));
+                        }
+                        else if (section.SizeOfRawData > 0)
+                        {
+                            Warn(ParseIssueCategory.Header, ".drectve section payload could not be read.");
+                            directiveList.Add(new CoffObjectInfo.CoffDirectiveInfo(sectionName, string.Empty, Array.Empty<string>()));
+                        }
+
+                        continue;
+                    }
+
+                    if (string.Equals(sectionName, ".sxdata", StringComparison.OrdinalIgnoreCase))
+                    {
+                        hasSxDataSection = true;
+                        if (TryReadCoffSectionRawData(section, out byte[] sxData, out _))
+                        {
+                            if ((sxData.Length % 4) != 0)
+                            {
+                                Warn(
+                                    ParseIssueCategory.Header,
+                                    "SPEC violation: .sxdata payload size is not DWORD-aligned.");
+                            }
+
+                            int entryCount = sxData.Length / 4;
+                            for (int entryIndex = 0; entryIndex < entryCount; entryIndex++)
+                            {
+                                uint symbolIndex = ReadUInt32(sxData, entryIndex * 4);
+                                CoffSymbolInfo symbol = null;
+                                bool resolved = symbolIndex <= int.MaxValue &&
+                                    symbolsByTableIndex.TryGetValue((int)symbolIndex, out symbol);
+                                string symbolName = resolved ? symbol.Name ?? string.Empty : string.Empty;
+                                if (!resolved)
+                                {
+                                    Warn(
+                                        ParseIssueCategory.Header,
+                                        string.Format(
+                                            CultureInfo.InvariantCulture,
+                                            "SPEC violation: .sxdata entry #{0} references unresolved symbol index {1}.",
+                                            entryIndex,
+                                            symbolIndex));
+                                }
+
+                                safeSehHandlers.Add(new CoffObjectInfo.CoffSafeSehHandlerInfo(symbolIndex, resolved, symbolName));
+                            }
+                        }
+                        else if (section.SizeOfRawData > 0)
+                        {
+                            Warn(ParseIssueCategory.Header, ".sxdata payload could not be read.");
+                        }
+
+                        continue;
+                    }
+
+                    if (sectionName.StartsWith(".debug$", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (TryReadCoffSectionRawData(section, out byte[] debugData, out long debugOffset))
+                        {
+                            debugList.Add(ParseCoffDebugSection(sectionName, debugData, debugOffset));
+                        }
+                        else if (section.SizeOfRawData > 0)
+                        {
+                            Warn(ParseIssueCategory.Debug, $"COFF debug subsection payload could not be read for {sectionName}.");
+                            debugList.Add(
+                                new CoffObjectInfo.CoffDebugSectionInfo(
+                                    sectionName,
+                                    "Raw",
+                                    parsed: false,
+                                    isTruncated: true,
+                                    notes: "Section payload could not be read.",
+                                    subsections: Array.Empty<CoffObjectInfo.CoffDebugSubsectionInfo>()));
+                        }
+
+                        continue;
+                    }
+
+                    if (string.Equals(sectionName, ".cormeta", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (corMetadata != null)
+                        {
+                            Warn(ParseIssueCategory.CLR, "Multiple .cormeta sections detected; only the first section is parsed.");
+                            continue;
+                        }
+
+                        if (!TryReadCoffSectionRawData(section, out byte[] cormetaData, out _))
+                        {
+                            Warn(ParseIssueCategory.CLR, ".cormeta payload could not be read.");
+                            corMetadata = new CoffObjectInfo.CoffCorMetadataInfo(sectionName, section.SizeOfRawData, false, string.Empty, 0);
+                            continue;
+                        }
+
+                        IMAGE_COR20_HEADER objectClrHeader = default;
+                        objectClrHeader.MajorRuntimeVersion = 2;
+                        objectClrHeader.MinorRuntimeVersion = 5;
+                        if (TryParseClrMetadata(cormetaData, cormetaData.Length, objectClrHeader, out ClrMetadataInfo metadata))
+                        {
+                            _clrMetadata = metadata;
+                            _isDotNetFile = true;
+                            ComputeDotNetRuntimeHint();
+                            int streamCount = metadata != null ? metadata.Streams.Length : 0;
+                            corMetadata = new CoffObjectInfo.CoffCorMetadataInfo(
+                                sectionName,
+                                (uint)cormetaData.Length,
+                                true,
+                                metadata?.MetadataVersion ?? string.Empty,
+                                streamCount);
+                        }
+                        else
+                        {
+                            Warn(ParseIssueCategory.CLR, "SPEC violation: .cormeta does not contain a valid CLR metadata root.");
+                            corMetadata = new CoffObjectInfo.CoffCorMetadataInfo(sectionName, (uint)cormetaData.Length, false, string.Empty, 0);
+                        }
+                    }
+                }
+            }
+
+            if (hasSxDataSection && !hasFeatureSymbol)
+            {
+                Warn(ParseIssueCategory.Header, "SPEC violation: .sxdata section is present but @feat.00 symbol is missing.");
+            }
+
+            if (hasSxDataSection && hasFeatureSymbol && !safeSehEnabled)
+            {
+                Warn(ParseIssueCategory.Header, "SPEC violation: .sxdata section is present but @feat.00 does not set the SAFESEH feature bit.");
+            }
+
+            if (!hasSxDataSection && hasFeatureSymbol && safeSehEnabled)
+            {
+                Warn(ParseIssueCategory.Header, "SPEC violation: @feat.00 sets SAFESEH but no .sxdata section was found.");
+            }
+
+            directives = directiveList.ToArray();
+            safeSeh = (hasSxDataSection || hasFeatureSymbol)
+                ? new CoffObjectInfo.CoffSafeSehInfo(
+                    hasSxDataSection,
+                    hasFeatureSymbol,
+                    featureFlags,
+                    safeSehEnabled,
+                    safeSehHandlers.ToArray())
+                : null;
+            debugSections = debugList.ToArray();
+        }
+
+        private bool TryReadCoffSectionRawData(IMAGE_SECTION_HEADER section, out byte[] data, out long fileOffset)
+        {
+            data = Array.Empty<byte>();
+            fileOffset = 0;
+            if (PEFileStream == null || section.SizeOfRawData == 0)
+            {
+                return true;
+            }
+
+            if (!TryGetIntSize(section.SizeOfRawData, out int size) || size < 0)
+            {
+                return false;
+            }
+
+            if (size == 0)
+            {
+                return true;
+            }
+
+            if (section.PointerToRawData == 0 || !TrySetPosition(section.PointerToRawData, size))
+            {
+                return false;
+            }
+
+            data = new byte[size];
+            ReadExactly(PEFileStream, data, 0, data.Length);
+            fileOffset = section.PointerToRawData;
+            return true;
+        }
+
+        private static string[] ParseDrectveDirectives(string rawText)
+        {
+            if (string.IsNullOrWhiteSpace(rawText))
+            {
+                return Array.Empty<string>();
+            }
+
+            List<string> directives = new List<string>();
+            StringBuilder token = new StringBuilder();
+            bool inQuote = false;
+            for (int i = 0; i < rawText.Length; i++)
+            {
+                char c = rawText[i];
+                if (c == '"')
+                {
+                    inQuote = !inQuote;
+                    token.Append(c);
+                    continue;
+                }
+
+                if (char.IsWhiteSpace(c) && !inQuote)
+                {
+                    if (token.Length > 0)
+                    {
+                        directives.Add(token.ToString());
+                        token.Clear();
+                    }
+
+                    continue;
+                }
+
+                token.Append(c);
+            }
+
+            if (token.Length > 0)
+            {
+                directives.Add(token.ToString());
+            }
+
+            return directives.ToArray();
+        }
+
+        private CoffObjectInfo.CoffDebugSectionInfo ParseCoffDebugSection(string sectionName, byte[] data, long sectionOffset)
+        {
+            string suffix = sectionName.Length > 7 ? sectionName.Substring(7) : string.Empty;
+            string normalizedSuffix = suffix.Trim().ToUpperInvariant();
+
+            if (string.Equals(normalizedSuffix, "F", StringComparison.Ordinal))
+            {
+                if (TryParseFpoData(data, out DebugFpoInfo fpo))
+                {
+                    return new CoffObjectInfo.CoffDebugSectionInfo(
+                        sectionName,
+                        "FPO",
+                        parsed: true,
+                        isTruncated: fpo.IsTruncated,
+                        notes: $"FPO entries: {fpo.TotalEntryCount}.",
+                        subsections: new[]
+                        {
+                            new CoffObjectInfo.CoffDebugSubsectionInfo(0, "FPO_DATA", (uint)data.Length, sectionOffset)
+                        });
+                }
+
+                Warn(ParseIssueCategory.Debug, $"{sectionName} payload is not a valid FPO stream.");
+                return new CoffObjectInfo.CoffDebugSectionInfo(
+                    sectionName,
+                    "FPO",
+                    parsed: false,
+                    isTruncated: false,
+                    notes: "Failed to parse FPO records.",
+                    subsections: Array.Empty<CoffObjectInfo.CoffDebugSubsectionInfo>());
+            }
+
+            if (string.Equals(normalizedSuffix, "S", StringComparison.Ordinal) ||
+                string.Equals(normalizedSuffix, "P", StringComparison.Ordinal))
+            {
+                List<CoffObjectInfo.CoffDebugSubsectionInfo> subsections = new List<CoffObjectInfo.CoffDebugSubsectionInfo>();
+                int cursor = 0;
+                bool truncated = false;
+                while (cursor + 8 <= data.Length)
+                {
+                    uint type = ReadUInt32(data, cursor);
+                    uint size = ReadUInt32(data, cursor + 4);
+                    long subsectionOffset = sectionOffset + cursor;
+                    cursor += 8;
+
+                    if (size > int.MaxValue || cursor + size > data.Length)
+                    {
+                        truncated = true;
+                        Warn(ParseIssueCategory.Debug, $"{sectionName} subsection stream is truncated.");
+                        break;
+                    }
+
+                    subsections.Add(
+                        new CoffObjectInfo.CoffDebugSubsectionInfo(
+                            type,
+                            GetCoffDebugSubsectionTypeName(type),
+                            size,
+                            subsectionOffset));
+
+                    cursor += (int)size;
+                    int aligned = Align4(cursor);
+                    if (aligned < cursor || aligned > data.Length)
+                    {
+                        truncated = true;
+                        Warn(ParseIssueCategory.Debug, $"{sectionName} subsection stream has invalid alignment.");
+                        break;
+                    }
+
+                    cursor = aligned;
+                }
+
+                if (cursor != data.Length)
+                {
+                    truncated = true;
+                }
+
+                return new CoffObjectInfo.CoffDebugSectionInfo(
+                    sectionName,
+                    "CodeViewSubsections",
+                    parsed: subsections.Count > 0,
+                    isTruncated: truncated,
+                    notes: string.Empty,
+                    subsections: subsections.ToArray());
+            }
+
+            if (string.Equals(normalizedSuffix, "T", StringComparison.Ordinal))
+            {
+                bool parsed = data.Length >= 4;
+                string note = string.Empty;
+                List<CoffObjectInfo.CoffDebugSubsectionInfo> subsections = new List<CoffObjectInfo.CoffDebugSubsectionInfo>();
+                if (parsed)
+                {
+                    uint signature = ReadUInt32(data, 0);
+                    subsections.Add(
+                        new CoffObjectInfo.CoffDebugSubsectionInfo(
+                            signature,
+                            "TypeInfoSignature",
+                            (uint)data.Length,
+                            sectionOffset));
+                }
+                else
+                {
+                    note = "Section is smaller than a type-info signature.";
+                    Warn(ParseIssueCategory.Debug, $"{sectionName} is too small to contain a type stream signature.");
+                }
+
+                return new CoffObjectInfo.CoffDebugSectionInfo(
+                    sectionName,
+                    "TypeInfo",
+                    parsed,
+                    isTruncated: !parsed,
+                    notes: note,
+                    subsections: subsections.ToArray());
+            }
+
+            return new CoffObjectInfo.CoffDebugSectionInfo(
+                sectionName,
+                "Raw",
+                parsed: data.Length > 0,
+                isTruncated: false,
+                notes: "Unsupported COFF debug subsection kind.",
+                subsections: Array.Empty<CoffObjectInfo.CoffDebugSubsectionInfo>());
+        }
+
+        private static string GetCoffDebugSubsectionTypeName(uint type)
+        {
+            switch (type)
+            {
+                case 0xF1: return "SYM";
+                case 0xF2: return "LINES";
+                case 0xF3: return "STRING_TABLE";
+                case 0xF4: return "FILE_CHECKSUMS";
+                case 0xF5: return "FRAME_DATA";
+                case 0xF6: return "INLINEE_LINES";
+                case 0xF7: return "CROSS_SCOPE_IMPORTS";
+                case 0xF8: return "CROSS_SCOPE_EXPORTS";
+                case 0xF9: return "IL_LINES";
+                case 0xFA: return "FUNC_MDTOKEN_MAP";
+                case 0xFB: return "TYPE_MDTOKEN_MAP";
+                case 0xFC: return "MERGED_ASSEMBLY_INPUT";
+                case 0xFD: return "COFF_SYMBOL_RVA";
+                case 0xFE: return "XFG_HASH_TYPE";
+                default:
+                    return string.Format(CultureInfo.InvariantCulture, "SUBSECTION_0x{0:X}", type);
+            }
+        }
+
         private static CoffAuxSymbolInfo[] DecodeCoffAuxSymbols(
             string name,
             ushort type,
             byte storageClass,
             byte auxCount,
             byte[] auxData,
-            short sectionNumber = 0,
+            int sectionNumber = 0,
             uint symbolValue = 0)
         {
             if (auxCount == 0 || auxData == null || auxData.Length == 0)
@@ -5999,7 +6473,7 @@ namespace PECoff
                 ReadOnlySpan<byte> entry = new ReadOnlySpan<byte>(symbolData, symbolOffset, CoffSymbolSize);
                 string name = ResolveCoffSymbolName(entry, stringTable, out bool _);
                 uint value = BitConverter.ToUInt32(entry.Slice(8, 4));
-                short sectionNumber = BitConverter.ToInt16(entry.Slice(12, 2));
+                int sectionNumber = BitConverter.ToInt16(entry.Slice(12, 2));
                 ushort type = BitConverter.ToUInt16(entry.Slice(14, 2));
                 string typeName = DecodeCoffSymbolTypeName(type);
                 byte storageClass = entry[16];
@@ -12829,7 +13303,7 @@ namespace PECoff
             byte storageClass,
             byte auxCount,
             byte[] auxData,
-            short sectionNumber = 0,
+            int sectionNumber = 0,
             uint symbolValue = 0)
         {
             return DecodeCoffAuxSymbols(name ?? string.Empty, type, storageClass, auxCount, auxData, sectionNumber, symbolValue);
@@ -12845,7 +13319,7 @@ namespace PECoff
             return BuildSubsystemInfo((Subsystem)subsystem);
         }
 
-        internal static string GetCoffSymbolScopeNameForTest(short sectionNumber, byte storageClass)
+        internal static string GetCoffSymbolScopeNameForTest(int sectionNumber, byte storageClass)
         {
             return GetCoffSymbolScopeName(sectionNumber, storageClass);
         }
@@ -17789,7 +18263,7 @@ namespace PECoff
             }
         }
 
-        private static string GetCoffSymbolScopeName(short sectionNumber, byte storageClass)
+        private static string GetCoffSymbolScopeName(int sectionNumber, byte storageClass)
         {
             if (sectionNumber == 0)
             {
@@ -26358,11 +26832,17 @@ namespace PECoff
 
             _sections = sections;
             ValidateSectionNameEncoding(sections);
-            ParseCoffSymbolTable(pointerToSymbolTable, numberOfSymbols, sections);
+            ParseCoffSymbolTable(pointerToSymbolTable, numberOfSymbols, sections, isBigObj);
             ResolveCoffObjectSectionLongNames(sections);
             BuildSectionPermissionInfos(sections);
             ParseCoffLineNumbers(sections);
             ParseCoffRelocations(sections);
+            ParseCoffSpecialSections(
+                sections,
+                out CoffObjectInfo.CoffDirectiveInfo[] directives,
+                out CoffObjectInfo.CoffSafeSehInfo safeSeh,
+                out CoffObjectInfo.CoffDebugSectionInfo[] debugSections,
+                out CoffObjectInfo.CoffCorMetadataInfo corMetadata);
             BuildSectionHeaderInfos(sections);
             BuildSectionDirectoryCoverage(_dataDirectoryInfos, sections);
             ComputeOverlayInfo(sections);
@@ -26385,7 +26865,11 @@ namespace PECoff
                 numberOfSymbols,
                 coffHeader.SizeOfOptionalHeader,
                 characteristics,
-                DecodeCoffCharacteristics(characteristics));
+                DecodeCoffCharacteristics(characteristics),
+                directives,
+                safeSeh,
+                debugSections,
+                corMetadata);
 
             return true;
         }
@@ -26495,6 +26979,10 @@ namespace PECoff
                 _certificateTableSize = 0;
                 _timeDateStamp = 0;
                 _readyToRun = null;
+                _isDotNetFile = false;
+                _isObfuscated = false;
+                _obfuscationPercentage = 0.0;
+                _assemblyReferenceInfos.Clear();
                 _dotNetRuntimeHint = string.Empty;
                 if (PEFile == null || PEFileStream == null)
                 {
@@ -26705,7 +27193,7 @@ namespace PECoff
                     ValidateImageCoffDeprecation(peHeader.FileHeader, sections);
                     BuildSectionPermissionInfos(sections);
                     BuildDataDirectoryInfos(dataDirectory, sections, isPe32Plus);
-                    ParseCoffSymbolTable(peHeader.FileHeader.PointerToSymbolTable, peHeader.FileHeader.NumberOfSymbols, sections);
+                    ParseCoffSymbolTable(peHeader.FileHeader.PointerToSymbolTable, peHeader.FileHeader.NumberOfSymbols, sections, isBigObj: false);
                     ParseCoffLineNumbers(sections);
                     ParseCoffRelocations(sections);
                     BuildSectionHeaderInfos(sections);

@@ -2729,6 +2729,122 @@ namespace PECoff
 
     public sealed class CoffObjectInfo
     {
+        public sealed class CoffDirectiveInfo
+        {
+            public string SectionName { get; }
+            public string RawText { get; }
+            public IReadOnlyList<string> Directives { get; }
+
+            public CoffDirectiveInfo(string sectionName, string rawText, string[] directives)
+            {
+                SectionName = sectionName ?? string.Empty;
+                RawText = rawText ?? string.Empty;
+                Directives = Array.AsReadOnly(directives ?? Array.Empty<string>());
+            }
+        }
+
+        public sealed class CoffSafeSehHandlerInfo
+        {
+            public uint SymbolIndex { get; }
+            public bool IsResolved { get; }
+            public string SymbolName { get; }
+
+            public CoffSafeSehHandlerInfo(uint symbolIndex, bool isResolved, string symbolName)
+            {
+                SymbolIndex = symbolIndex;
+                IsResolved = isResolved;
+                SymbolName = symbolName ?? string.Empty;
+            }
+        }
+
+        public sealed class CoffSafeSehInfo
+        {
+            public bool HasSxDataSection { get; }
+            public bool HasFeatureSymbol { get; }
+            public uint FeatureFlags { get; }
+            public bool SafeSehEnabled { get; }
+            public IReadOnlyList<CoffSafeSehHandlerInfo> Handlers { get; }
+
+            public CoffSafeSehInfo(
+                bool hasSxDataSection,
+                bool hasFeatureSymbol,
+                uint featureFlags,
+                bool safeSehEnabled,
+                CoffSafeSehHandlerInfo[] handlers)
+            {
+                HasSxDataSection = hasSxDataSection;
+                HasFeatureSymbol = hasFeatureSymbol;
+                FeatureFlags = featureFlags;
+                SafeSehEnabled = safeSehEnabled;
+                Handlers = Array.AsReadOnly(handlers ?? Array.Empty<CoffSafeSehHandlerInfo>());
+            }
+        }
+
+        public sealed class CoffDebugSubsectionInfo
+        {
+            public uint Type { get; }
+            public string TypeName { get; }
+            public uint Size { get; }
+            public long FileOffset { get; }
+
+            public CoffDebugSubsectionInfo(uint type, string typeName, uint size, long fileOffset)
+            {
+                Type = type;
+                TypeName = typeName ?? string.Empty;
+                Size = size;
+                FileOffset = fileOffset;
+            }
+        }
+
+        public sealed class CoffDebugSectionInfo
+        {
+            public string SectionName { get; }
+            public string Format { get; }
+            public bool Parsed { get; }
+            public bool IsTruncated { get; }
+            public string Notes { get; }
+            public IReadOnlyList<CoffDebugSubsectionInfo> Subsections { get; }
+
+            public CoffDebugSectionInfo(
+                string sectionName,
+                string format,
+                bool parsed,
+                bool isTruncated,
+                string notes,
+                CoffDebugSubsectionInfo[] subsections)
+            {
+                SectionName = sectionName ?? string.Empty;
+                Format = format ?? string.Empty;
+                Parsed = parsed;
+                IsTruncated = isTruncated;
+                Notes = notes ?? string.Empty;
+                Subsections = Array.AsReadOnly(subsections ?? Array.Empty<CoffDebugSubsectionInfo>());
+            }
+        }
+
+        public sealed class CoffCorMetadataInfo
+        {
+            public string SectionName { get; }
+            public uint RawSize { get; }
+            public bool Parsed { get; }
+            public string VersionString { get; }
+            public int StreamCount { get; }
+
+            public CoffCorMetadataInfo(
+                string sectionName,
+                uint rawSize,
+                bool parsed,
+                string versionString,
+                int streamCount)
+            {
+                SectionName = sectionName ?? string.Empty;
+                RawSize = rawSize;
+                Parsed = parsed;
+                VersionString = versionString ?? string.Empty;
+                StreamCount = streamCount;
+            }
+        }
+
         public ushort Machine { get; }
         public string MachineName { get; }
         public ushort SectionCount { get; }
@@ -2745,6 +2861,10 @@ namespace PECoff
         public ushort OptionalHeaderSize { get; }
         public ushort Characteristics { get; }
         public IReadOnlyList<string> CharacteristicsFlags { get; }
+        public IReadOnlyList<CoffDirectiveInfo> Directives { get; }
+        public CoffSafeSehInfo SafeSeh { get; }
+        public IReadOnlyList<CoffDebugSectionInfo> DebugSections { get; }
+        public CoffCorMetadataInfo CorMetadata { get; }
 
         public CoffObjectInfo(
             ushort machine,
@@ -2762,7 +2882,11 @@ namespace PECoff
             uint numberOfSymbols,
             ushort optionalHeaderSize,
             ushort characteristics,
-            string[] characteristicsFlags)
+            string[] characteristicsFlags,
+            CoffDirectiveInfo[] directives = null,
+            CoffSafeSehInfo safeSeh = null,
+            CoffDebugSectionInfo[] debugSections = null,
+            CoffCorMetadataInfo corMetadata = null)
         {
             Machine = machine;
             MachineName = machineName ?? string.Empty;
@@ -2780,6 +2904,10 @@ namespace PECoff
             OptionalHeaderSize = optionalHeaderSize;
             Characteristics = characteristics;
             CharacteristicsFlags = Array.AsReadOnly(characteristicsFlags ?? Array.Empty<string>());
+            Directives = Array.AsReadOnly(directives ?? Array.Empty<CoffDirectiveInfo>());
+            SafeSeh = safeSeh;
+            DebugSections = Array.AsReadOnly(debugSections ?? Array.Empty<CoffDebugSectionInfo>());
+            CorMetadata = corMetadata;
         }
     }
 
@@ -3616,7 +3744,7 @@ namespace PECoff
         public int Index { get; }
         public string Name { get; }
         public uint Value { get; }
-        public short SectionNumber { get; }
+        public int SectionNumber { get; }
         public string SectionName { get; }
         public ushort Type { get; }
         public string TypeName { get; }
@@ -3631,7 +3759,7 @@ namespace PECoff
             int index,
             string name,
             uint value,
-            short sectionNumber,
+            int sectionNumber,
             string sectionName,
             ushort type,
             string typeName,
@@ -4952,7 +5080,7 @@ namespace PECoff
 
     public sealed class PECOFFResult
     {
-        public const int CurrentSchemaVersion = 34;
+        public const int CurrentSchemaVersion = 35;
 
         public int SchemaVersion { get; }
         public string FilePath { get; }
