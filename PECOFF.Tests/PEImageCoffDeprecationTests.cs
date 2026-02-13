@@ -262,8 +262,6 @@ public class PEImageCoffDeprecationTests
     [InlineData(IMAGE_FILE_FUTURE_USE, "IMAGE_FILE_FUTURE_USE is reserved and should be 0")]
     [InlineData(IMAGE_FILE_BYTES_REVERSED_LO, "IMAGE_FILE_BYTES_REVERSED_LO is deprecated and should be 0")]
     [InlineData(IMAGE_FILE_BYTES_REVERSED_HI, "IMAGE_FILE_BYTES_REVERSED_HI is deprecated and should be 0")]
-    [InlineData(IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP, "IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP is deprecated and should be 0")]
-    [InlineData(IMAGE_FILE_NET_RUN_FROM_SWAP, "IMAGE_FILE_NET_RUN_FROM_SWAP is deprecated and should be 0")]
     [InlineData(IMAGE_FILE_LINE_NUMS_STRIPPED, "IMAGE_FILE_LINE_NUMS_STRIPPED is deprecated and should be 0")]
     [InlineData(IMAGE_FILE_LOCAL_SYMS_STRIPPED, "IMAGE_FILE_LOCAL_SYMS_STRIPPED is deprecated and should be 0")]
     public void PeImage_DeprecatedOrReservedCharacteristics_BitSet_EmitsSpecViolation_AndStrictModeFails(ushort bit, string expectedSnippet)
@@ -283,6 +281,31 @@ public class PEImageCoffDeprecationTests
                            warning.Contains(expectedSnippet, StringComparison.Ordinal));
 
             Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Theory]
+    [InlineData(IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP)]
+    [InlineData(IMAGE_FILE_NET_RUN_FROM_SWAP)]
+    public void PeImage_SwapRunCharacteristics_DoNotEmitDeprecatedBitSpecViolation(ushort bit)
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TryUpdateFileHeaderCharacteristics(mutated, setMask: bit, clearMask: 0));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP is deprecated", StringComparison.Ordinal) ||
+                           warning.Contains("IMAGE_FILE_NET_RUN_FROM_SWAP is deprecated", StringComparison.Ordinal));
         }
         finally
         {
@@ -339,6 +362,31 @@ public class PEImageCoffDeprecationTests
     }
 
     [Fact]
+    public void PeImage_NumberOfRvaAndSizesExceedsOptionalHeaderCapacity_EmitsSpecViolation_AndStrictModeFails()
+    {
+        byte[] mutated = File.ReadAllBytes(GetMinimalFixturePath());
+        Assert.True(TrySetPeNumberOfRvaAndSizes(mutated, 32));
+
+        string tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tempFile, mutated);
+            PECOFF parser = new PECOFF(tempFile);
+
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SPEC violation: OptionalHeader.NumberOfRvaAndSizes=", StringComparison.Ordinal) &&
+                           warning.Contains("exceeds entries available in SizeOfOptionalHeader", StringComparison.Ordinal));
+
+            Assert.Throws<PECOFFParseException>(() => new PECOFF(tempFile, new PECOFFOptions { StrictMode = true }));
+        }
+        finally
+        {
+            File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
     public void CoffObject_ExecutableImageBitClear_DoesNotEmitPeImageExecutableWarning()
     {
         byte[] data = BuildCoffObjectWithLinePointers();
@@ -366,7 +414,7 @@ public class PEImageCoffDeprecationTests
     [InlineData(IMAGE_SCN_LNK_INFO, "IMAGE_SCN_LNK_INFO, which is object-only.")]
     [InlineData(IMAGE_SCN_LNK_REMOVE, "IMAGE_SCN_LNK_REMOVE, which is object-only.")]
     [InlineData(IMAGE_SCN_LNK_COMDAT, "IMAGE_SCN_LNK_COMDAT, which is object-only.")]
-    [InlineData(IMAGE_SCN_NO_DEFER_SPEC_EXC, "IMAGE_SCN_NO_DEFER_SPEC_EXC, which is deprecated/obsolete.")]
+    [InlineData(IMAGE_SCN_NO_DEFER_SPEC_EXC, "uses reserved section-characteristic bits")]
     [InlineData(IMAGE_SCN_GPREL, "IMAGE_SCN_GPREL, which is object-only.")]
     [InlineData(IMAGE_SCN_ALIGN_16BYTES, "IMAGE_SCN_ALIGN_* flags, which are object-only.")]
     [InlineData(IMAGE_SCN_RESERVED_01, "uses reserved section-characteristic bits")]
@@ -474,6 +522,25 @@ public class PEImageCoffDeprecationTests
         }
 
         WriteUInt16(data, fileHeaderOffset + 2, numberOfSections);
+        return true;
+    }
+
+    private static bool TrySetPeNumberOfRvaAndSizes(byte[] data, uint numberOfRvaAndSizes)
+    {
+        if (!TryGetPeLayout(
+                data,
+                out _,
+                out int optionalHeaderOffset,
+                out _,
+                out _,
+                out _,
+                out bool isPe32Plus))
+        {
+            return false;
+        }
+
+        int numberOffset = optionalHeaderOffset + (isPe32Plus ? 0x6C : 0x5C);
+        WriteUInt32(data, numberOffset, numberOfRvaAndSizes);
         return true;
     }
 

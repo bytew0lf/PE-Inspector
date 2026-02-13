@@ -14944,6 +14944,73 @@ namespace PECoff
             AnalyzeSectionPadding(sections, sizeOfHeaders);
         }
 
+        private void ValidateOptionalHeaderDirectoryBounds(long optionalHeaderOffset, ushort sizeOfOptionalHeader, PEFormat magic)
+        {
+            if (PEFileStream == null || sizeOfOptionalHeader < sizeof(ushort))
+            {
+                return;
+            }
+
+            int numberOfRvaAndSizesOffset;
+            int dataDirectoryOffset;
+            switch (magic)
+            {
+                case PEFormat.PE32:
+                    numberOfRvaAndSizesOffset = 0x5C;
+                    dataDirectoryOffset = 0x60;
+                    break;
+                case PEFormat.PE32plus:
+                    numberOfRvaAndSizesOffset = 0x6C;
+                    dataDirectoryOffset = 0x70;
+                    break;
+                default:
+                    return;
+            }
+
+            if (sizeOfOptionalHeader < numberOfRvaAndSizesOffset + sizeof(uint))
+            {
+                Warn(
+                    ParseIssueCategory.OptionalHeader,
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "SPEC violation: SizeOfOptionalHeader (0x{0:X}) is too small to contain NumberOfRvaAndSizes.",
+                        sizeOfOptionalHeader));
+                return;
+            }
+
+            long originalPosition = PEFileStream.Position;
+            try
+            {
+                if (!TrySetPosition(optionalHeaderOffset, sizeOfOptionalHeader))
+                {
+                    Warn(ParseIssueCategory.OptionalHeader, "Optional header is outside file bounds.");
+                    return;
+                }
+
+                byte[] buffer = new byte[sizeOfOptionalHeader];
+                ReadExactly(PEFileStream, buffer, 0, buffer.Length);
+
+                uint claimedEntries = ReadUInt32(buffer, numberOfRvaAndSizesOffset);
+                uint maxEntriesBySize = sizeOfOptionalHeader <= dataDirectoryOffset
+                    ? 0u
+                    : (uint)((sizeOfOptionalHeader - dataDirectoryOffset) / 8);
+                if (claimedEntries > maxEntriesBySize)
+                {
+                    Warn(
+                        ParseIssueCategory.OptionalHeader,
+                        string.Format(
+                            CultureInfo.InvariantCulture,
+                            "SPEC violation: OptionalHeader.NumberOfRvaAndSizes={0} exceeds entries available in SizeOfOptionalHeader (max {1}).",
+                            claimedEntries,
+                            maxEntriesBySize));
+                }
+            }
+            finally
+            {
+                PEFileStream.Position = originalPosition;
+            }
+        }
+
         private void ValidateImageCoffDeprecation(IMAGE_FILE_HEADER fileHeader, IReadOnlyList<IMAGE_SECTION_HEADER> sections)
         {
             bool executableImage = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_EXECUTABLE_IMAGE) != 0;
@@ -14954,8 +15021,6 @@ namespace PECoff
             bool futureUse = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_FUTURE_USE) != 0;
             bool bytesReversedLo = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_BYTES_REVERSED_LO) != 0;
             bool bytesReversedHi = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_BYTES_REVERSED_HI) != 0;
-            bool removableRunFromSwap = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP) != 0;
-            bool netRunFromSwap = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_NET_RUN_FROM_SWAP) != 0;
             bool debugStripped = (fileHeader.Characteristics & Characteristics.IMAGE_FILE_DEBUG_STRIPPED) != 0;
             bool hasCoffSymbolTable = fileHeader.PointerToSymbolTable != 0 || fileHeader.NumberOfSymbols != 0;
             bool hasBaseRelocationDirectory = _dataDirectories != null &&
@@ -15007,20 +15072,6 @@ namespace PECoff
                 Warn(
                     ParseIssueCategory.Header,
                     "SPEC violation: IMAGE_FILE_BYTES_REVERSED_HI is deprecated and should be 0 for PE images.");
-            }
-
-            if (removableRunFromSwap)
-            {
-                Warn(
-                    ParseIssueCategory.Header,
-                    "SPEC violation: IMAGE_FILE_REMOVABLE_RUN_FROM_SWAP is deprecated and should be 0 for PE images.");
-            }
-
-            if (netRunFromSwap)
-            {
-                Warn(
-                    ParseIssueCategory.Header,
-                    "SPEC violation: IMAGE_FILE_NET_RUN_FROM_SWAP is deprecated and should be 0 for PE images.");
             }
 
             if (lineNumsStripped)
@@ -15110,7 +15161,8 @@ namespace PECoff
                 (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_02) != 0 ||
                 (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_03) != 0 ||
                 (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_04) != 0 ||
-                (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_05) != 0)
+                (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_RESERVED_05) != 0 ||
+                (characteristics & (uint)SectionCharacteristics.IMAGE_SCN_NO_DEFER_SPEC_EXC) != 0)
             {
                 Warn(
                     ParseIssueCategory.Header,
@@ -15150,13 +15202,6 @@ namespace PECoff
                 Warn(
                     ParseIssueCategory.Header,
                     $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_LNK_COMDAT, which is object-only.");
-            }
-
-            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_NO_DEFER_SPEC_EXC) != 0)
-            {
-                Warn(
-                    ParseIssueCategory.Header,
-                    $"SPEC violation: PE image section {sectionName} sets IMAGE_SCN_NO_DEFER_SPEC_EXC, which is deprecated/obsolete.");
             }
 
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_GPREL) != 0)
@@ -15583,10 +15628,6 @@ namespace PECoff
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_LNK_COMDAT) != 0)
             {
                 flags.Add("LNK_COMDAT");
-            }
-            if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_NO_DEFER_SPEC_EXC) != 0)
-            {
-                flags.Add("NO_DEFER_SPEC_EXC");
             }
             if ((characteristics & (uint)SectionCharacteristics.IMAGE_SCN_GPREL) != 0)
             {
@@ -26359,6 +26400,12 @@ namespace PECoff
                         Fail(ParseIssueCategory.OptionalHeader, "Unknown PE optional header format.");
                         return;
                     }
+
+                    long optionalHeaderOffset = (long)header.e_lfanew + sizeof(uint) + Marshal.SizeOf(typeof(IMAGE_FILE_HEADER));
+                    ValidateOptionalHeaderDirectoryBounds(
+                        optionalHeaderOffset,
+                        peHeader.FileHeader.SizeOfOptionalHeader,
+                        peHeader.Magic);
 
                     bool isPe32Plus = peHeader.Magic == PEFormat.PE32plus;
                     _timeDateStamp = peHeader.FileHeader.TimeDateStamp;
