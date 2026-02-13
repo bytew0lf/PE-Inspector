@@ -48,6 +48,39 @@ public class CoffSpecialSectionComplianceTests
     }
 
     [Fact]
+    public void CoffObject_Drectve_WithoutBom_Uses_AnsiStyle_Decode()
+    {
+        byte[] drectveData =
+        {
+            (byte)'/', (byte)'D', (byte)'E', (byte)'F', (byte)'A', (byte)'U', (byte)'L', (byte)'T',
+            (byte)'L', (byte)'I', (byte)'B', (byte)':', (byte)'"', 0xFC, (byte)'.', (byte)'l',
+            (byte)'i', (byte)'b', (byte)'"', 0
+        };
+
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".drectve", drectveData, characteristics: 0x00100A00u)
+            },
+            symbols: Array.Empty<byte[]>(),
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            CoffObjectInfo.CoffDirectiveInfo directive = Assert.Single(parser.CoffObject.Directives);
+            Assert.Contains("ü.lib", directive.RawText, StringComparison.Ordinal);
+            Assert.Contains("/DEFAULTLIB:\"ü.lib\"", directive.Directives);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void CoffObject_SxData_Parses_Handlers_And_Validates_FeatSymbol()
     {
         byte[] handler = CreateShortNameSymbol("__seh", sectionNumber: 1, storageClass: 0x02, auxCount: 0);
@@ -83,6 +116,67 @@ public class CoffSpecialSectionComplianceTests
             Assert.Contains(
                 parser.ParseResult.Warnings,
                 warning => warning.Contains(".sxdata entry #1 references unresolved symbol index 9", StringComparison.Ordinal));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_SafeSehFeatSymbol_WithoutSxData_Is_Accepted_On_X86()
+    {
+        byte[] feat = CreateShortNameSymbol("@feat.00", sectionNumber: 0, storageClass: 0x03, auxCount: 0, value: 0x00000001u);
+        byte[] data = BuildCoffObject(
+            machine: 0x014C,
+            sections: new[]
+            {
+                new SectionSpec(".text", Array.Empty<byte>(), 0x60000020u)
+            },
+            symbols: new[] { feat },
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.NotNull(parser.CoffObject.SafeSeh);
+            Assert.False(parser.CoffObject.SafeSeh.HasSxDataSection);
+            Assert.True(parser.CoffObject.SafeSeh.SafeSehEnabled);
+            Assert.DoesNotContain(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("no .sxdata section was found", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public void CoffObject_SafeSehMetadata_On_NonX86_Emits_SpecWarning()
+    {
+        byte[] feat = CreateShortNameSymbol("@feat.00", sectionNumber: 0, storageClass: 0x03, auxCount: 0, value: 0x00000001u);
+        byte[] sxdata = new byte[4];
+        WriteUInt32(sxdata, 0, 0);
+
+        byte[] data = BuildCoffObject(
+            machine: 0x8664,
+            sections: new[]
+            {
+                new SectionSpec(".sxdata", sxdata, 0x40000240u)
+            },
+            symbols: new[] { feat },
+            stringTablePayload: Array.Empty<byte>());
+
+        string path = WriteTemp(data);
+        try
+        {
+            PECOFF parser = new PECOFF(path);
+            Assert.Contains(
+                parser.ParseResult.Warnings,
+                warning => warning.Contains("SAFESEH metadata", StringComparison.Ordinal) &&
+                           warning.Contains("x86 COFF objects", StringComparison.Ordinal));
         }
         finally
         {

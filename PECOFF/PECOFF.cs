@@ -5310,8 +5310,14 @@ namespace PECoff
                         continue;
                     }
 
-                    if (string.Equals(sectionName, ".drectve", StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(sectionName, ".drectve", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(sectionName, ".drective", StringComparison.OrdinalIgnoreCase))
                     {
+                        if (!HasSectionFlag(section, SectionCharacteristics.IMAGE_SCN_LNK_INFO))
+                        {
+                            Warn(ParseIssueCategory.Header, "SPEC violation: .drectve section should set IMAGE_SCN_LNK_INFO.");
+                        }
+
                         if (section.PointerToRelocations != 0 || section.NumberOfRelocations != 0)
                         {
                             Warn(
@@ -5328,7 +5334,7 @@ namespace PECoff
 
                         if (TryReadCoffSectionRawData(section, out byte[] rawData, out _))
                         {
-                            string rawText = DecodeUtf8WithLatin1Fallback(rawData, out bool _).TrimEnd('\0');
+                            string rawText = DecodeDrectvePayload(rawData).TrimEnd('\0');
                             string[] parsedDirectives = ParseDrectveDirectives(rawText);
                             directiveList.Add(new CoffObjectInfo.CoffDirectiveInfo(sectionName, rawText, parsedDirectives));
                         }
@@ -5344,6 +5350,11 @@ namespace PECoff
                     if (string.Equals(sectionName, ".sxdata", StringComparison.OrdinalIgnoreCase))
                     {
                         hasSxDataSection = true;
+                        if (!HasSectionFlag(section, SectionCharacteristics.IMAGE_SCN_LNK_INFO))
+                        {
+                            Warn(ParseIssueCategory.Header, "SPEC violation: .sxdata section should set IMAGE_SCN_LNK_INFO.");
+                        }
+
                         if (TryReadCoffSectionRawData(section, out byte[] sxData, out _))
                         {
                             if ((sxData.Length % 4) != 0)
@@ -5385,6 +5396,15 @@ namespace PECoff
 
                     if (sectionName.StartsWith(".debug$", StringComparison.OrdinalIgnoreCase))
                     {
+                        if (!HasSectionFlag(section, SectionCharacteristics.IMAGE_SCN_CNT_INITIALIZED_DATA) ||
+                            !HasSectionFlag(section, SectionCharacteristics.IMAGE_SCN_MEM_READ) ||
+                            !HasSectionFlag(section, SectionCharacteristics.IMAGE_SCN_MEM_DISCARDABLE))
+                        {
+                            Warn(
+                                ParseIssueCategory.Debug,
+                                $"SPEC violation: {sectionName} should set CNT_INITIALIZED_DATA, MEM_READ, and MEM_DISCARDABLE.");
+                        }
+
                         if (TryReadCoffSectionRawData(section, out byte[] debugData, out long debugOffset))
                         {
                             debugList.Add(ParseCoffDebugSection(sectionName, debugData, debugOffset));
@@ -5407,6 +5427,11 @@ namespace PECoff
 
                     if (string.Equals(sectionName, ".cormeta", StringComparison.OrdinalIgnoreCase))
                     {
+                        if (!HasSectionFlag(section, SectionCharacteristics.IMAGE_SCN_LNK_INFO))
+                        {
+                            Warn(ParseIssueCategory.CLR, "SPEC violation: .cormeta section should set IMAGE_SCN_LNK_INFO.");
+                        }
+
                         if (corMetadata != null)
                         {
                             Warn(ParseIssueCategory.CLR, "Multiple .cormeta sections detected; only the first section is parsed.");
@@ -5455,9 +5480,10 @@ namespace PECoff
                 Warn(ParseIssueCategory.Header, "SPEC violation: .sxdata section is present but @feat.00 does not set the SAFESEH feature bit.");
             }
 
-            if (!hasSxDataSection && hasFeatureSymbol && safeSehEnabled)
+            bool safeSehStatePresent = hasSxDataSection || (hasFeatureSymbol && safeSehEnabled);
+            if (safeSehStatePresent && _machineType != MachineTypes.IMAGE_FILE_MACHINE_I386)
             {
-                Warn(ParseIssueCategory.Header, "SPEC violation: @feat.00 sets SAFESEH but no .sxdata section was found.");
+                Warn(ParseIssueCategory.Header, "SPEC violation: SAFESEH metadata (.sxdata/@feat.00) is documented only for x86 COFF objects.");
             }
 
             directives = directiveList.ToArray();
@@ -5500,6 +5526,30 @@ namespace PECoff
             ReadExactly(PEFileStream, data, 0, data.Length);
             fileOffset = section.PointerToRawData;
             return true;
+        }
+
+        private static bool HasSectionFlag(IMAGE_SECTION_HEADER section, SectionCharacteristics flag)
+        {
+            return ((uint)section.Characteristics & (uint)flag) != 0;
+        }
+
+        private static string DecodeDrectvePayload(byte[] data)
+        {
+            if (data == null || data.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            const byte bom0 = 0xEF;
+            const byte bom1 = 0xBB;
+            const byte bom2 = 0xBF;
+            if (data.Length >= 3 && data[0] == bom0 && data[1] == bom1 && data[2] == bom2)
+            {
+                return Encoding.UTF8.GetString(data, 3, data.Length - 3);
+            }
+
+            // Spec says no BOM means ANSI; use deterministic Latin-1 decoding cross-platform.
+            return Encoding.Latin1.GetString(data);
         }
 
         private static string[] ParseDrectveDirectives(string rawText)
