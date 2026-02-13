@@ -472,7 +472,7 @@ public class CoffSpecialSectionComplianceTests
     }
 
     [Fact]
-    public void CoffObject_NonZeroOptionalHeaderSize_Emits_SpecWarning_AndStillParses()
+    public void CoffObject_NonZeroOptionalHeaderSize_DoesNotEmitSpecViolation_AndStillParses()
     {
         byte[] data = BuildCoffObject(
             machine: 0x014C,
@@ -498,10 +498,11 @@ public class CoffSpecialSectionComplianceTests
             PECOFF parser = new PECOFF(path);
             Assert.Equal("COFF", parser.ImageKind);
             Assert.NotNull(parser.CoffObject);
-            Assert.Contains(
+            Assert.DoesNotContain(
                 parser.ParseResult.Warnings,
                 warning => warning.Contains("COFF object SizeOfOptionalHeader should be 0", StringComparison.Ordinal));
-            Assert.Throws<PECOFFParseException>(() => new PECOFF(path, new PECOFFOptions { StrictMode = true }));
+            PECOFF strict = new PECOFF(path, new PECOFFOptions { StrictMode = true });
+            Assert.Equal("COFF", strict.ImageKind);
         }
         finally
         {

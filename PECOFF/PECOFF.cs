@@ -27187,9 +27187,6 @@ namespace PECoff
             else if (coffHeader.SizeOfOptionalHeader != 0)
             {
                 sectionTableOffset = headerSize + coffHeader.SizeOfOptionalHeader;
-                Warn(
-                    ParseIssueCategory.Header,
-                    $"SPEC violation: COFF object SizeOfOptionalHeader should be 0 (found 0x{coffHeader.SizeOfOptionalHeader:X4}).");
             }
 
             long fileLength = PEFileStream.Length;
