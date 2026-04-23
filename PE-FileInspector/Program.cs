@@ -86,7 +86,18 @@ namespace PE_FileInspector
                     return 1;
                 }
 
-                Directory.CreateDirectory(options.OutputDir);
+                string outputDirFullPath;
+                try
+                {
+                    outputDirFullPath = Path.GetFullPath(options.OutputDir);
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("Output directory path is invalid: {0}", ex.Message);
+                    return 1;
+                }
+
+                Directory.CreateDirectory(outputDirFullPath);
 
                 string reportFileName = Path.GetFileName(options.OutputFileName);
                 if (string.IsNullOrWhiteSpace(reportFileName))
@@ -94,8 +105,6 @@ namespace PE_FileInspector
                     Console.Error.WriteLine("Output file name is required.");
                     return 1;
                 }
-
-                string reportPath = Path.Combine(options.OutputDir, reportFileName);
 
                 PECOFF pe = new PECOFF(options.FilePath);
                 List<string> certPaths = new List<string>();
@@ -126,20 +135,18 @@ namespace PE_FileInspector
                         string indexToken = (i + 1).ToString(CultureInfo.InvariantCulture);
                         string extension = CertificateUtilities.GetCertificateExtension(entry.Type);
                         string certFileName = baseName + "-" + typeToken + "-" + indexToken + extension;
-                        string certPath = GetUniqueFilePath(options.OutputDir, certFileName);
-                        File.WriteAllBytes(certPath, entry.Data);
+                        string certPath = WriteAllBytesUnique(outputDirFullPath, certFileName, entry.Data);
                         certPaths.Add(certPath);
 
                         string pemLabel = CertificateUtilities.GetPemLabel(entry.Type);
                         string pemFileName = baseName + "-" + typeToken + "-" + indexToken + ".pem";
-                        string pemPath = GetUniqueFilePath(options.OutputDir, pemFileName);
-                        File.WriteAllText(pemPath, CertificateUtilities.ToPem(pemLabel, entry.Data), Encoding.ASCII);
+                        string pemPath = WriteAllTextUnique(outputDirFullPath, pemFileName, CertificateUtilities.ToPem(pemLabel, entry.Data), Encoding.ASCII);
                         pemPaths.Add(pemPath);
                     }
                 }
 
                 string report = BuildReport(options.FilePath, pe, certPaths, pemPaths, options.Filter);
-                File.WriteAllText(reportPath, report, Encoding.UTF8);
+                string reportPath = WriteAllTextUnique(outputDirFullPath, reportFileName, report, new UTF8Encoding(false));
 
                 Console.WriteLine("Report written to: {0}", reportPath);
                 if (certPaths.Count > 0)
@@ -3898,19 +3905,82 @@ namespace PE_FileInspector
             Console.WriteLine("  PE-FileInspector --output report.txt --output-dir <output-path> --file <file-to-analyze> [--suppress-cssm <true|false>] [--sections <list>] [--exclude-sections <list>]");
         }
 
-        private static string GetUniqueFilePath(string directory, string fileName)
+        private static string WriteAllBytesUnique(string directoryPath, string fileName, byte[] data)
         {
+            using FileStream stream = CreateUniqueFileStream(directoryPath, fileName, out string fullPath);
+            stream.Write(data, 0, data.Length);
+            return fullPath;
+        }
+
+        private static string WriteAllTextUnique(string directoryPath, string fileName, string text, Encoding encoding)
+        {
+            using FileStream stream = CreateUniqueFileStream(directoryPath, fileName, out string fullPath);
+            using StreamWriter writer = new StreamWriter(stream, encoding);
+            writer.Write(text ?? string.Empty);
+            return fullPath;
+        }
+
+        private static FileStream CreateUniqueFileStream(string directoryPath, string fileName, out string fullPath)
+        {
+            const int maxAttempts = 10000;
+            string normalizedDirectory = Path.GetFullPath(directoryPath);
             string baseName = Path.GetFileNameWithoutExtension(fileName);
             string extension = Path.GetExtension(fileName);
-            string candidate = Path.Combine(directory, baseName + extension);
-            int counter = 1;
-            while (File.Exists(candidate))
+            if (string.IsNullOrWhiteSpace(baseName))
             {
-                candidate = Path.Combine(directory, baseName + "-" + counter.ToString(CultureInfo.InvariantCulture) + extension);
-                counter++;
+                baseName = "output";
             }
 
-            return candidate;
+            for (int counter = 0; counter < maxAttempts; counter++)
+            {
+                string suffix = counter == 0
+                    ? string.Empty
+                    : "-" + counter.ToString(CultureInfo.InvariantCulture);
+                string candidatePath = Path.Combine(normalizedDirectory, baseName + suffix + extension);
+                string candidateFullPath = Path.GetFullPath(candidatePath);
+                if (!IsPathWithinDirectory(candidateFullPath, normalizedDirectory))
+                {
+                    throw new IOException("Refusing to write outside output directory.");
+                }
+
+                try
+                {
+                    FileStream stream = new FileStream(candidateFullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    fullPath = candidateFullPath;
+                    return stream;
+                }
+                catch (IOException) when (File.Exists(candidateFullPath))
+                {
+                }
+            }
+
+            throw new IOException("Unable to allocate a unique output file name.");
+        }
+
+        private static bool IsPathWithinDirectory(string fullPath, string directoryPath)
+        {
+            string normalizedDirectory = EnsureTrailingSeparator(Path.GetFullPath(directoryPath));
+            string normalizedPath = Path.GetFullPath(fullPath);
+            StringComparison comparison = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            return normalizedPath.StartsWith(normalizedDirectory, comparison);
+        }
+
+        private static string EnsureTrailingSeparator(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+            {
+                return Path.DirectorySeparatorChar.ToString();
+            }
+
+            char last = path[path.Length - 1];
+            if (last == Path.DirectorySeparatorChar || last == Path.AltDirectorySeparatorChar)
+            {
+                return path;
+            }
+
+            return path + Path.DirectorySeparatorChar;
         }
 
         private static class CssmStderrFilter

@@ -6,10 +6,19 @@ namespace PECoff
 {
     internal static class SevenZipLzmaDecoder
     {
+        internal const int MaxPackedBytes = 8 * 1024 * 1024;
+        internal const int MaxDecodedBytes = 32 * 1024 * 1024;
+        internal const uint MaxDictionaryBytes = 64 * 1024 * 1024;
+
         public static bool TryDecodeLzma(byte[] input, byte[] properties, ulong unpackSize, out byte[] output)
         {
             output = Array.Empty<byte>();
-            if (input == null || input.Length == 0 || properties == null || properties.Length < 5)
+            if (input == null || input.Length == 0 || input.Length > MaxPackedBytes || properties == null || properties.Length < 5)
+            {
+                return false;
+            }
+
+            if (unpackSize == 0 || unpackSize > (ulong)MaxDecodedBytes)
             {
                 return false;
             }
@@ -27,6 +36,10 @@ namespace PECoff
             {
                 dictSize = 1;
             }
+            if (dictSize > MaxDictionaryBytes)
+            {
+                return false;
+            }
 
             using MemoryStream inputStream = new MemoryStream(input, writable: false);
             using MemoryStream outputStream = new MemoryStream();
@@ -36,7 +49,7 @@ namespace PECoff
                 return false;
             }
 
-            long outSize = unpackSize > 0 && unpackSize <= int.MaxValue ? (long)unpackSize : -1;
+            long outSize = (long)unpackSize;
             if (!decoder.Decode(inputStream, outputStream, outSize))
             {
                 return false;
@@ -49,7 +62,12 @@ namespace PECoff
         public static bool TryDecodeLzma2(byte[] input, byte[] properties, ulong unpackSize, out byte[] output)
         {
             output = Array.Empty<byte>();
-            if (input == null || input.Length == 0)
+            if (input == null || input.Length == 0 || input.Length > MaxPackedBytes)
+            {
+                return false;
+            }
+
+            if (unpackSize == 0 || unpackSize > (ulong)MaxDecodedBytes)
             {
                 return false;
             }
@@ -60,11 +78,15 @@ namespace PECoff
             {
                 dictSize = 1;
             }
+            if (dictSize > MaxDictionaryBytes)
+            {
+                return false;
+            }
 
             using MemoryStream inputStream = new MemoryStream(input, writable: false);
             using MemoryStream outputStream = new MemoryStream();
             Lzma2Decoder decoder = new Lzma2Decoder(dictSize);
-            long outSize = unpackSize > 0 && unpackSize <= int.MaxValue ? (long)unpackSize : -1;
+            long outSize = (long)unpackSize;
             if (!decoder.Decode(inputStream, outputStream, outSize))
             {
                 return false;
@@ -94,16 +116,26 @@ namespace PECoff
                     return 0;
                 }
 
-                uint dictSize = (uint)(2 | (prop & 1));
+                ulong dictSize = (ulong)(2 | (prop & 1));
                 int shift = (prop / 2) + 11;
                 dictSize <<= shift;
-                return dictSize;
+                if (dictSize > uint.MaxValue)
+                {
+                    return uint.MaxValue;
+                }
+
+                return (uint)dictSize;
             }
 
             public bool Decode(Stream input, Stream output, long outSize)
             {
+                if (outSize <= 0 || outSize > MaxDecodedBytes)
+                {
+                    return false;
+                }
+
                 long written = 0;
-                while (outSize < 0 || written < outSize)
+                while (written < outSize)
                 {
                     int control = input.ReadByte();
                     if (control < 0)
@@ -128,7 +160,15 @@ namespace PECoff
                         if (control == 0x01)
                         {
                             _decoder = new LzmaDecoder();
-                            _decoder.SetDecoderProperties(0, 0, 2, _dictSize);
+                            if (!_decoder.SetDecoderProperties(0, 0, 2, _dictSize))
+                            {
+                                return false;
+                            }
+                        }
+
+                        if (chunkSize <= 0 || written + chunkSize > outSize)
+                        {
+                            return false;
                         }
 
                         if (!CopyBytes(input, output, chunkSize))
@@ -151,6 +191,10 @@ namespace PECoff
                     }
                     int unpackSize = ((control & 0x1F) << 16) + unpackLow + 1;
                     int packSize = packLow + 1;
+                    if (written + unpackSize > outSize)
+                    {
+                        return false;
+                    }
 
                     if (newProps)
                     {
@@ -187,6 +231,10 @@ namespace PECoff
                     }
 
                     byte[] packed = ReadBytes(input, packSize);
+                    if (packed.Length != packSize)
+                    {
+                        return false;
+                    }
                     using MemoryStream packedStream = new MemoryStream(packed, writable: false);
                     using MemoryStream tempOut = new MemoryStream();
                     if (!_decoder.Decode(packedStream, tempOut, unpackSize))
@@ -195,6 +243,10 @@ namespace PECoff
                     }
 
                     byte[] decoded = tempOut.ToArray();
+                    if (decoded.Length != unpackSize)
+                    {
+                        return false;
+                    }
                     output.Write(decoded, 0, decoded.Length);
                     written += decoded.Length;
                 }

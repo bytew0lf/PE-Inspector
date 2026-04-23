@@ -365,7 +365,46 @@ The CSV output contains the following values per file:
 
 ## Security
 
-See `SECURITY.md` for the security policy and reporting process.
+### Security hardening (P0)
+
+The parser now enforces explicit guardrails for untrusted input to reduce memory/CPU denial-of-service risk:
+
+- 7z encoded-header decode limits:
+  - max packed encoded-header payload: `8 MiB`
+  - max decoded header output: `32 MiB`
+- LZMA/LZMA2 decode limits:
+  - max compressed input passed to decoder: `8 MiB`
+  - max decoded output: `32 MiB`
+  - max dictionary size: `64 MiB`
+- Allocation guards in core PE/COFF parsing:
+  - COFF symbol table buffer: `64 MiB` max
+  - COFF string table buffer: `16 MiB` max
+  - resource section buffer: `64 MiB` max
+  - rich-header scan window: `4 MiB` max (scan is truncated with warning)
+  - PDB/MSF directory buffer: `32 MiB` max
+
+When limits are exceeded, parsing fails safe for the affected structure (or skips that subsection) instead of allocating unbounded buffers.
+
+### Security hardening (P1)
+
+- `PE-FileInspector` output writes are now race-resistant:
+  - certificate/report output files are created atomically via `FileMode.CreateNew`
+  - unique-name allocation now happens during create (no check-then-write window)
+  - writes are restricted to the requested output directory via normalized path checks
+- `PE-Inspector` CSV export now mitigates formula injection:
+  - all text fields are sanitized centrally
+  - cells beginning with `=`, `+`, `-`, or `@` are prefixed with `'`
+- release workflow hardening:
+  - build/test and publish are split into separate jobs
+  - build/test runs with read-only `contents` permission
+  - `contents: write` is only granted to the publish job
+  - publish job is attached to the `release` environment (configure required reviewers in repository settings to enforce approval gates)
+
+### Security hardening (P2)
+
+- GitHub Actions dependencies are pinned to immutable commit SHAs to reduce supply-chain risk from mutable tags:
+  - `.github/workflows/ci.yml`: `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5` (`v4.3.1`) and `actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9` (`v4.3.1`)
+  - `.github/workflows/release.yml`: `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5` (`v4.3.1`), `actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9` (`v4.3.1`), and `softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65` (`v2.6.2`)
 
 ## License
 

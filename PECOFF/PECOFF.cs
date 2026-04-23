@@ -732,6 +732,11 @@ namespace PECoff
         private const int CoffBigObjSymbolSize = 20;
         private const int CoffLineNumberSize = 6;
         private const int CoffRelocationSize = 10;
+        private const int MaxCoffSymbolTableBytes = 64 * 1024 * 1024;
+        private const int MaxCoffStringTableBytes = 16 * 1024 * 1024;
+        private const int MaxResourceSectionBytes = 64 * 1024 * 1024;
+        private const int MaxRichHeaderScanBytes = 4 * 1024 * 1024;
+        private const int MaxMsfDirectoryBytes = 32 * 1024 * 1024;
 
         private sealed class ImportDescriptorInternal
         {
@@ -3022,6 +3027,10 @@ namespace PECoff
             {
                 return false;
             }
+            if (directorySize > MaxMsfDirectoryBytes)
+            {
+                return false;
+            }
 
             if (!TryReadMsfDirectory(stream, pageSize, pageCount, blockMapAddr, directorySize, directoryPageCount, out byte[] directory))
             {
@@ -4606,6 +4615,19 @@ namespace PECoff
                 Warn(ParseIssueCategory.Header, "COFF symbol table size exceeds supported limits.");
                 return;
             }
+            if (tableSize > MaxCoffSymbolTableBytes)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "COFF symbol table size {0} exceeds security limit ({1} bytes).",
+                        tableSize,
+                        MaxCoffSymbolTableBytes));
+                return;
+            }
+
+            int symbolTableBytes = (int)tableSize;
 
             if (pointerToSymbolTable >= fileLength || pointerToSymbolTable + tableSize > fileLength)
             {
@@ -4613,13 +4635,13 @@ namespace PECoff
                 return;
             }
 
-            if (!TrySetPosition(pointerToSymbolTable, (int)tableSize))
+            if (!TrySetPosition(pointerToSymbolTable, symbolTableBytes))
             {
                 Warn(ParseIssueCategory.Header, "COFF symbol table offset outside file bounds.");
                 return;
             }
 
-            byte[] symbolData = new byte[tableSize];
+            byte[] symbolData = new byte[symbolTableBytes];
             ReadExactly(PEFileStream, symbolData, 0, symbolData.Length);
 
             long stringTableOffset = pointerToSymbolTable + tableSize;
@@ -4636,9 +4658,22 @@ namespace PECoff
                         int stringDataLength = (int)stringTableLength - 4;
                         if (stringDataLength > 0)
                         {
-                            byte[] stringData = new byte[stringDataLength];
-                            ReadExactly(PEFileStream, stringData, 0, stringData.Length);
-                            ParseCoffStringTable(stringData, stringTable);
+                            if (stringDataLength > MaxCoffStringTableBytes)
+                            {
+                                Warn(
+                                    ParseIssueCategory.Header,
+                                    string.Format(
+                                        CultureInfo.InvariantCulture,
+                                        "COFF string table size {0} exceeds security limit ({1} bytes); skipping string table parse.",
+                                        stringDataLength,
+                                        MaxCoffStringTableBytes));
+                            }
+                            else
+                            {
+                                byte[] stringData = new byte[stringDataLength];
+                                ReadExactly(PEFileStream, stringData, 0, stringData.Length);
+                                ParseCoffStringTable(stringData, stringTable);
+                            }
                         }
                     }
                     else if (stringTableLength != 0)
@@ -9050,21 +9085,33 @@ namespace PECoff
             }
 
             string methodName = GetSevenZipMethodName(methodId);
-            if (packSize == 0 || packSize > int.MaxValue)
+            if (unpackSize == 0 || unpackSize > (ulong)SevenZipLzmaDecoder.MaxDecodedBytes)
             {
-                notes = "EncodedHeader pack size unsupported";
+                notes = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "EncodedHeader unpack size unsupported (max {0} bytes).",
+                    SevenZipLzmaDecoder.MaxDecodedBytes);
+                return false;
+            }
+            if (packSize == 0 || packSize > (ulong)SevenZipLzmaDecoder.MaxPackedBytes)
+            {
+                notes = string.Format(
+                    CultureInfo.InvariantCulture,
+                    "EncodedHeader pack size unsupported (max {0} bytes).",
+                    SevenZipLzmaDecoder.MaxPackedBytes);
                 return false;
             }
 
             long headerOffset = archiveStart + 32 + (long)nextHeaderOffset;
             long dataOffset = headerOffset + (long)nextHeaderSize + (long)packPos;
-            if (!TrySetPosition(stream, dataOffset, (int)packSize))
+            int packedSize = (int)packSize;
+            if (!TrySetPosition(stream, dataOffset, packedSize))
             {
                 notes = "EncodedHeader data offset invalid";
                 return false;
             }
 
-            byte[] packed = new byte[(int)packSize];
+            byte[] packed = new byte[packedSize];
             ReadExactly(stream, packed, 0, packed.Length);
 
             if (methodId.Length == 1 && methodId[0] == 0x00)
@@ -12006,6 +12053,17 @@ namespace PECoff
             if (resourceSection.Name == null || !TryGetIntSize(resourceSection.SizeOfRawData, out int rsrcSize))
             {
                 Warn(ParseIssueCategory.Resources, "Resource section not found or invalid.");
+                return;
+            }
+            if (rsrcSize > MaxResourceSectionBytes)
+            {
+                Warn(
+                    ParseIssueCategory.Resources,
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "Resource section size {0} exceeds security limit ({1} bytes).",
+                        rsrcSize,
+                        MaxResourceSectionBytes));
                 return;
             }
 
@@ -15150,17 +15208,30 @@ namespace PECoff
             }
 
             long maxLength = Math.Min(header.e_lfanew, (uint)PEFileStream.Length);
-            if (maxLength <= 0 || maxLength > int.MaxValue)
+            if (maxLength <= 0)
             {
                 return;
             }
 
-            if (!TrySetPosition(0, (int)maxLength))
+            if (maxLength > MaxRichHeaderScanBytes)
+            {
+                Warn(
+                    ParseIssueCategory.Header,
+                    string.Format(
+                        CultureInfo.InvariantCulture,
+                        "Rich header scan truncated to security limit ({0} bytes).",
+                        MaxRichHeaderScanBytes));
+                maxLength = MaxRichHeaderScanBytes;
+            }
+
+            int scanLength = (int)maxLength;
+
+            if (!TrySetPosition(0, scanLength))
             {
                 return;
             }
 
-            byte[] buffer = new byte[(int)maxLength];
+            byte[] buffer = new byte[scanLength];
             ReadExactly(PEFileStream, buffer, 0, buffer.Length);
             if (TryParseRichHeader(buffer, buffer.Length, out RichHeaderInfo info))
             {

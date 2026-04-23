@@ -43,6 +43,29 @@ public class OverlayContainerParsingTests
     }
 
     [Fact]
+    public void Overlay_SevenZip_EncodedHeader_OversizedPackSize_FailsSafe()
+    {
+        byte[] encodedHeader = BuildSevenZipEncodedHeader((ulong)SevenZipLzmaDecoder.MaxPackedBytes + 1UL, 32);
+        using MemoryStream ms = new MemoryStream();
+        using (BinaryWriter writer = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true))
+        {
+            writer.Write(new byte[] { 0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C });
+            writer.Write((byte)0);
+            writer.Write((byte)4);
+            writer.Write(0u);
+            writer.Write((ulong)0);
+            writer.Write((ulong)encodedHeader.Length);
+            writer.Write(0u);
+            writer.Write(encodedHeader);
+        }
+
+        OverlayContainerInfo info = PECOFF.ParseSevenZipContainerForTest(ms.ToArray());
+        Assert.NotNull(info);
+        Assert.Empty(info.Entries);
+        Assert.Contains("NextHeader", info.Notes, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Rar5_Vint_Decodes()
     {
         byte[] data = new byte[] { 0xAC, 0x02 };
@@ -145,7 +168,7 @@ public class OverlayContainerParsingTests
     private static byte[] BuildMinimalSevenZipEncoded(string fileName)
     {
         byte[] packedHeader = BuildSevenZipNextHeader(fileName);
-        byte[] encodedHeader = BuildSevenZipEncodedHeader(packedHeader.Length);
+        byte[] encodedHeader = BuildSevenZipEncodedHeader((ulong)packedHeader.Length);
 
         using MemoryStream ms = new MemoryStream();
         using BinaryWriter writer = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
@@ -184,8 +207,13 @@ public class OverlayContainerParsingTests
         return ms.ToArray();
     }
 
-    private static byte[] BuildSevenZipEncodedHeader(int packedSize)
+    private static byte[] BuildSevenZipEncodedHeader(ulong packedSize, ulong unpackSize = 0)
     {
+        if (unpackSize == 0)
+        {
+            unpackSize = packedSize;
+        }
+
         using MemoryStream ms = new MemoryStream();
         using BinaryWriter writer = new BinaryWriter(ms, Encoding.UTF8, leaveOpen: true);
 
@@ -194,7 +222,7 @@ public class OverlayContainerParsingTests
         Write7zUInt64(writer, 0); // PackPos
         Write7zUInt64(writer, 1); // NumPackStreams
         writer.Write((byte)0x09); // Size
-        Write7zUInt64(writer, (ulong)packedSize);
+        Write7zUInt64(writer, packedSize);
         writer.Write((byte)0x00); // End PackInfo
 
         writer.Write((byte)0x07); // UnpackInfo
@@ -205,7 +233,7 @@ public class OverlayContainerParsingTests
         writer.Write((byte)0x01); // coder flags (id size 1)
         writer.Write((byte)0x00); // Copy method
         writer.Write((byte)0x0C); // UnpackSize
-        Write7zUInt64(writer, (ulong)packedSize);
+        Write7zUInt64(writer, unpackSize);
         writer.Write((byte)0x00); // End UnpackInfo
 
         writer.Write((byte)0x08); // SubStreamsInfo

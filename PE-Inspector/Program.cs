@@ -65,32 +65,32 @@ namespace PE_Inspector
                     System.Diagnostics.FileVersionInfo versionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(fname);
                     string parseErrors = f.ParseResult.Errors.Count > 0 ? string.Join(" | ", f.ParseResult.Errors) : "";
                     string parseWarnings = f.ParseResult.Warnings.Count > 0 ? string.Join(" | ", f.ParseResult.Warnings) : "";
-                    tw.Write("{0};", Path.GetFileName(fname));
-                    tw.Write("{0};", Path.GetExtension(fname));
-                    tw.Write("{0};", Path.GetDirectoryName(fname));
-                    tw.Write("{0};", versionInfo.ProductVersion != null ? versionInfo.ProductVersion.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0};", versionInfo.FileVersion != null ? versionInfo.FileVersion.Replace("\r", "").Replace("\n", " ").Replace(";", "").Trim() : " ");
+                    WriteCsvText(tw, Path.GetFileName(fname));
+                    WriteCsvText(tw, Path.GetExtension(fname));
+                    WriteCsvText(tw, Path.GetDirectoryName(fname));
+                    WriteCsvText(tw, versionInfo.ProductVersion);
+                    WriteCsvText(tw, versionInfo.FileVersion);
                     tw.Write("{0};", f.IsDotNetFile);
                     tw.Write("{0};", f.IsObfuscated);
                     tw.Write(string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0};", f.ObfuscationPercentage));
-                    tw.Write("{0};", f.Hash);
+                    WriteCsvText(tw, f.Hash);
                     tw.Write("{0};", f.HasCertificate);
-                    tw.Write("{0};", versionInfo.Comments != null ? versionInfo.Comments.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0};", versionInfo.CompanyName != null ? versionInfo.CompanyName.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0};", versionInfo.FileDescription != null ? versionInfo.FileDescription.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0};", versionInfo.InternalName != null ? versionInfo.InternalName.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
+                    WriteCsvText(tw, versionInfo.Comments);
+                    WriteCsvText(tw, versionInfo.CompanyName);
+                    WriteCsvText(tw, versionInfo.FileDescription);
+                    WriteCsvText(tw, versionInfo.InternalName);
                     tw.Write("{0};", versionInfo.IsDebug);
                     tw.Write("{0};", versionInfo.IsPatched);
                     tw.Write("{0};", versionInfo.IsPreRelease);
                     tw.Write("{0};", versionInfo.IsPrivateBuild);
                     tw.Write("{0};", versionInfo.IsSpecialBuild);
-                    tw.Write("{0};", versionInfo.Language != null ? versionInfo.Language.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0};", versionInfo.LegalCopyright != null ? versionInfo.LegalCopyright.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0};", versionInfo.LegalTrademarks != null ? versionInfo.LegalTrademarks.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0};", versionInfo.OriginalFilename != null ? versionInfo.OriginalFilename.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0};", versionInfo.PrivateBuild != null ? versionInfo.PrivateBuild.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0};", versionInfo.ProductName != null ? versionInfo.ProductName.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
-                    tw.Write("{0};", versionInfo.SpecialBuild != null ? versionInfo.SpecialBuild.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim() : "");
+                    WriteCsvText(tw, versionInfo.Language);
+                    WriteCsvText(tw, versionInfo.LegalCopyright);
+                    WriteCsvText(tw, versionInfo.LegalTrademarks);
+                    WriteCsvText(tw, versionInfo.OriginalFilename);
+                    WriteCsvText(tw, versionInfo.PrivateBuild);
+                    WriteCsvText(tw, versionInfo.ProductName);
+                    WriteCsvText(tw, versionInfo.SpecialBuild);
                     tw.Write("{0};", Sanitize(parseErrors));
                     tw.Write("{0}\n", Sanitize(parseWarnings));
                 }
@@ -104,7 +104,22 @@ namespace PE_Inspector
                 return "";
             }
 
-            return value.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim();
+            string sanitized = value.Replace("\r", " ").Replace("\n", " ").Replace(";", "").Trim();
+            if (sanitized.Length > 0)
+            {
+                char prefix = sanitized[0];
+                if (prefix == '=' || prefix == '+' || prefix == '-' || prefix == '@')
+                {
+                    sanitized = "'" + sanitized;
+                }
+            }
+
+            return sanitized;
+        }
+
+        static void WriteCsvText(TextWriter tw, string value)
+        {
+            tw.Write("{0};", Sanitize(value));
         }
 
         static void ApplyIgnoreList(string[] ignorelist, ref string[] Filelist)
